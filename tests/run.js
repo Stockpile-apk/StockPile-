@@ -1,12 +1,13 @@
-// StockPile checks. Run with:  node tests/run.js
+// StockPile checks. Run with:  node tests/run.js [path/to/index.html]   (default: beta/index.html)
+// Set BETA=1 to run them the way the test copy runs (separate storage names).
 // Loads the app's code from index.html with a minimal fake browser and real cryptography,
 // then exercises money, stock, selling, debts, encryption, backups, recovery and barcodes.
 // Prints one line per check; exits with an error if any check fails.
 const fs=require('fs');
 const mk=()=>({hidden:true,value:'',style:{},classList:{toggle(){},add(){}},dataset:{},focus(){},click(){},remove(){},querySelector:()=>null,textContent:'',innerHTML:'',disabled:false});
-const els={};
-global.document={querySelector:s=>els[s]||(els[s]=mk()),querySelectorAll:()=>[],getElementById:s=>mk(),addEventListener(){},createElement:()=>mk(),body:{appendChild(){}},hidden:false};
-global.window={scrollTo(){}};global.location={protocol:'file:'};
+const els={},ids={};
+global.document={querySelector:s=>els[s]||(els[s]=mk()),querySelectorAll:()=>[],getElementById:s=>ids[s]||(ids[s]=mk()),addEventListener(){},createElement:()=>mk(),body:{appendChild(){},classList:{toggle(){},add(){},remove(){}}},hidden:false};
+global.window={scrollTo(){}};global.location={protocol:'file:',pathname:process.env.BETA?'/StockPile-/beta/':'/'};
 Object.defineProperty(global,'navigator',{value:{},configurable:true});
 const store={};
 for(const [k,f] of Object.entries({getItem:k=>k in store?store[k]:null,setItem:(k,v)=>{store[k]=String(v)},removeItem:k=>{delete store[k]}})) Object.defineProperty(store,k,{value:f,enumerable:false});
@@ -234,8 +235,91 @@ tplPick('final'); ok(/final reminder/.test($('#tplPrev').textContent) && /final 
 sendNow('sms'); ok(decodeURIComponent(location.href).includes('this is a final reminder from My business'),'the picked message is what gets sent');
 ok(thanksText('Dana',20,30)==='Hi Dana, got your payment of $20.00. Thank you! Your balance with My business is now $30.00.' && /all paid up/.test(thanksText('Dana',20,0)),'thank-you wording is right');
 S.debts[0].payments.push({amount:20,date:today()}); thankFor('Dana',20); ok(/got your payment of \\$20\\.00/.test($('#modal').innerHTML) && /now \\$30\\.00/.test($('#modal').innerHTML) && !/id="tplSel"/.test($('#modal').innerHTML),'thank-you message shows the new balance'); closeForm(); allTabs(); tab='home';
+
+// ================= version 11 =================
+const F=(k,v)=>{document.getElementById('f_'+k).value=String(v)}, FC=(k,b)=>{document.getElementById('f_'+k).checked=b}, SAVE=()=>$('#fSave').onclick(), tick=ms=>new Promise(r=>setTimeout(r,ms));
+ok(BETA===!!process.env.BETA && KEY0.startsWith('beta_')===BETA && PKEY.startsWith('beta_')===BETA,'the test copy keeps its data under separate names');
+SEC=null;DK=null;LEGACY=null;S=fresh();P=defaultP();Object.keys(store).forEach(k=>delete store[k]);
+const mk11=()=>clean({tx:[],debts:[],items:[{id:'a',name:'Widget',cost:5,price:10,qty:20,num:1},{id:'b',name:'Gadget',cost:2,price:5,qty:20,num:2}]});
+// discounts
+S=mk11(); cart=[{id:'a',qty:2,price:10},{id:'b',qty:1,price:5}]; posDisc='10%'; let ct=cartTotals();
+ok(ct.T0===25 && ct.disc===2.5 && ct.T===22.5,'percent discount is worked out on the whole sale');
+posDisc='5'; ok(cartTotals().disc===5 && cartTotals().T===20,'dollar discount works'); posDisc='999'; ok(cartTotals().T===0,'a discount can never exceed the sale'); posDisc='abc'; ok(cartTotals().disc===0,'nonsense in the discount box is ignored');
+posDisc='10%'; posPay='full'; posCust=''; posAcct='cash'; posDone(); let s11=lastSale, r11=saleInfo(s11);
+ok(round(sum(S.tx,t=>t.amount))===22.5 && round(sum(S.tx,t=>t.disc))===2.5 && acctBal('cash')===22.5 && posDisc==='','discounted sale records the reduced amount');
+ok(r11.total===22.5 && r11.disc===2.5 && r11.paid===22.5 && r11.lines[0].amount===20 && /Discount/.test(receiptBody(r11)) && /Discount: -\\$2\\.50/.test(receiptText(r11)) && /Subtotal/.test(receiptBody(r11)),'receipt shows subtotal, discount and total');
+S=mk11(); cart=[{id:'a',qty:2,price:10},{id:'b',qty:1,price:5}]; posDisc='10%'; posPay='part'; posPaid='10'; posCust='Ida'; posDone();
+ok(S.debts[0].amount===12.5 && round(sum(S.tx,t=>t.amount))===10 && round(sum(S.tx,t=>t.saleAmt))===22.5,'discount and part payment work together');
+// returns
+S=mk11(); recordSale([{it:S.items[0],qty:4,price:10}],{pay:'full',acct:'cash',cust:'Jo'}); s11=S.tx[0].sale;
+returnForm(s11); F('q0',1); FC('back',true); F('acct','cash'); SAVE();
+let rf=S.tx[1]; ok(rf && rf.type==='out' && rf.amount===10 && rf.saleAmt===-10 && rf.cogs===-5 && rf.qty===1 && rf.ret===s11 && S.items[0].qty===17 && acctBal('cash')===30,'returning one item refunds it and puts it back in stock');
+ok(saleInfo(s11).returned===10 && saleInfo(s11).paid===30 && /Returned/.test(receiptBody(saleInfo(s11))),'receipt shows the return');
+showNums=true; ok(/\\$15\\.00/.test(V.home()),'profit drops by the returned item (3 kept × $5 profit)');
+returnForm(s11); F('q0',99); FC('back',false); SAVE(); ok(S.tx.length===3 && S.tx[2].qty===3 && S.items[0].qty===17 && saleInfo(s11).returned===40,'cannot return more than was sold; damaged returns stay out of stock');
+lastAlert=''; returnForm(s11); ok(/already been returned/.test(lastAlert),'nothing left to return is reported');
+delTx(rf.id); ok(S.items[0].qty===16 && saleInfo(s11).returned===30,'deleting a return takes the item back out of stock');
+S=mk11(); recordSale([{it:S.items[0],qty:4,price:10}],{pay:'part',paid:10,acct:'cash',cust:'Kim'}); s11=S.tx[0].sale;
+returnForm(s11); F('q0',1); FC('back',true); F('acct','cash'); SAVE();
+ok(S.debts[0].amount===20 && S.tx[1].amount===0 && S.tx[1].owedCut===10 && acctBal('cash')===10,'a return comes off what the customer owes before any cash is refunded');
+returnForm(s11); F('q0',3); FC('back',true); F('acct','cash'); SAVE(); ok(bal(S.debts[0])===0 && round(sum(S.tx.filter(t=>t.ret),t=>t.amount))===10 && acctBal('cash')===0,'returning everything clears the debt and refunds what was paid');
+S=mk11(); recordSale([{it:S.items[0],qty:4,price:10}],{pay:'full',acct:'cash'}); s11=S.tx[0].sale; returnForm(s11); F('q0',1); FC('back',true); SAVE(); voidSale(s11);
+ok(S.tx.length===0 && S.items[0].qty===20,'voiding a sale with a return restocks only what was still out');
+const rcl=clean(JSON.parse(JSON.stringify(Object.assign(mk11(),{tx:[{id:'q1',type:'out',amount:5,saleAmt:-5,cogs:-2,gst:-0.2,ret:'s1',line:'l1',back:true,owedCut:1,qty:1,itemId:'a',date:today()}]})))); ok(rcl.tx[0].saleAmt===-5 && rcl.tx[0].ret==='s1' && rcl.tx[0].back===true && rcl.tx[0].owedCut===1 && rcl.tx[0].gst===-0.2,'return details survive save and reload');
+// buying stock on credit
+S=mk11(); restock('a'); F('qty',10); F('cost',4); F('pay','later'); F('sup',''); F('due',''); F('date',today()); F('acct','cash'); lastAlert=''; SAVE();
+ok(/supplier name/.test(lastAlert) && S.items[0].qty===20 && S.debts.length===0,'pay-later restock needs a supplier');
+F('sup','Acme'); F('due','2027-01-15'); SAVE(); ok(S.items[0].qty===30 && S.items[0].cost===4 && S.tx.length===0 && S.debts.length===1 && S.debts[0].dir==='owe' && S.debts[0].name==='Acme' && S.debts[0].amount===40 && S.debts[0].due==='2027-01-15','restocking on credit adds stock and an amount I owe the supplier');
+restock('b'); F('qty',5); F('cost',2); F('pay','now'); F('acct','bank'); F('sup',''); SAVE(); ok(S.tx.length===1 && S.tx[0].amount===10 && S.tx[0].acct==='bank' && S.debts.length===1,'paying for stock now records Money Out');
+restock('b'); F('qty',1); F('cost',2); F('pay','none'); SAVE(); ok(S.tx.length===1 && S.items[1].qty===26,'restock without recording money');
+// stock adjustments
+adjustForm('a'); F('dir','out'); F('qty',2); F('why','Damaged'); F('note','dropped'); SAVE();
+ok(S.items[0].qty===28 && S.adj.length===1 && S.adj[0].qty===-2 && S.adj[0].value===8 && S.adj[0].why==='Damaged' && S.tx.length===1,'stock adjustment changes the count, not the money');
+adjustForm('a'); F('dir','in'); F('qty',1); F('why','Counted wrong'); F('note',''); SAVE(); ok(S.items[0].qty===29 && S.adj[1].qty===1 && /Recent stock adjustments/.test(V.stock()),'stock can be adjusted up and the log shows on the Stock tab');
+moneyView='break'; moneyFilter='all'; ok(/Stock written off/.test(V.money()) && /Damaged/.test(V.money()),'write-offs show in the breakdown'); moneyView='list'; moneyFilter='month';
+ok(clean(JSON.parse(JSON.stringify(S))).adj.length===2,'adjustments survive save and reload');
+// recurring expenses
+S=mk11(); const d2=new Date(thisMonth()+'-15T12:00'); d2.setMonth(d2.getMonth()-2); const two=d2.toLocaleDateString('en-CA').slice(0,7);
+S.rec=[{id:'r1',name:'Rent',amount:100,cat:'Rent',acct:'bank',day:1,last:two}];
+ok(applyRecurring()===true && S.tx.length===2 && S.tx.every(t=>t.type==='out'&&t.amount===100&&t.acct==='bank'&&t.date.endsWith('-01')) && S.rec[0].last===thisMonth(),'missed months of a recurring bill are filled in');
+ok(applyRecurring()===false && S.tx.length===2,'recurring bills are never added twice');
+recurForm(); F('name','Phone'); F('amount',50); F('cat','Phone'); F('acct','cash'); F('day',28); FC('now',false); SAVE();
+ok(S.rec.length===2 && S.rec[1].day===28 && S.tx.length===2,'a new recurring bill waits for its day');
+recurForm(); F('name','Web'); F('amount',9); F('cat','Web'); F('acct','cash'); F('day',1); FC('now',true); SAVE(); ok(S.tx.length===3 && S.tx[2].note==='Web','“add this month too” records it straight away');
+ok(/Recurring expenses/.test(V.more()) && /Rent/.test(V.more()) && clean(JSON.parse(JSON.stringify(S))).rec.length===3,'recurring bills list under More and survive reload');
+// year summary
+S=mk11(); const Y=today().slice(0,4);
+recordSale([{it:S.items[0],qty:2,price:10}],{pay:'full',acct:'cash'}); S.tx.push({id:'o1',type:'out',amount:7,cat:'Gas',acct:'cash',gst:0,date:today()},{id:'i2',type:'in',amount:30,cat:'Job payment',acct:'bank',gst:0,date:today()},{id:'old',type:'in',amount:999,cat:'Sales',acct:'cash',gst:0,date:'2001-05-05'});
+S.adj=[{id:'j1',date:today(),itemId:'a',name:'Widget',qty:-1,why:'Damaged',note:'',value:5}];
+const ys=yearSummary(Y); ok(ys.moneyIn===50 && ys.moneyOut===7 && ys.salesValue===20 && ys.cogs===10 && ys.gross===10 && ys.writeOff===5 && ys.inBy.length===2,'year summary adds up, and leaves other years out');
+ok(csv(yearRows(ys)).includes('Profit on sales,10') && csv(yearRows(yearSummary('2001'))).includes('Money in (received),999'),'year summary download has the figures');
+yearSheet(); ok(/Year summary/.test($('#modal').innerHTML) && /2001/.test($('#modal').innerHTML) && !/undefined|NaN/.test($('#modal').innerHTML),'year summary opens with a choice of years'); closeForm();
+// search
+tab='money'; moneyFilter='all'; moneyView='list'; V.money(); ledgerQ='gas'; ok(ledgerShown().length===1 && ledgerShown()[0].id==='o1','Ledger search finds entries by category');
+ledgerQ='999'; ok(ledgerShown().length===1 && ledgerShown()[0].id==='old','Ledger search finds entries by amount'); ledgerQ='zzz'; ok(/Nothing matches/.test(ledgerBodyHTML()),'Ledger search says when nothing matches'); ledgerQ='';
+stockQ='gad'; ok(stockShown().length===1 && stockShown()[0].id==='b','Stock search finds products by name'); stockQ='#1'; ok(stockShown().length===1 && stockShown()[0].id==='a','Stock search finds products by item number'); stockQ='';
+S.contacts=[{key:'zed',name:'Zed',phone:'',email:'',promo:false},{key:'amy',name:'Amy',phone:'',email:'',promo:false}]; custCache=customerList(); custQ='am'; ok(/Amy/.test(custBodyHTML()) && !/Zed/.test(custBodyHTML()),'customer search works'); custQ='';
+moneyFilter='month'; tab='home';
+// dark mode
+P.dark=true; ok(isDark()===true,'dark mode can be switched on'); save(); ok(JSON.parse(store[PKEY]).dark===true,'dark mode choice is saved'); P.dark=false; ok(isDark()===false,'and off'); P.dark=undefined;
+// staff PIN
+S=mk11(); S.tx.push({id:'priv',type:'in',amount:777,cat:'Sales',acct:'cash',gst:0,date:today(),cogs:1,qty:1}); save();
+await enableEnc('owner-1'); const st=rnd(16); SEC.staff={salt:b64(st),iter:ITER,...await enc(await pinKey('staff-1',st,ITER),b64(await crypto.subtle.exportKey('raw',DK)))}; save(); await saveQ;
+await lockNow(); $('#pinIn').value='staff-1'; await tryUnlock();
+ok(DK && staffMode===true && tab==='sell' && els['#lock'].hidden===true,'staff PIN unlocks into staff mode');
+tab='more'; render(); ok(tab==='sell','staff mode cannot leave the Sell screen');
+const sv=V.sell(); ok(!/Today.s sales/.test(sv) && !/777/.test(sv) && /Staff mode/.test(sv),'staff mode hides sales totals');
+cart=[{id:'a',qty:1,price:10}]; posPay='full'; posDisc=''; posDone(); await saveQ; ok(S.tx.length===2 && S.items[0].qty===19,'staff can ring up a sale');
+receipt(lastSale); ok(!/Void sale/.test($('#modal').innerHTML) && !/Return items/.test($('#modal').innerHTML),'staff cannot void or return'); closeForm();
+await lockNow(); ok(staffMode===false,'locking ends staff mode'); $('#pinIn').value='nope'; await tryUnlock(); ok(DK===null,'wrong PIN still rejected with a staff PIN set');
+$('#pinIn').value='owner-1'; await tryUnlock(); ok(DK && staffMode===false && S.tx.length===2,'owner PIN opens everything, including the staff sale');
+ok(/Staff PIN: set/.test(V.more()),'settings show the staff PIN');
+setStaffPin(); F('p1','owner-1'); F('p2','owner-1'); lastAlert=''; SAVE(); await tick(1500); ok(/different from your own/.test(lastAlert),'staff PIN must differ from the owner PIN');
+await changePin('owner-1','owner-2'); await lockNow(); $('#pinIn').value='staff-1'; await tryUnlock(); ok(staffMode===true,'staff PIN survives an owner PIN change'); await lockNow();
+$('#pinIn').value='owner-2'; await tryUnlock(); removeStaffPin(); await saveQ; ok(!SEC.staff,'staff PIN can be removed'); await removeEnc('owner-2');
+allTabs(); tab='home'; staffMode=false;
 })().catch(e=>{console.log('CRASH',e);process.exitCode=1});
 `;
-const html=fs.readFileSync(require('path').join(__dirname,'..','index.html'),'utf8');
+const html=fs.readFileSync(process.argv[2]?require('path').resolve(process.argv[2]):require('path').join(__dirname,'..','beta','index.html'),'utf8');
 const app=html.match(/<script>([\s\S]*)<\/script>/)[1];
 eval(app+test);

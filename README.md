@@ -23,6 +23,12 @@ A simple offline tracker for money in and out, stock, and debts. It runs entirel
 - Back up regularly from **More → Back up now**, and keep a copy somewhere other than your phone.
 - If you set a PIN, store the recovery key somewhere safe. Without the PIN, the recovery key or your security answers, nobody can open your data.
 
+## Test copy
+
+New changes are tried here first: https://stockpile-apk.github.io/StockPile-/beta/
+
+The test copy keeps its own separate data, so nothing done there affects the main app. Once a change has been tried and works, it is copied to the main app.
+
 ## For developers
 
-The whole app is `index.html`. Run the checks with `node tests/run.js` (Node 22 or newer).
+The whole app is `index.html`. `beta/index.html` is the test copy; the main app is `index.html` at the top level. Run the checks with `node tests/run.js` (Node 22 or newer).
