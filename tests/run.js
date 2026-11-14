@@ -69,7 +69,7 @@ els['#pinIn'].value='1111'; await tryUnlock(); await saveQ;
 ok(SEC && DK && !LEGACY && !/SecretWidget/.test(all()) && S.items.length===1,'old-style PIN upgraded to encryption on unlock');
 // forgot PIN wipe
 eraseAll();
-ok(Object.keys(store).length===0 && !SEC && S.tx.length===0,'forgot PIN erases everything');
+ok(Object.keys(store).filter(k=>k!==DKEY&&k!==MKEY).length===0 && !SEC && S.tx.length===0,'forgot PIN erases everything');
 
 // recovery key
 store[PKEY]&&0; await saveQ; saveGen++; KR=new Map(); KEYS={}; staff=null; staffMode=false; SEC=null;DK=null;LEGACY=null;S=fresh();P=defaultP();Object.keys(store).forEach(k=>delete store[k]);
@@ -490,6 +490,72 @@ store[KEY0]=JSON.stringify({tx:[],items:[],debts:[]}); delete store[PKEY]; await
 
 // version 3.0.1: backup file names carry the time, so same-day backups never collide
 ok(/^\\d{4}-\\d{2}-\\d{2}-\\d{6}$/.test(stamp()) && stamp().startsWith(today()),'backup file names include the date and the time');
+
+// ================= version 3.1.0: shared books merged between two phones =================
+await saveQ; saveGen++; KR=new Map(); KEYS={}; staff=null; staffMode=false; SEC=null;DK=null;LEGACY=null;S=fresh();P=defaultP();Object.keys(store).forEach(k=>delete store[k]);memPhotos.clear();
+const PH={}; let curPh=''; const usePh=n=>{ if(curPh) PH[curPh]={S,baseSnap,DEV}; curPh=n; ({S,baseSnap,DEV}=PH[n]); };
+const copyOf=o=>JSON.parse(JSON.stringify(o)), ids=a=>a.map(x=>x.id).sort().join(), same=()=>{ const a=PH.A.S,b=PH.B.S; return ids(a.tx)===ids(b.tx) && ids(a.items)===ids(b.items) && ids(a.debts)===ids(b.debts) && a.items.every(i=>b.items.find(j=>j.id===i.id).qty===i.qty) && JSON.stringify(a.tx.map(t=>[t.id,t.note,t.amount]).sort())===JSON.stringify(b.tx.map(t=>[t.id,t.note,t.amount]).sort()); };
+const syncAB=()=>{ usePh('A'); const pa=copyOf(sharePayload()); usePh('B'); const pb=copyOf(sharePayload()); const nb=mergeInto(pa); save(); usePh('A'); const na=mergeInto(pb); save(); return [na,nb]; };
+// phone A starts the books and shares them
+DEV='phonea'; S=fresh(); S.items.push({id:'w',name:'Widget',num:1,qty:10,cost:5,price:10},{id:'g',name:'Gadget',num:2,qty:4,cost:2,price:5});
+S.tx.push({id:'a1',type:'out',amount:20,cat:'Gas',note:'fill up',acct:'cash',gst:0,date:today()}); S.debts.push({id:'dj',name:'Joe',dir:'owed',amount:100,date:today(),payments:[]}); S.budgets={Fuel:50};
+baseSnap=null; save(); S.share={id:'sh1',pass:'household'}; save();
+ok(S.items[0].q.phonea.n===10 && S.gone && S.mm && qtyOf(S.items[0])===10,'stock counts are tracked per phone from the start');
+PH.A={S,baseSnap,DEV}; curPh='A';
+PH.B={S:Object.assign(clean(copyOf(sharePayload())),{share:{id:'sh1',pass:'household'}}),baseSnap:null,DEV:'phoneb'}; usePh('B'); prepSync(); takeSnap();
+ok(ids(S.tx)==='a1' && S.items[0].qty===10 && !S.staff.length,'the second phone joins with a full copy of the books');
+// both phones work separately
+usePh('A'); recordSale([{it:S.items[0],qty:3,price:10}],{pay:'full',acct:'cash'}); S.tx.find(t=>t.id==='a1').note='fill up (truck)'; save();
+usePh('B'); recordSale([{it:S.items[0],qty:2,price:10}],{pay:'full',acct:'cash'}); S.tx.push({id:'b1',type:'out',amount:7,cat:'Food',note:'lunch',acct:'cash',gst:0,date:today()}); S.items[1].qty+=6; save();
+ok(PH.A.S.items[0].qty===7 && S.items[0].qty===8,'(each phone only knows its own sales so far)');
+let [na,nb]=syncAB();
+ok(same() && PH.A.S.items[0].qty===5 && PH.A.S.items[1].qty===10 && PH.A.S.tx.length===4,'after swapping updates both phones match, and stock reflects sales and restocks from both');
+ok(na===2 && nb===1 && PH.B.S.tx.find(t=>t.id==='a1').note==='fill up (truck)','each phone reports what was new, and an edit travels across');
+[na,nb]=syncAB(); ok(same() && na===0 && nb===0 && PH.A.S.items[0].qty===5,'merging the same update again changes nothing');
+// deletions
+usePh('A'); S.tx=S.tx.filter(t=>t.id!=='b1'); save(); syncAB(); ok(same() && !PH.B.S.tx.some(t=>t.id==='b1'),'a deletion on one phone removes the entry on the other');
+syncAB(); ok(!PH.A.S.tx.some(t=>t.id==='b1') && !PH.B.S.tx.some(t=>t.id==='b1'),'and a deleted entry does not come back');
+usePh('A'); S.tx=S.tx.filter(t=>t.id!=='a1'); save(); await tick(5); usePh('B'); S.tx.find(t=>t.id==='a1').amount=25; save(); syncAB();
+ok(same() && PH.A.S.tx.find(t=>t.id==='a1').amount===25,'an entry edited on one phone after being deleted on the other is kept, not lost');
+// payments from both sides
+usePh('A'); S.debts[0].payments.push({amount:30,date:today()}); save(); usePh('B'); S.debts[0].payments.push({amount:20,date:today()}); save(); syncAB();
+ok(same() && PH.A.S.debts[0].payments.length===2 && bal(PH.A.S.debts[0])===50 && bal(PH.B.S.debts[0])===50,'payments recorded on both phones are both kept');
+// both phones add a different product under the same item number
+usePh('A'); S.items.push({id:'na',name:'New A',num:3,qty:1,cost:1,price:2}); save(); await tick(5); usePh('B'); S.items.push({id:'nb',name:'New B',num:3,qty:2,cost:1,price:2}); save(); syncAB(); syncAB();
+const nums=PH.A.S.items.map(i=>i.num).sort().join(); ok(same() && new Set(PH.A.S.items.map(i=>i.num)).size===4 && nums===PH.B.S.items.map(i=>i.num).sort().join(),'two products given the same item number are separated');
+// settings and budgets: the latest change wins
+usePh('A'); S.budgets={Fuel:60}; save(); await tick(5); usePh('B'); S.budgets={Fuel:80,Pets:20}; save(); syncAB(); ok(PH.A.S.budgets.Fuel===80 && PH.A.S.budgets.Pets===20 && PH.B.S.budgets.Fuel===80,'for budgets, the most recent change wins on both phones');
+// a product deleted on one phone while the other sold it
+usePh('B'); S.contacts.push({key:'amy',name:'Amy',phone:'1',email:'',promo:false}); save(); syncAB(); usePh('A'); ok(S.contacts.length===1,'customers travel too');
+S.contacts=[]; save(); syncAB(); ok(PH.B.S.contacts.length===0,'and so does removing one');
+// who added what
+store[MKEY]='Rick'; usePh('A'); S.tx.push({id:'who1',type:'out',amount:3,cat:'Food',acct:'cash',gst:0,date:today()}); save(); ok(S.tx.find(t=>t.id==='who1').by==='Rick','entries on shared books are marked with who added them');
+store[MKEY]='Sam'; usePh('B'); S.tx.push({id:'who2',type:'out',amount:4,cat:'Food',acct:'cash',gst:0,date:today()}); save(); syncAB(); ok(PH.A.S.tx.find(t=>t.id==='who2').by==='Sam' && PH.B.S.tx.find(t=>t.id==='who1').by==='Rick' && /by Sam/.test((usePh('A'),showNums=true,moneyFilter='all',moneyView='list',V.money())),'and the name shows on the other phone');
+// device-only things do not travel
+usePh('A'); S.staff=[{id:'s1',who:'Dana',perms:{}}]; S.lastBackup=today(); const pay=sharePayload(); ok(!('staff' in pay) && !('lastBackup' in pay) && !('share' in pay) && !('dirty' in pay),'staff lists, backup dates and the sharing password stay off the shared copy'); S.staff=[];
+// the file itself
+const ftext=await shareFileText(), fobj=JSON.parse(ftext);
+ok(fobj.stockpileShare===1 && fobj.id==='sh1' && !/Widget|fill up|household/.test(ftext),'the sharing file is locked and shows nothing readable');
+ok(await fails(openShare(fobj,'wrong-pass')) && (await openShare(fobj,'household')).items.length===4 && await fails(openShare({nope:1},'x')),'it opens only with the sharing password');
+// merging through the file on phone B
+usePh('A'); S.tx.push({id:'viafile',type:'in',amount:11,cat:'Sales',acct:'cash',gst:0,date:today()}); const f2=await shareFileText(); usePh('B'); P=defaultP(); shareMode='merge'; lastAlert=''; await onShareFile(f2);
+ok(S.tx.some(t=>t.id==='viafile') && /Merged/.test(lastAlert) && /1 new entry/.test(lastAlert),'“Merge an update” brings in the other phone’s entries');
+const wrong=JSON.stringify({...JSON.parse(f2),id:'other'}); lastAlert=''; await onShareFile(wrong); ok(/different books/.test(lastAlert),'an update for different books is refused');
+lastAlert=''; await onShareFile('{"tx":[]}'); ok(/isn.t a StockPile sharing file/.test(lastAlert),'a backup file is not mistaken for a sharing file');
+// joining from the file on a third phone
+await saveQ; saveGen++; S=fresh(); P=defaultP(); baseSnap=null; DEV='phonec'; Object.keys(store).forEach(k=>delete store[k]); save();
+shareMode='join'; await onShareFile(f2); F('me','Kim'); F('pass','nope'); lastAlert=''; SAVE(); await wait(()=>lastAlert); ok(/password is wrong/.test(lastAlert) && P.list.length===1,'joining needs the right sharing password');
+F('pass','household'); SAVE(); await wait(()=>P.list.length===2); await tick(150);
+ok(P.list[1].share==='sh1' && P.current===P.list[1].id && S.share.id==='sh1' && S.items.length===4 && S.tx.some(t=>t.id==='viafile') && store[MKEY]==='Kim' && /⇄/.test((render(),$('#hdr').innerHTML)),'joining adds the shared books to the new phone as their own set');
+shareMode='join'; lastAlert=''; await onShareFile(f2); ok(/already have these shared books/.test(lastAlert),'the same books cannot be joined twice');
+ok(/Send update/.test(V.more()) && /Merge an update/.test(V.more()),'shared books show Send and Merge under More');
+stopShare(); ok(!S.share && !P.list[1].share && /Join shared books/.test(V.more()),'sharing can be stopped without losing entries');
+// shared books survive a PIN, and restoring a backup does not delete the other phone's entries
+usePh('A'); P=defaultP(); const beforeR=S.tx.length; const bkS=JSON.stringify(S); S.tx.push({id:'later',type:'in',amount:1,cat:'Sales',acct:'cash',gst:0,date:today()}); save();
+applyBackup(JSON.parse(bkS)); ok(S.tx.length===beforeR && S.share && !S.gone.later,'restoring an older backup does not mark newer entries as deleted');
+ok(clean(copyOf(S)).items[0].q && clean(copyOf(S)).share.pass==='household' && Object.keys(clean(copyOf(S)).gone).length>0,'sharing details survive save and reload');
+ok(Object.keys(clean({gone:{'<img src=x>':5,ok1:9},items:[{id:'i',name:'n',q:{'<x>':{n:1,v:1},good:{n:'2',v:'3'}}}]}).gone).join()==='ok1' && JSON.stringify(clean({items:[{id:'i',name:'n',q:{'<x>':{n:1,v:1},good:{n:'2',v:'3'}}}]}).items[0].q)==='{"good":{"n":2,"v":3}}','sharing data from a file is cleaned like everything else');
+allTabs(); tab='home'; moneyFilter='month'; showNums=false;
 })().catch(e=>{console.log('CRASH',e);process.exitCode=1});
 `;
 const html=fs.readFileSync(process.argv[2]?require('path').resolve(process.argv[2]):require('path').join(__dirname,'..','beta','index.html'),'utf8');

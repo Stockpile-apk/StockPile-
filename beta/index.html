@@ -122,15 +122,16 @@ body.dark .sheet .rc{color:var(--ink)}body.dark .sheet .rcs{color:var(--mute)}bo
 <div id="printArea"></div>
 <input type="file" id="snapFile" accept="image/*" capture="environment" hidden>
 <input type="file" id="pickFile" accept="image/*" hidden>
+<input type="file" id="shareFile" accept=".txt,.json,text/plain,application/json" hidden>
 <input type="file" id="restoreFile" accept=".json,.txt,application/json,text/plain" hidden>
 
 <script>
 // The test copy (served from /beta/) keeps its data under separate names, so it can never touch the real app's data.
 const BETA = /\/beta\//.test((typeof location !== 'undefined' && location.pathname) || '');
 const KEY0 = (BETA ? 'beta_' : '') + 'money_inventory_tracker_v1', PKEY = (BETA ? 'beta_' : '') + 'stockpile_profiles';
-const VERSION = '3.0.1';
+const VERSION = '3.1.0';
 const okDark = v => v === true || v === false ? v : undefined;
-const fresh = () => ({ tx: [], items: [], debts: [], lastBackup: null, dirty: 0, auto: true, offRemind: true, lastSent: null, offSnooze: null, contacts: [], adj: [], rec: [], budgets: {}, staff: [], set: { gst: false, gstRate: 5 } });
+const fresh = () => ({ tx: [], items: [], debts: [], lastBackup: null, dirty: 0, auto: true, offRemind: true, lastSent: null, offSnooze: null, contacts: [], adj: [], rec: [], budgets: {}, staff: [], gone: {}, mm: {}, set: { gst: false, gstRate: 5 } });
 const defaultP = () => ({ list: [{ id: 'default', name: 'My business' }], current: 'default' });
 const CAN = !!(globalThis.crypto && crypto.subtle);
 let S = fresh(), P = defaultP(), storageOK = true, loadFailed = false;
@@ -154,7 +155,7 @@ const headerBody = () => JSON.stringify({ list: P.list, current: P.current, dark
 const bizOn = () => P.biz !== false;
 const can = perm => !staffMode || !!(staff && staff.perms && staff.perms[perm]);
 async function loadProfile() {
-  S = fresh(); loadFailed = false; dataReady = false;   // until the books are actually loaded, nothing may be saved over them
+  S = fresh(); loadFailed = false; dataReady = false; baseSnap = null;   // until the books are actually loaded, nothing may be saved over them
   if (needKey()) return;   // private books stay closed until their own PIN is entered
   try {
     const r = localStorage.getItem(keyFor(P.current));
@@ -168,17 +169,21 @@ async function loadProfile() {
   dataReady = true;
   if (S.set.pin && !SEC && !LEGACY) LEGACY = S.set.pin;
   delete S.set.pin;
-  if (applyRecurring()) save();
+  const grew = !loadFailed && prepSync(); if (!loadFailed) takeSnap();
+  if (applyRecurring() || grew) save();
 }
 function save() {
   if (loadFailed) return;
-  const pid = P.current, sText = JSON.stringify(S);
+  const pid = P.current;
   if (!SEC) {
-    try { localStorage.setItem(keyFor(pid), sText); localStorage.setItem(PKEY, JSON.stringify({ list: P.list, current: P.current, dark: P.dark, biz: P.biz, pin: LEGACY })); } catch (e) { storageOK = false; }
+    stampChanges();
+    try { localStorage.setItem(keyFor(pid), JSON.stringify(S)); localStorage.setItem(PKEY, JSON.stringify({ list: P.list, current: P.current, dark: P.dark, biz: P.biz, pin: LEGACY })); } catch (e) { storageOK = false; }
     return;
   }
   const pk = dataReady ? KR.get(pid) : null, mk = DK, sec = SEC, body = mk && !staffMode ? headerBody() : null, gen = saveGen;
   if (!pk && !body) return;
+  if (pk) stampChanges();
+  const sText = pk ? JSON.stringify(S) : '';
   saveQ = saveQ.then(async () => {
     if (gen !== saveGen) return;   // everything was erased since this save was queued: don't write it back
     if (pk) localStorage.setItem(keyFor(pid), JSON.stringify({ enc: 2, ...await enc(await pk, sText) }));
@@ -213,10 +218,16 @@ const isDate = v => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v);
 const okDate = v => isDate(v) ? v : today();
 const okId = v => typeof v === 'string' && /^[a-z0-9]{1,24}$/i.test(v) ? v : uid();
 const arr = v => Array.isArray(v) ? v.filter(x => x && typeof x === 'object') : [];
+function cleanQ(q) {
+  if (!q || typeof q !== 'object') return null;
+  const o = {}; Object.entries(q).slice(0, 60).forEach(([dev, e]) => { if (/^[a-z0-9]{1,12}$/i.test(dev) && e && typeof e === 'object') o[dev] = { n: Math.round(num(e.n)), v: Math.max(0, Math.round(num(e.v))) }; });
+  return Object.keys(o).length ? o : null;
+}
 function clean(d) {
   const o = fresh(); d = d && typeof d === 'object' ? d : {};
   o.tx = arr(d.tx).filter(t => ['in', 'out', 'move'].includes(t.type)).map(t => {
     const r = { id: okId(t.id), type: t.type, amount: num(t.amount), note: str(t.note), date: okDate(t.date) };
+    if (num(t.m) > 0) r.m = num(t.m);
     if (t.type === 'move') r.from = t.from === 'bank' ? 'bank' : 'cash';
     else {
       r.cat = str(t.cat); r.acct = t.acct === 'bank' ? 'bank' : 'cash'; r.gst = num(t.gst);
@@ -233,19 +244,23 @@ function clean(d) {
     }
     return r;
   });
-  o.items = arr(d.items).map(i => ({ id: okId(i.id), name: str(i.name), ...(cleanCode(i.code) ? { code: cleanCode(i.code) } : {}), num: Math.round(num(i.num)), cost: num(i.cost), price: num(i.price), qty: Math.round(num(i.qty)), low: Math.round(num(i.low)) }));
+  o.items = arr(d.items).map(i => ({ id: okId(i.id), name: str(i.name), ...(cleanCode(i.code) ? { code: cleanCode(i.code) } : {}), num: Math.round(num(i.num)), cost: num(i.cost), price: num(i.price), qty: Math.round(num(i.qty)), low: Math.round(num(i.low)), ...(num(i.m) > 0 ? { m: num(i.m) } : {}), ...(cleanQ(i.q) ? { q: cleanQ(i.q) } : {}) }));
   const usedNums = new Set(); let nx = 1;
   o.items.forEach(i => { if (!(i.num >= 1) || usedNums.has(i.num)) i.num = 0; else usedNums.add(i.num); });
   o.items.forEach(i => { if (!i.num) { while (usedNums.has(nx)) nx++; i.num = nx; usedNums.add(nx); } });
   o.debts = arr(d.debts).map(x => { const r = { id: okId(x.id), name: str(x.name), dir: x.dir === 'owed' ? 'owed' : 'owe', amount: num(x.amount), note: str(x.note), date: okDate(x.date),
-    payments: arr(x.payments).map(p => ({ amount: num(p.amount), date: okDate(p.date) })) }; if (x.sale) r.sale = okId(x.sale); if (isDate(x.due)) r.due = x.due; return r; });
+    payments: arr(x.payments).map(p => ({ amount: num(p.amount), date: okDate(p.date), ...(typeof p.id === 'string' && /^[a-z0-9]{1,24}$/i.test(p.id) ? { id: p.id } : {}) })) }; if (num(x.m) > 0) r.m = num(x.m); if (x.sale) r.sale = okId(x.sale); if (isDate(x.due)) r.due = x.due; return r; });
   o.lastBackup = isDate(d.lastBackup) ? d.lastBackup : null;
   o.dirty = Math.max(0, Math.round(num(d.dirty))); o.auto = d.auto !== false;
-  o.contacts = arr(d.contacts).map(c => ({ key: ckey(str(c.name)), name: str(c.name).trim(), phone: cleanPhone(c.phone), email: EMAIL_OK.test(str(c.email).trim()) ? str(c.email).trim().slice(0, 120) : '', promo: !!c.promo })).filter(c => c.key);
-  o.adj = arr(d.adj).map(a => ({ id: okId(a.id), date: okDate(a.date), itemId: okId(a.itemId), name: str(a.name), qty: Math.round(num(a.qty)), why: str(a.why), note: str(a.note), value: num(a.value) }));
-  o.rec = arr(d.rec).map(r => ({ id: okId(r.id), name: str(r.name), amount: num(r.amount), cat: str(r.cat), acct: r.acct === 'bank' ? 'bank' : 'cash', day: Math.min(Math.max(Math.round(num(r.day)) || 1, 1), 28), last: /^\d{4}-\d{2}$/.test(r.last) ? r.last : today().slice(0, 7) }));
+  o.contacts = arr(d.contacts).map(c => ({ key: ckey(str(c.name)), name: str(c.name).trim(), phone: cleanPhone(c.phone), email: EMAIL_OK.test(str(c.email).trim()) ? str(c.email).trim().slice(0, 120) : '', promo: !!c.promo, ...(num(c.m) > 0 ? { m: num(c.m) } : {}) })).filter(c => c.key);
+  o.adj = arr(d.adj).map(a => ({ id: okId(a.id), date: okDate(a.date), itemId: okId(a.itemId), name: str(a.name), qty: Math.round(num(a.qty)), why: str(a.why), note: str(a.note), value: num(a.value), ...(num(a.m) > 0 ? { m: num(a.m) } : {}) }));
+  o.rec = arr(d.rec).map(r => ({ id: okId(r.id), name: str(r.name), amount: num(r.amount), cat: str(r.cat), acct: r.acct === 'bank' ? 'bank' : 'cash', day: Math.min(Math.max(Math.round(num(r.day)) || 1, 1), 28), last: /^\d{4}-\d{2}$/.test(r.last) ? r.last : today().slice(0, 7), ...(num(r.m) > 0 ? { m: num(r.m) } : {}) }));
   if (d.budgets && typeof d.budgets === 'object') Object.entries(d.budgets).slice(0, 80).forEach(([k, v]) => { if (num(v) > 0 && str(k)) o.budgets[str(k).slice(0, 60)] = num(v); });
   o.staff = arr(d.staff).map(x => ({ id: okId(x.id), who: str(x.who).slice(0, 40), perms: Object.fromEntries(['stock', 'stockEdit', 'owing', 'sales', 'refunds'].filter(k => x.perms && x.perms[k]).map(k => [k, true])) }));
+  if (d.gone && typeof d.gone === 'object') Object.entries(d.gone).slice(0, 6000).forEach(([k, v]) => { if (/^[a-z0-9:. _@&'()+,-]{1,90}$/i.test(k) && num(v) > 0) o.gone[k] = num(v); });
+  if (d.mm && typeof d.mm === 'object') ['budgets', 'set'].forEach(k => { if (num(d.mm[k]) > 0) o.mm[k] = num(d.mm[k]); });
+  if (d.share && typeof d.share === 'object' && typeof d.share.id === 'string' && /^[a-z0-9]{1,24}$/i.test(d.share.id) && typeof d.share.pass === 'string' && d.share.pass) o.share = { id: d.share.id, pass: d.share.pass.slice(0, 200) };
+  if (isDate(d.lastSync)) o.lastSync = d.lastSync;
   o.offRemind = d.offRemind !== false; o.lastSent = isDate(d.lastSent) ? d.lastSent : null; o.offSnooze = isDate(d.offSnooze) ? d.offSnooze : null;
   const st = d.set && typeof d.set === 'object' ? d.set : {};
   o.set = { gst: !!st.gst, gstRate: num(st.gstRate) || 5 };
@@ -253,7 +268,7 @@ function clean(d) {
   return o;
 }
 function sanitizeP() {
-  P.list = arr(P.list).filter(p => typeof p.id === 'string' && /^[a-z0-9]{1,24}$/i.test(p.id)).map(p => ({ id: p.id, name: str(p.name) || 'My business', ...(p.kind === 'personal' ? { kind: 'personal' } : {}) }));
+  P.list = arr(P.list).filter(p => typeof p.id === 'string' && /^[a-z0-9]{1,24}$/i.test(p.id)).map(p => ({ id: p.id, name: str(p.name) || 'My business', ...(p.kind === 'personal' ? { kind: 'personal' } : {}), ...(typeof p.share === 'string' && /^[a-z0-9]{1,24}$/i.test(p.share) ? { share: p.share } : {}) }));
   if (!P.list.length) P.list = defaultP().list;
   if (!P.list.some(p => p.id === P.current)) P.current = P.list[0].id;
 }
@@ -1267,7 +1282,7 @@ const privCard = () => `<div class="card" style="text-align:center;padding:28px 
 function chooseUse(kind) {
   const home = { id: kind === 'both' ? uid() : 'default', name: 'My money', kind: 'personal' };
   P = { list: kind === 'personal' ? [home] : kind === 'both' ? [{ id: 'default', name: 'My business' }, home] : [{ id: 'default', name: 'My business' }], current: 'default', biz: kind !== 'personal' };
-  S = fresh(); firstRun = false; resetView(); save(); render();
+  S = fresh(); baseSnap = null; firstRun = false; resetView(); save(); render();
 }
 const setupCard = () => `<div class="card" style="text-align:center;padding:26px 16px;margin-top:10px"><div style="font-size:46px">📦</div>
   <h2 style="margin:8px 0 4px">Welcome to StockPile</h2><div class="mute">Everything you enter stays on this phone. What would you like to keep track of?</div></div>
@@ -1276,6 +1291,161 @@ const setupCard = () => `<div class="card" style="text-align:center;padding:26px
     <button class="cat" style="flex-direction:row;justify-content:flex-start;gap:14px;padding:16px;font-size:16px;text-align:left" onclick="chooseUse('business')"><span style="font-size:30px">🧾</span><div><b>A business</b><div class="mute">Sales, stock, customers and what’s owed</div></div></button>
     <button class="cat" style="flex-direction:row;justify-content:flex-start;gap:14px;padding:16px;font-size:16px;text-align:left" onclick="chooseUse('both')"><span style="font-size:30px">🏠🧾</span><div><b>Both</b><div class="mute">Kept completely separate from each other</div></div></button>
   </div><p class="mute" style="text-align:center;margin-top:16px">You can change this later under More.</p>`;
+
+/* ---------- shared books: every change is time-stamped so two phones' copies can be merged ---------- */
+// Nothing here talks to the internet. Each phone keeps its own full copy; "sharing" is exchanging a locked
+// file and merging it. To make that safe: every record carries the time it last changed (m), deletions are
+// remembered (S.gone), and stock counts are kept as a running change per phone (item.q) so that two phones
+// selling the same product both count.
+const DKEY = (BETA ? 'beta_' : '') + 'stockpile_device', MKEY = (BETA ? 'beta_' : '') + 'stockpile_me';
+let DEV = (() => { try { let d = localStorage.getItem(DKEY); if (!/^[a-z0-9]{6,12}$/.test(d || '')) { d = (Date.now().toString(36) + Math.random().toString(36).slice(2)).slice(-8); localStorage.setItem(DKEY, d); } return d; } catch (e) { return 'd' + Math.random().toString(36).slice(2, 9); } })();
+const myName = () => { try { return (localStorage.getItem(MKEY) || '').slice(0, 30); } catch (e) { return ''; } };
+const SYNC_COLS = ['tx', 'items', 'debts', 'adj', 'rec'];
+let baseSnap = null;
+const sigOf = (r, col) => JSON.stringify(r, (k, v) => k === 'm' || (col === 'items' && (k === 'q' || k === 'qty')) ? undefined : v);
+const qtyOf = it => Object.values(it.q || {}).reduce((t, e) => t + (e.n || 0), 0);
+function prepSync() {   // bring older data up to the shape merging needs; returns true if anything was added
+  let ch = false;
+  if (!S.gone || typeof S.gone !== 'object') { S.gone = {}; ch = true; }
+  if (!S.mm || typeof S.mm !== 'object') { S.mm = {}; ch = true; }
+  for (const it of S.items) if (!it.q) { it.q = { [DEV]: { n: it.qty || 0, v: 1 } }; ch = true; }
+  for (const d of S.debts) for (const p of d.payments || []) if (!p.id) { p.id = uid(); ch = true; }
+  return ch;
+}
+function takeSnap() {
+  baseSnap = { cols: {}, qty: {}, contacts: new Map((S.contacts || []).map(c => [c.key, sigOf(c)])), budgets: JSON.stringify(S.budgets || {}), set: JSON.stringify(S.set || {}) };
+  for (const col of SYNC_COLS) baseSnap.cols[col] = new Map((S[col] || []).map(r => [r.id, sigOf(r, col)]));
+  for (const it of S.items) baseSnap.qty[it.id] = it.qty || 0;
+}
+function stampChanges() {   // called just before every save: mark what changed since the last save
+  if (!baseSnap) { prepSync(); takeSnap(); return; }
+  prepSync();
+  const now = Date.now(), me = S.share ? myName() : '';
+  for (const col of SYNC_COLS) {
+    const was = baseSnap.cols[col] || new Map(), seen = new Set();
+    for (const r of S[col] || []) {
+      seen.add(r.id);
+      if (was.get(r.id) !== sigOf(r, col)) { r.m = now; if (col === 'tx' && me && !was.has(r.id) && !r.by) r.by = me; }
+    }
+    for (const id of was.keys()) if (!seen.has(id)) S.gone[id] = now;
+  }
+  for (const it of S.items) {
+    const d = (it.qty || 0) - (baseSnap.qty[it.id] !== undefined ? baseSnap.qty[it.id] : qtyOf(it));
+    if (d) { const e = it.q[DEV] || (it.q[DEV] = { n: 0, v: 0 }); e.n += d; e.v++; }
+  }
+  const seenC = new Set();
+  for (const c of S.contacts || []) { seenC.add(c.key); if (baseSnap.contacts.get(c.key) !== sigOf(c)) c.m = now; }
+  for (const k of baseSnap.contacts.keys()) if (!seenC.has(k)) S.gone['c:' + k] = now;
+  if (JSON.stringify(S.budgets || {}) !== baseSnap.budgets) S.mm.budgets = now;
+  if (JSON.stringify(S.set || {}) !== baseSnap.set) S.mm.set = now;
+  const ids = Object.keys(S.gone); if (ids.length > 6000) { ids.sort((a, b) => S.gone[b] - S.gone[a]).slice(5000).forEach(id => delete S.gone[id]); }
+  takeSnap();
+}
+// Merge another phone's copy of the same books into this one. Returns how many entries were new here.
+function mergeInto(R) {
+  R = clean(R); stampChanges();
+  const gone = { ...S.gone }; for (const [id, t] of Object.entries(R.gone || {})) gone[id] = Math.max(gone[id] || 0, t);
+  const dead = (id, r) => gone[id] !== undefined && gone[id] >= (r.m || 0), newer = (l, r) => (r.m || 0) > (l.m || 0) ? r : l;
+  let added = 0;
+  const mergeCol = (col, both) => {
+    const m = new Map((S[col] || []).map(r => [r.id, r]));
+    for (const r of R[col] || []) { const l = m.get(r.id); if (!l) { if (!dead(r.id, r)) { m.set(r.id, r); if (col === 'tx') added++; } } else m.set(r.id, both ? both(l, r) : newer(l, r)); }
+    S[col] = [...m.values()].filter(r => !dead(r.id, r));
+  };
+  mergeCol('tx'); mergeCol('adj'); mergeCol('rec');
+  mergeCol('items', (l, r) => {
+    const w = { ...newer(l, r) }, q = { ...(l.q || {}) };
+    for (const [dev, e] of Object.entries(r.q || {})) if (!q[dev] || (e.v || 0) > (q[dev].v || 0)) q[dev] = e;
+    w.q = q; w.qty = qtyOf(w); return w;
+  });
+  S.items.forEach(it => { it.qty = qtyOf(it); });
+  mergeCol('debts', (l, r) => {
+    const w = { ...newer(l, r) }, pm = new Map((l.payments || []).map(p => [p.id, p]));
+    for (const p of r.payments || []) if (!pm.has(p.id)) pm.set(p.id, p);
+    w.payments = [...pm.values()].sort((a, b) => a.date.localeCompare(b.date)); return w;
+  });
+  const cm = new Map((S.contacts || []).map(c => [c.key, c]));
+  for (const c of R.contacts || []) { const l = cm.get(c.key); cm.set(c.key, l ? newer(l, c) : c); }
+  S.contacts = [...cm.values()].filter(c => !dead('c:' + c.key, c));
+  if (((R.mm || {}).budgets || 0) > (S.mm.budgets || 0)) { S.budgets = R.budgets; S.mm.budgets = R.mm.budgets; }
+  if (((R.mm || {}).set || 0) > (S.mm.set || 0)) { S.set = R.set; S.mm.set = R.mm.set; }
+  // two phones may have added different products under the same item number: move the newer one to a free number
+  const used = new Set(), now = Date.now();
+  [...S.items].sort((a, b) => (a.m || 0) - (b.m || 0)).forEach(it => { if (used.has(it.num)) { let n = 1; while (used.has(n)) n++; it.num = n; it.m = now; } used.add(it.num); });
+  S.gone = gone; takeSnap();
+  return added;
+}
+// What travels in a share file: the books themselves, without this phone's own settings or staff list.
+function sharePayload() {
+  stampChanges();
+  const { lastBackup, dirty, auto, offRemind, lastSent, offSnooze, staff: _s, lastSync, share: _sh, ...rest } = S;
+  return rest;
+}
+const shareKey = (pass, salt) => pinKey(pass, salt, ITER);
+async function shareFileText() {
+  const salt = rnd(16);
+  return JSON.stringify({ stockpileShare: 1, id: S.share.id, name: profName(), kind: isPersonal() ? 'personal' : 'business', from: myName(), sent: Date.now(), salt: b64(salt), data: await enc(await shareKey(S.share.pass, salt), JSON.stringify(sharePayload())) });
+}
+async function openShare(d, pass) {
+  if (!d || d.stockpileShare !== 1 || typeof d.salt !== 'string' || !d.data) throw fail("That file isn't a StockPile sharing file.");
+  try { return JSON.parse(await dec(await shareKey(pass, unb64(d.salt)), d.data)); } catch (e) { throw fail('The sharing password is wrong for this file.'); }
+}
+function startShare() {
+  if (staffMode || S.share) return;
+  form('Share these books', [
+    { k: 'me', l: 'Your name (shown on entries you add)', v: myName(), req: 1 },
+    { k: 'pass', l: 'Sharing password (6 or more characters)', req: 1 }
+  ], v => {
+    if (String(v.pass).length < 6) { alert('Use at least 6 characters for the sharing password.'); return false; }
+    try { localStorage.setItem(MKEY, String(v.me).trim().slice(0, 30)); } catch (e) {}
+    S.share = { id: uid(), pass: String(v.pass) }; const me = P.list.find(x => x.id === P.current); if (me) me.share = S.share.id;
+    setTimeout(() => sendShare(true), 120);
+  }, `<div class="mute">The other person needs this password once, to join. Tell it to them in person; don't send it with the file.<br><br>After this, each of you taps <b>Send update</b> now and then and the other taps <b>Merge an update</b>. Entries from both phones are combined and nothing is overwritten.</div>`);
+}
+async function sendShare(first) {
+  if (!S.share || staffMode) return;
+  const text = await shareFileText(), name = `stockpile-share-${fileBase().replace(/^stockpile-|-backup$/g, '')}-${stamp()}.txt`;
+  S.lastSync = today(); save();
+  try {
+    const f = new File([text], name, { type: 'text/plain' });
+    if (navigator.canShare && navigator.canShare({ files: [f] })) { await navigator.share({ files: [f], title: 'StockPile shared books' }); render(); return; }
+  } catch (e) { if (e && e.name === 'AbortError') { render(); return; } }
+  download(name, text, 'text/plain'); render();
+  alert((first ? 'Sharing is set up. ' : '') + 'The sharing file was saved to Downloads. Send it to the other phone from My Files (press and hold the file, then Share).');
+}
+function pickShare(mode) { shareMode = mode; const el = $('#shareFile'); el.value = ''; el.click(); }
+let shareMode = 'merge';
+async function onShareFile(text) {
+  let d; try { d = JSON.parse(text); } catch (e) { alert("That file isn't a StockPile sharing file."); return; }
+  if (!d || d.stockpileShare !== 1) { alert("That file isn't a StockPile sharing file. To load a backup, use Restore."); return; }
+  if (shareMode === 'join') return joinShare(d);
+  if (!S.share) { alert('These books are not shared yet.'); return; }
+  if (d.id !== S.share.id) { const other = (P.list.find(p => p.id !== P.current) ? ' Switch to the right books first, or use “Join shared books” if this is a new one.' : ''); alert(`That update is for different books (“${String(d.name || '').slice(0, 40)}”).` + other); return; }
+  try {
+    const n = mergeInto(await openShare(d, S.share.pass));
+    S.lastSync = today(); commit(); render();
+    alert(`Merged${d.from ? ' from ' + String(d.from).slice(0, 30) : ''}: ${n} new ${n === 1 ? 'entry' : 'entries'}. Both phones match once you send yours back.`);
+  } catch (e) { alert((e && e.userMsg) || 'That update could not be merged.'); }
+}
+function joinShare(d) {
+  if (staffMode) return;
+  if (P.list.some(p => p.share === d.id) || (S.share && S.share.id === d.id)) { alert('You already have these shared books. Open them and use “Merge an update”.'); return; }
+  form(`Join “${String(d.name || 'shared books').slice(0, 40)}”`, [
+    { k: 'me', l: 'Your name (shown on entries you add)', v: myName(), req: 1 },
+    { k: 'pass', l: 'Sharing password', req: 1 }
+  ], v => busy(async () => {
+    const data = clean(await openShare(d, String(v.pass)));
+    try { localStorage.setItem(MKEY, String(v.me).trim().slice(0, 30)); } catch (e) {}
+    save(); await saveQ;
+    const id = uid(); P.list.push({ id, name: String(d.name || 'Shared books').slice(0, 60), ...(d.kind === 'personal' ? { kind: 'personal' } : {}), share: d.id });
+    P.current = id; if (SEC) newKey(id);
+    S = data; S.share = { id: d.id, pass: String(v.pass) }; S.lastSync = today(); loadFailed = false; dataReady = true; resetView(); prepSync(); takeSnap();
+    save(); await saveQ;
+    setTimeout(() => alert('Joined. These books are now on this phone too. Use More → Share to send and merge updates.'), 80);
+  }), `<div class="mute">This adds the shared books to this phone as a new set of books. ${d.from ? 'Sent by ' + esc(String(d.from).slice(0, 30)) + '.' : ''}</div>`);
+}
+function stopShare() { if (S.share && confirm('Stop sharing these books on this phone?\n\nYour entries stay. You just won’t be able to send or merge updates until you share again.')) { delete S.share; const p = P.list.find(x => x.id === P.current); if (p) delete p.share; commit(); render(); } }
+$('#shareFile').onchange = e => { const f = e.target.files && e.target.files[0]; if (!f) return; const r = new FileReader(); r.onload = () => onShareFile(String(r.result)); r.readAsText(f); };
 
 /* ---------- debts ---------- */
 const paid = d => sum(d.payments || [], p => p.amount);
@@ -1650,7 +1820,7 @@ function addProfile() {
     bizOn() ? { k: 'kind', l: 'What is it for?', t: 'select', v: 'business', o: [['business', 'A business'], ['personal', 'Personal or household money']] } : null,
     { k: 'name', l: 'Name', req: 1, ph: bizOn() ? 'e.g. Home, or the business name' : 'e.g. Savings, Holiday fund, Joint account' }
   ], v => {
-    save(); const id = uid(); P.list.push({ id, name: v.name, ...(v.kind === 'personal' || !bizOn() ? { kind: 'personal' } : {}) }); P.current = id; S = fresh(); resetView(); if (SEC) newKey(id);
+    save(); const id = uid(); P.list.push({ id, name: v.name, ...(v.kind === 'personal' || !bizOn() ? { kind: 'personal' } : {}) }); P.current = id; S = fresh(); baseSnap = null; resetView(); if (SEC) newKey(id);
   }, `<div class="mute">Starts empty, with its own entries and backups.${bizOn() ? ' A personal one swaps the Sell and Stock tabs for spending categories, budgets and receipt photos.' : ''}</div>`);
 }
 function renameProfile(id) {
@@ -1729,7 +1899,7 @@ async function openBackup(d, pin) {
 function applyBackup(o) {
   if (!o || !Array.isArray(o.tx) || !Array.isArray(o.items) || !Array.isArray(o.debts)) throw fail("That file doesn't look like a StockPile backup.");
   const ph = Array.isArray(o._photos) ? o._photos : [];
-  S = clean(o); delete S.set.pin; loadFailed = false; thumbCache.clear(); save(); render();
+  S = clean(o); delete S.set.pin; loadFailed = false; thumbCache.clear(); prepSync(); takeSnap(); save(); render();
   if (ph.length) restorePhotos(ph).then(() => render());
   alert('Backup restored.' + (ph.length ? ` Loading ${ph.length} receipt photo${ph.length === 1 ? '' : 's'} too.` : ''));
 }
@@ -1767,7 +1937,7 @@ function exportStock() {
   download(`stockpile-stock-${today()}.csv`, csv(rows), 'text/csv');
 }
 function wipe() { if (staffMode) return;
-  if (confirm(`Erase ALL data for "${profName()}"? Make a backup first if you might want it.`) && confirm('Are you sure? This cannot be undone.')) { photosDropProfile(P.current); thumbCache.clear(); S = fresh(); save(); render(); }
+  if (confirm(`Erase ALL data for "${profName()}"? Make a backup first if you might want it.`) && confirm('Are you sure? This cannot be undone.')) { photosDropProfile(P.current); thumbCache.clear(); S = fresh(); baseSnap = null; const me = P.list.find(x => x.id === P.current); if (me) delete me.share; save(); render(); }
 }
 
 /* ---------- views ---------- */
@@ -2001,6 +2171,12 @@ const V = {
       <button class="btn" onclick="yearSheet()">Open year summary</button></div>
     <div class="card" style="margin-bottom:12px"><b>Appearance</b>
       <label class="chk"><input type="checkbox" ${isDark() ? 'checked' : ''} onchange="P.dark=this.checked;save();render()"> Dark mode</label></div>
+    <div class="card" style="margin-bottom:12px"><b>Share with another phone</b>
+      ${S.share ? `<p class="mute">“${esc(profName())}” is shared ✓${myName() ? ' · you are “' + esc(myName()) + '”' : ''}. Last sent or merged: ${S.lastSync ? niceDate(S.lastSync) : 'never'}.</p>
+        <div class="row"><button class="btn" onclick="sendShare()">📤 Send update</button><button class="btn" onclick="pickShare('merge')">📥 Merge an update</button><button class="btn sec" onclick="stopShare()">Stop sharing</button></div>
+        <p class="mute">Send your update to the other phone, and merge theirs when it arrives. Entries from both phones are combined, and stock counts add up from both. Receipt photos stay on the phone that took them.</p>`
+      : `<p class="mute">Keep the same books on two phones, for a household budget or a second till. No internet or account needed: you pass a locked file between the phones and the app merges it.</p>
+        <div class="row"><button class="btn" onclick="startShare()">Share “${esc(profName())}”</button><button class="btn sec" onclick="pickShare('join')">Join shared books</button></div>`}</div>
     ${isPersonal() ? `<div class="card" style="margin-bottom:12px"><b>Budgets</b>
       <p class="mute">Monthly limits for your spending categories. Progress shows on Home.</p>
       <button class="btn" onclick="budgetsForm()">Set budgets</button></div>` : ''}
@@ -2021,7 +2197,7 @@ function render() {
   if (staffMode && !staffTabs().includes(tab)) tab = 'sell';
   document.body.classList.toggle('dark', isDark()); document.body.classList.toggle('staff', staffMode);
   document.querySelectorAll('#nav button').forEach(b => { const t = b.dataset.t; b.hidden = staffMode ? !staffTabs().includes(t) : pers ? (t === 'sell' || t === 'stock') : t === 'receipts'; b.classList.toggle('on', t === tab); });
-  $('#hdr').innerHTML = `<span>📦 StockPile${BETA ? ' <span class="beta">TEST COPY</span>' : ''}</span>` + (staffMode ? `<button onclick="lockNow()">🔒 ${esc(staff ? staff.who : 'Staff')} · Lock</button>` : `<select id="profSel" aria-label="Switch books" onchange="switchProfile(this.value)">${P.list.map(p => `<option value="${p.id}" ${p.id === P.current ? 'selected' : ''}>${isPriv(p.id) ? '🔒 ' : ''}${esc(p.name)}${p.kind === 'personal' ? ' (personal)' : ''}</option>`).join('')}</select>`);
+  $('#hdr').innerHTML = `<span>📦 StockPile${BETA ? ' <span class="beta">TEST COPY</span>' : ''}</span>` + (staffMode ? `<button onclick="lockNow()">🔒 ${esc(staff ? staff.who : 'Staff')} · Lock</button>` : `<select id="profSel" aria-label="Switch books" onchange="switchProfile(this.value)">${P.list.map(p => `<option value="${p.id}" ${p.id === P.current ? 'selected' : ''}>${isPriv(p.id) ? '🔒 ' : ''}${p.share ? '⇄ ' : ''}${esc(p.name)}${p.kind === 'personal' ? ' (personal)' : ''}</option>`).join('')}</select>`);
   document.body.classList.toggle('setup', firstRun);
   $('#view').innerHTML = firstRun ? setupCard() : needKey() ? privCard() : V[tab]();
   loadThumbs();
