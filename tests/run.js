@@ -385,6 +385,21 @@ let hd=$('#hdr').innerHTML; ok(/<select id="profSel"/.test(hd) && /<option value
 await switchProfile('h2'); ok(P.current==='h2' && isPersonal() && S.tx.length===0 && /<option value="h2" selected>/.test($('#hdr').innerHTML),'picking one from the drop-down switches to it');
 await switchProfile('default'); ok(S.tx.length===1 && /Add, rename or delete books/.test(V.more()),'adding and managing books lives under More');
 staffMode=true; render(); ok(!/<select/.test($('#hdr').innerHTML) && /Lock/.test($('#hdr').innerHTML),'staff mode shows Lock in place of the drop-down'); staffMode=false; tab='home'; render();
+
+// version 11.3: the staff PIN never opens personal books
+SEC=null;DK=null;LEGACY=null;S=fresh();P=defaultP();Object.keys(store).forEach(k=>delete store[k]);
+S.items.push({id:'a',name:'Widget',num:1,qty:5,cost:1,price:2}); save();
+P.list.push({id:'hm',name:'Home',kind:'personal'}); P.current='hm'; S=fresh(); S.tx.push({id:'secret',type:'out',amount:4321,cat:'Loans & credit cards',note:'private loan',acct:'bank',gst:0,date:today()}); save();
+await enableEnc('owner-9'); const st2=rnd(16); SEC.staff={salt:b64(st2),iter:ITER,...await enc(await pinKey('staff-9',st2,ITER),b64(await crypto.subtle.exportKey('raw',DK)))}; save(); await saveQ;
+ok(P.current==='hm' && isPersonal(),'owner leaves the app on personal books');
+await lockNow(); $('#pinIn').value='staff-9'; await tryUnlock(); render();
+ok(staffMode && P.current==='default' && !isPersonal() && tab==='sell' && S.items.length===1 && !S.tx.some(t=>t.id==='secret'),'staff PIN opens business books even when personal was last open');
+ok(!/4321|private loan|Home/.test($('#hdr').innerHTML + $('#view').innerHTML),'nothing from the personal books is on screen for staff');
+await lockNow(); $('#pinIn').value='owner-9'; await tryUnlock(); await switchProfile('hm'); ok(!staffMode && S.tx[0].id==='secret','owner still sees the personal books');
+await delProfile('default'); await saveQ; ok(P.list.length===1 && isPersonal(),'(only personal books left)');
+await lockNow(); $('#pinIn').value='staff-9'; await tryUnlock();
+ok(DK===null && !staffMode && els['#lock'].hidden===false && /only opens business books/.test($('#pinMsg').textContent) && S.tx.length===0,'with only personal books, the staff PIN opens nothing');
+$('#pinIn').value='owner-9'; await tryUnlock(); await removeEnc('owner-9'); tab='home';
 })().catch(e=>{console.log('CRASH',e);process.exitCode=1});
 `;
 const html=fs.readFileSync(process.argv[2]?require('path').resolve(process.argv[2]):require('path').join(__dirname,'..','beta','index.html'),'utf8');

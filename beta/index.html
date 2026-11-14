@@ -127,7 +127,7 @@ body.dark .sheet .rc{color:var(--ink)}body.dark .sheet .rcs{color:var(--mute)}bo
 // The test copy (served from /beta/) keeps its data under separate names, so it can never touch the real app's data.
 const BETA = /\/beta\//.test((typeof location !== 'undefined' && location.pathname) || '');
 const KEY0 = (BETA ? 'beta_' : '') + 'money_inventory_tracker_v1', PKEY = (BETA ? 'beta_' : '') + 'stockpile_profiles';
-const VERSION = '11.2';
+const VERSION = '11.3';
 const okDark = v => v === true || v === false ? v : undefined;
 const fresh = () => ({ tx: [], items: [], debts: [], lastBackup: null, dirty: 0, auto: true, offRemind: true, lastSent: null, offSnooze: null, contacts: [], adj: [], rec: [], budgets: {}, set: { gst: false, gstRate: 5 } });
 const defaultP = () => ({ list: [{ id: 'default', name: 'My business' }], current: 'default' });
@@ -1266,7 +1266,13 @@ async function tryUnlock() {
       let raw, staff = false;
       try { raw = await unwrapWithPin(pin); }
       catch (e) { if (!SEC.staff) throw e; raw = unb64(await dec(await pinKey(pin, unb64(SEC.staff.salt), SEC.staff.iter), SEC.staff)); staff = true; }
-      await openWith(raw); staffMode = staff; if (staff) tab = 'sell';
+      await openWith(raw);
+      if (staff && isPersonal()) {   // staff never land in personal books: move to business books, or refuse
+        const biz = P.list.find(p => p.kind !== 'personal');
+        if (!biz) { await lockNow(); $('#pinMsg').textContent = 'The staff PIN only opens business books, and there are none.'; return; }
+        P.current = biz.id; await loadProfile();
+      }
+      staffMode = staff; if (staff) tab = 'sell';
     } else {
       if (hashPin(pin) !== LEGACY) throw 0;
       if (CAN) { try { await enableEnc(pin); } catch (e) {} }
