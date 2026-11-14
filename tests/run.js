@@ -318,6 +318,65 @@ setStaffPin(); F('p1','owner-1'); F('p2','owner-1'); lastAlert=''; SAVE(); await
 await changePin('owner-1','owner-2'); await lockNow(); $('#pinIn').value='staff-1'; await tryUnlock(); ok(staffMode===true,'staff PIN survives an owner PIN change'); await lockNow();
 $('#pinIn').value='owner-2'; await tryUnlock(); removeStaffPin(); await saveQ; ok(!SEC.staff,'staff PIN can be removed'); await removeEnc('owner-2');
 allTabs(); tab='home'; staffMode=false;
+
+// ================= version 11.1: personal books, budgets, receipt photos =================
+SEC=null;DK=null;LEGACY=null;S=fresh();P=defaultP();Object.keys(store).forEach(k=>delete store[k]);memPhotos.clear();thumbCache.clear();pendingPics=[];
+ok(!isPersonal() && categories('out').includes('Supplies'),'business books keep business categories');
+P.list.push({id:'home1',name:'Home',kind:'personal'}); P.current='home1'; S=fresh(); sanitizeP();
+ok(isPersonal() && P.list[1].kind==='personal' && categories('out')[0]==='Groceries' && categories('in')[0]==='Pay','personal books use household categories');
+tab='sell'; render(); ok(tab==='home','personal books have no Sell or Stock screen');
+showNums=false; let ph=V.home(); ok(/Quick add/.test(ph) && /Groceries/.test(ph) && /Snap a receipt/.test(ph) && !/\\$\\d/.test(ph),'personal Home opens private, with quick-add categories');
+addTx('out',null,{cat:'Fuel'}); ok(/value="Fuel"/.test($('#modal').innerHTML) && /id="picStrip"/.test($('#modal').innerHTML) && !/Customer/.test($('#modal').innerHTML),'tapping a category opens the entry with it filled in');
+F('amount',120); F('cat','Groceries'); F('note','Save-On'); F('acct','bank'); F('date',today()); SAVE();
+S.tx.push({id:'pp2',type:'out',amount:40,cat:'Fuel',acct:'cash',gst:0,date:today()},{id:'pp3',type:'in',amount:900,cat:'Pay',acct:'bank',gst:0,date:today()});
+S.budgets={Groceries:100,Fuel:200}; showNums=true; ph=V.home();
+ok(/\\$120\\.00 of \\$100\\.00/.test(ph) && /\\$40\\.00 of \\$200\\.00/.test(ph) && /Spending in/.test(ph) && !/Profit on sales|Stock value/.test(ph),'personal summary shows spending against budgets, no business figures');
+ok(/class="neg">\\$120\\.00 of/.test(ph),'going over a budget is flagged');
+budgetsForm(); budgetCats().forEach((c,i)=>F('b'+i,c==='Pets'?75:'')); SAVE(); ok(Object.keys(S.budgets).length===1 && S.budgets.Pets===75,'budgets can be set per category');
+ok(clean(JSON.parse(JSON.stringify(S))).budgets.Pets===75 && Object.keys(clean({budgets:{'<x>':-5,ok:'3'}}).budgets).join()==='ok','budgets survive reload and are cleaned');
+moneyView='break'; moneyFilter='all'; ok(!/Best sellers|Customers/.test(V.money()) && /Where the money went/.test(V.money()),'personal breakdown leaves out business sections'); moneyView='list'; moneyFilter='month';
+ok(!/Customers/.test(V.debts()),'personal Owing has no Customers button');
+// receipt photos
+const bytes=new Uint8Array([9,8,7,6,5]).buffer, TH='data:image/jpeg;base64,AAAA';
+let pid1=await photoSave({buf:bytes,thumb:TH,w:10,h:20}); let pl=await photoLoad(pid1);
+ok(pl && new Uint8Array(pl.buf).join()==='9,8,7,6,5' && pl.thumb===TH && pl.pid==='home1' && pl.date===today(),'a photo is stored and read back unchanged');
+pendingPics=[pid1]; addTx('out'); F('amount',8.48); F('cat','Groceries'); F('note','Milk'); F('acct','cash'); F('date','2026-11-12'); SAVE();
+const ptx=S.tx[S.tx.length-1]; ok(ptx.pics && ptx.pics[0]===pid1 && pendingPics.length===0 && (await photoLoad(pid1)),'saving the entry attaches the photo');
+const pid2=await photoSave({buf:bytes,thumb:TH}); pendingPics=[pid2]; addTx('out'); closeForm(); await tick(20); ok(!(await PS.get(pid2)) && pendingPics.length===0,'cancelling the entry throws the unused photo away');
+ok(/📎/.test(V.money().replace('month','')) || (moneyFilter='all', /📎/.test(V.money())),'entries with a photo show a paperclip in the Ledger'); moneyFilter='month';
+tab='receipts'; rcQ='';rcCat='';rcMonth=''; ok(rcAll().length===1 && /Milk/.test(V.receipts()) && /data-pic="/.test(V.receipts()),'Receipts tab lists entries that have photos');
+rcCat='Fuel'; ok(rcShown().length===0,'receipts filter by category'); rcCat='Groceries'; ok(rcShown().length===1); rcCat='';
+rcMonth='2026-10'; ok(rcShown().length===0,'receipts filter by month'); rcMonth='2026-11'; ok(rcShown().length===1); rcMonth='';
+rcQ='milk'; ok(rcShown().length===1,'receipts search by text'); rcQ='8.48'; ok(rcShown().length===1,'receipts search by amount'); rcQ='nov 12'; ok(rcShown().length===1,'receipts search by date'); rcQ='zzz'; ok(/No receipts match/.test(rcBodyHTML())); rcQ='';
+ok(clean({tx:[{id:'a1',type:'out',amount:1,date:today(),pics:['good1','<bad>',5,'ok2']}]}).tx[0].pics.join()==='good1,ok2','photo links are cleaned on load');
+// photos and encryption
+save(); await enableEnc('pin-photo'); let raw1=memPhotos.get(pid1);
+ok(raw1.enc===1 && !raw1.thumb && new Uint8Array(raw1.buf).join()!=='9,8,7,6,5','setting a PIN encrypts the stored photos');
+pl=await photoLoad(pid1); ok(new Uint8Array(pl.buf).join()==='9,8,7,6,5' && pl.thumb===TH,'encrypted photos open normally while unlocked');
+const pid3=await photoSave({buf:bytes,thumb:TH}); ok(memPhotos.get(pid3).enc===1,'new photos are encrypted too'); await photoDel(pid3);
+const bkp=await backupText(true,true), bko=JSON.parse(bkp); ok(bko._photos.length===1 && bko._photos[0].id===pid1 && bko._photos[0].b64===b64(bytes),'“back up with photos” includes the pictures');
+ok(!JSON.parse(await backupText(true))._photos,'ordinary backups leave photos out');
+const lockedB=await backupText(false,true); ok(!lockedB.includes(b64(bytes)) && JSON.parse(lockedB).stockpileBackup===2,'a locked backup with photos is encrypted');
+await lockNow(); ok(thumbCache.size===0,'locking clears photo previews from memory'); $('#pinIn').value='pin-photo'; await tryUnlock();
+await removeEnc('pin-photo'); ok(!memPhotos.get(pid1).enc && new Uint8Array(memPhotos.get(pid1).buf).join()==='9,8,7,6,5','removing the PIN stores photos unlocked again');
+memPhotos.clear(); bko._photos.push({id:'<evil>',b64:'AAAA'},{id:'x9',b64:5},null); applyBackup(bko); await tick(50);
+ok(memPhotos.size===1 && (await photoLoad(pid1)) && new Uint8Array((await photoLoad(pid1)).buf).join()==='9,8,7,6,5' && /receipt photo/.test(lastAlert),'restoring a backup with photos brings the pictures back, and ignores bad ones');
+const ptx2=S.tx.find(t=>t.pics); delTx(ptx2.id); await tick(20); ok(!(await PS.get(pid1)) && rcAll().length===0,'deleting an entry deletes its photo');
+// reading a receipt
+const R1=parseReceipt('SAVE-ON-FOODS\\nMaple Ridge BC\\n2026-11-12 14:32\\nMILK 4.99\\nBREAD 3.49\\nSUBTOTAL 8.48\\nGST 0.00\\nTOTAL 8.48\\nVISA 8.48');
+ok(R1.amount===8.48 && R1.date==='2026-11-12' && R1.note==='SAVE-ON-FOODS' && R1.cat==='Groceries' && R1.read===true,'a grocery receipt reads as store, date, total and category');
+const R2=parseReceipt('PETRO-CANADA\\nNov 3, 2026\\nREGULAR 41.2 L\\nFUEL SALE $62.10\\nTOTAL\\n$62.10');
+ok(R2.amount===62.1 && R2.date==='2026-11-03' && R2.cat==='Fuel','a fuel receipt with the total on the next line reads correctly');
+const R3=parseReceipt('Corner Store\\nGUM 1.25\\nCHIPS 2.75\\nTAX 0.20\\nCASH 4.20'); ok(R3.amount===4.2 && !R3.cat && !R3.date,'with no TOTAL line it takes the largest amount and leaves the rest blank');
+ok(Object.keys(parseReceipt('')).length===0 && (await readReceipt({}))===null,'an unreadable photo fills in nothing');
+ok(guessCat('BC HYDRO payment')==='Hydro' && guessCat('FortisBC')==='Natural gas' && guessCat('TELUS Mobility')==='Phone & internet' && guessCat('Tim Hortons #123')==='Eating out' && guessCat('random')==='','store names suggest a category');
+ok(guessCat('Espresso Bar')==='' && guessCat('Taco Bell')==='Eating out' && guessCat('Corona Flowers')==='' && guessCat('Canadian Tire')==='Household' && guessCat('ESSO 1234')==='Fuel','category guesses avoid look-alike words');
+addTx('out',null,R1); ok(/Filled in from the photo/.test($('#modal').innerHTML) && /value="8.48"/.test($('#modal').innerHTML) && /value="2026-11-12"/.test($('#modal').innerHTML),'a read receipt pre-fills the entry and asks you to check it'); closeForm();
+// business books still get receipts
+P.current='default'; S=fresh(); S.tx.push({id:'bz',type:'out',amount:5,cat:'Supplies',acct:'cash',gst:0,date:today(),pics:['zz1']}); tab='money'; moneyFilter='all';
+ok(!isPersonal() && /📎 Receipts/.test(V.money()) && /Customers/.test(V.debts()),'business books get a Receipts button and keep Customers'); moneyFilter='month';
+showNums=false; ok(/Welcome back/.test(V.home()) && !/Quick add/.test(V.home()),'business Home is unchanged');
+allTabs(); V.receipts(); tab='home';
 })().catch(e=>{console.log('CRASH',e);process.exitCode=1});
 `;
 const html=fs.readFileSync(process.argv[2]?require('path').resolve(process.argv[2]):require('path').join(__dirname,'..','beta','index.html'),'utf8');

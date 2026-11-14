@@ -72,6 +72,12 @@ select.f,input.f{padding:8px;border-radius:8px;border:1px solid var(--line);font
 #printArea{display:none}
 .beta{background:#f59e0b;color:#1d2433;border-radius:6px;padding:2px 6px;font-size:11px;margin-left:6px;vertical-align:middle}
 body.staff nav{display:none}
+nav button[hidden]{display:none}
+.th{width:48px;height:48px;border-radius:8px;object-fit:cover;background:#e5e7eb;flex:none;cursor:pointer}
+.strip{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:8px 0}
+.cats{display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:8px}
+.cat{border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:12px;padding:10px 4px;font-size:13px;display:flex;flex-direction:column;align-items:center;gap:4px;cursor:pointer}
+.cat span{font-size:22px}
 body.dark{--bg:#0f1420;--card:#1a2233;--ink:#e6e9ef;--mute:#9aa3b2;--line:#2b3548;--green:#34d399;--red:#f87171;--accent:#2dd4bf}
 body.dark header,body.dark #lock{background:#0b0f18}
 body.dark nav,body.dark .list,body.dark .sheet,body.dark .fl input,body.dark .fl select,body.dark select.f,body.dark input.f,body.dark .qb{background:var(--card);color:var(--ink);border-color:var(--line)}
@@ -96,6 +102,7 @@ body.dark .sheet .rc{color:var(--ink)}body.dark .sheet .rcs{color:var(--mute)}bo
   <button data-t="home">Home</button>
   <button data-t="sell">Sell</button>
   <button data-t="money">Ledger</button>
+  <button data-t="receipts">Receipts</button>
   <button data-t="stock">Stock</button>
   <button data-t="debts">Owing</button>
   <button data-t="more">More</button>
@@ -111,15 +118,17 @@ body.dark .sheet .rc{color:var(--ink)}body.dark .sheet .rcs{color:var(--mute)}bo
   <a href="#" id="pinForgot">Forgot PIN?</a>
 </div>
 <div id="printArea"></div>
+<input type="file" id="snapFile" accept="image/*" capture="environment" hidden>
+<input type="file" id="pickFile" accept="image/*" hidden>
 <input type="file" id="restoreFile" accept=".json,.txt,application/json,text/plain" hidden>
 
 <script>
 // The test copy (served from /beta/) keeps its data under separate names, so it can never touch the real app's data.
 const BETA = /\/beta\//.test((typeof location !== 'undefined' && location.pathname) || '');
 const KEY0 = (BETA ? 'beta_' : '') + 'money_inventory_tracker_v1', PKEY = (BETA ? 'beta_' : '') + 'stockpile_profiles';
-const VERSION = '11.0';
+const VERSION = '11.1';
 const okDark = v => v === true || v === false ? v : undefined;
-const fresh = () => ({ tx: [], items: [], debts: [], lastBackup: null, dirty: 0, auto: true, offRemind: true, lastSent: null, offSnooze: null, contacts: [], adj: [], rec: [], set: { gst: false, gstRate: 5 } });
+const fresh = () => ({ tx: [], items: [], debts: [], lastBackup: null, dirty: 0, auto: true, offRemind: true, lastSent: null, offSnooze: null, contacts: [], adj: [], rec: [], budgets: {}, set: { gst: false, gstRate: 5 } });
 const defaultP = () => ({ list: [{ id: 'default', name: 'My business' }], current: 'default' });
 const CAN = !!(globalThis.crypto && crypto.subtle);
 let S = fresh(), P = defaultP(), storageOK = true, loadFailed = false;
@@ -193,6 +202,7 @@ function clean(d) {
       if (t.sale) r.sale = okId(t.sale);
       if (t.saleAmt !== undefined) r.saleAmt = num(t.saleAmt);
       if (t.disc) r.disc = num(t.disc);
+      if (Array.isArray(t.pics)) { const pp = t.pics.filter(x => typeof x === 'string' && /^[a-z0-9]{1,24}$/i.test(x)).slice(0, 6); if (pp.length) r.pics = pp; }
       if (t.ret) { r.ret = okId(t.ret); if (t.line) r.line = okId(t.line); if (t.back) r.back = true; if (t.owedCut) r.owedCut = num(t.owedCut); }
     }
     return r;
@@ -208,6 +218,7 @@ function clean(d) {
   o.contacts = arr(d.contacts).map(c => ({ key: ckey(str(c.name)), name: str(c.name).trim(), phone: cleanPhone(c.phone), email: EMAIL_OK.test(str(c.email).trim()) ? str(c.email).trim().slice(0, 120) : '', promo: !!c.promo })).filter(c => c.key);
   o.adj = arr(d.adj).map(a => ({ id: okId(a.id), date: okDate(a.date), itemId: okId(a.itemId), name: str(a.name), qty: Math.round(num(a.qty)), why: str(a.why), note: str(a.note), value: num(a.value) }));
   o.rec = arr(d.rec).map(r => ({ id: okId(r.id), name: str(r.name), amount: num(r.amount), cat: str(r.cat), acct: r.acct === 'bank' ? 'bank' : 'cash', day: Math.min(Math.max(Math.round(num(r.day)) || 1, 1), 28), last: /^\d{4}-\d{2}$/.test(r.last) ? r.last : today().slice(0, 7) }));
+  if (d.budgets && typeof d.budgets === 'object') Object.entries(d.budgets).slice(0, 80).forEach(([k, v]) => { if (num(v) > 0 && str(k)) o.budgets[str(k).slice(0, 60)] = num(v); });
   o.offRemind = d.offRemind !== false; o.lastSent = isDate(d.lastSent) ? d.lastSent : null; o.offSnooze = isDate(d.offSnooze) ? d.offSnooze : null;
   const st = d.set && typeof d.set === 'object' ? d.set : {};
   o.set = { gst: !!st.gst, gstRate: num(st.gstRate) || 5 };
@@ -215,7 +226,7 @@ function clean(d) {
   return o;
 }
 function sanitizeP() {
-  P.list = arr(P.list).filter(p => typeof p.id === 'string' && /^[a-z0-9]{1,24}$/i.test(p.id)).map(p => ({ id: p.id, name: str(p.name) || 'My business' }));
+  P.list = arr(P.list).filter(p => typeof p.id === 'string' && /^[a-z0-9]{1,24}$/i.test(p.id)).map(p => ({ id: p.id, name: str(p.name) || 'My business', ...(p.kind === 'personal' ? { kind: 'personal' } : {}) }));
   if (!P.list.length) P.list = defaultP().list;
   if (!P.list.some(p => p.id === P.current)) P.current = P.list[0].id;
 }
@@ -250,7 +261,13 @@ function form(title, fields, onSave, extra = '', onDelete = null) {
     if (onSave(v) !== false) { closeForm(); commit(); render(); }
   };
 }
-function closeForm() { const scanning = !!scan; stopScan(); $('#modal').hidden = true; $('#modal').innerHTML = ''; if (scanning) render(); }
+function closeForm() {
+  const scanning = !!scan; stopScan();
+  if (pendingPics.length) { pendingPics.forEach(photoDel); pendingPics = []; }   // photos taken for an entry that was never saved
+  if (bigURL) { try { URL.revokeObjectURL(bigURL); } catch (e) {} bigURL = ''; }
+  $('#modal').hidden = true; $('#modal').innerHTML = '';
+  if (scanning) render();
+}
 function fieldHTML(f) {
   const id = 'f_' + f.k, val = f.v ?? '';
   if (f.t === 'check') return `<label class="chk"><input type="checkbox" id="${id}" ${val ? 'checked' : ''}> ${esc(f.l)}</label>`;
@@ -267,29 +284,32 @@ function fieldHTML(f) {
 const acctField = (v, l) => ({ k: 'acct', l: l || 'Cash or bank?', t: 'select', v: v || 'cash', o: [['cash', 'Cash'], ['bank', 'Bank']] });
 const gstField = def => S.set.gst ? { k: 'gstInc', l: `Amount includes GST (${S.set.gstRate}%)`, t: 'check', v: def } : null;
 function categories(type) {
-  const base = type === 'in' ? ['Sales', 'Job payment', 'Other income'] : ['Inventory', 'Supplies', 'Gas', 'Tools', 'Rent', 'Phone', 'Food', 'Other'];
+  const base = isPersonal() ? (type === 'in' ? PINCOME : PCATS.map(c => c[0])) : type === 'in' ? ['Sales', 'Job payment', 'Other income'] : ['Inventory', 'Supplies', 'Gas', 'Tools', 'Rent', 'Phone', 'Food', 'Other'];
   const used = S.tx.filter(t => t.type === type).map(t => t.cat).filter(Boolean);
   return [...new Set([...used, ...base])];
 }
 const customers = () => [...new Set(S.tx.map(t => t.cust).filter(Boolean))];
 
 /* ---------- money ---------- */
-function addTx(type, t) {
+function addTx(type, t, preset) {
   const isEdit = !!t, isIn = type === 'in';
-  t = t || { date: today(), type, amount: '', cat: '', note: '', cust: '', acct: 'cash' };
+  t = t || { date: today(), type, amount: '', cat: '', note: '', cust: '', acct: 'cash', ...(preset || {}) };
+  if (!isDate(t.date)) t.date = today();
   form((isEdit ? 'Edit ' : '') + (isIn ? 'Money In' : 'Money Out'), [
     { k: 'amount', l: 'Amount ($)', t: 'money', v: t.amount, req: 1, pos: 1, ph: '0.00' },
     { k: 'cat', l: 'Category', v: t.cat, list: categories(type), ph: isIn ? 'e.g. Sales' : 'e.g. Supplies' },
-    isIn ? { k: 'cust', l: 'Customer (optional)', v: t.cust, list: customers() } : null,
-    { k: 'note', l: 'Note (optional)', v: t.note, ph: 'What was it for?' },
+    isIn && !isPersonal() ? { k: 'cust', l: 'Customer (optional)', v: t.cust, list: customers() } : null,
+    { k: 'note', l: isPersonal() ? 'Where or what (optional)' : 'Note (optional)', v: t.note, ph: isPersonal() ? 'e.g. the store name' : 'What was it for?' },
     acctField(acct(t)),
     gstField(isEdit ? !!t.gst : false),
     { k: 'date', l: 'Date', t: 'date', v: t.date }
   ], v => {
     const data = { amount: round(v.amount), cat: v.cat, note: v.note, acct: v.acct, date: v.date || today(), gst: gstOf(round(v.amount), v.gstInc) };
     if (isIn) data.cust = v.cust;
-    if (isEdit) Object.assign(t, data); else S.tx.push({ id: uid(), type, ...data });
-  }, '', isEdit ? () => delTx(t.id) : null);
+    if (isEdit) Object.assign(t, data);
+    else { if (pendingPics.length) { data.pics = pendingPics.slice(0, 6); pendingPics = []; } S.tx.push({ id: uid(), type, ...data }); }
+  }, `${preset && preset.read ? '<div class="note">Filled in from the photo. Check the amount before you save.</div>' : ''}<div class="strip" id="picStrip" data-tx="${isEdit ? t.id : ''}">${stripHTML(isEdit ? (t.pics || []) : pendingPics, isEdit ? t.id : '')}</div>`, isEdit ? () => delTx(t.id) : null);
+  loadThumbs();
 }
 function addMove(t) {
   const isEdit = !!t;
@@ -312,6 +332,7 @@ function delTx(id) {
     if (it && t.back && confirm(`This was a return. Take ${t.qty} × ${it.name} back out of stock?`)) it.qty -= t.qty;
     const owed = t.owedCut > 0 && S.debts.find(d => d.sale === t.ret); if (owed) owed.amount = round(owed.amount + t.owedCut);
   } else if (it && confirm(`Put ${t.qty} × ${it.name} back in stock?`)) it.qty += t.qty;
+  dropPics([t]);
   S.tx = S.tx.filter(x => x.id !== id);
   const debt = t.sale && !S.tx.some(x => x.sale === t.sale) && S.debts.find(d => d.sale === t.sale);
   if (debt && confirm(`This sale left ${cur(Math.max(bal(debt), 0))} owing from ${debt.name}. Remove that from the Owing tab too?`)) S.debts = S.debts.filter(d => d !== debt);
@@ -328,6 +349,7 @@ function delSelected() {
   if (!confirm(`Delete ${list.length} ${list.length === 1 ? 'entry' : 'entries'}?`)) return;
   const sold = list.filter(t => !t.ret && t.itemId && t.qty > 0 && S.items.some(i => i.id === t.itemId));
   if (sold.length && confirm(`${sold.length} of these ${sold.length === 1 ? 'is a sale' : 'are sales'}. Put the sold items back in stock?`)) sold.forEach(t => { S.items.find(i => i.id === t.itemId).qty += t.qty; });
+  dropPics(list);
   S.tx = S.tx.filter(t => !sel.has(t.id));
   const gone = S.debts.filter(d => d.sale && list.some(t => t.sale === d.sale) && !S.tx.some(t => t.sale === d.sale));
   if (gone.length && confirm(`${gone.length === 1 ? 'One of the deleted sales still has an amount' : gone.length + ' of the deleted sales still have amounts'} on the Owing tab. Remove ${gone.length === 1 ? 'it' : 'them'} from there too?`)) S.debts = S.debts.filter(d => !gone.includes(d));
@@ -631,6 +653,7 @@ function voidSale(id) {
   const later = r.debt ? paid(r.debt) : 0;
   if (!confirm(`Void this whole sale (${cur(r.total)})?\n\nThe items go back into stock and the sale is removed from your records${r.debt ? ', along with the amount on the Owing tab' : ''}.` + (later > 0 ? `\n\nNote: ${cur(later)} in payments already recorded against it will stay in your Ledger. Delete those entries yourself if they should go too.` : ''))) return;
   r.tx.forEach(t => { const it = t.itemId && S.items.find(i => i.id === t.itemId), keep = (t.qty > 0 ? t.qty : 0) - sum(r.returns.filter(x => x.line === t.id), x => x.qty); if (it && keep > 0) it.qty += keep; });
+  dropPics(r.tx.concat(r.returns));
   S.tx = S.tx.filter(t => t.sale !== id && t.ret !== id);
   if (r.debt) S.debts = S.debts.filter(d => d !== r.debt);
   if (lastSale === id) { lastSale = ''; posMsg = ''; }
@@ -940,6 +963,193 @@ function setStaffPin() {
 function removeStaffPin() { if (SEC && SEC.staff && !staffMode && confirm('Remove the staff PIN?')) { delete SEC.staff; save(); render(); } }
 const isDark = () => P.dark === true || (P.dark == null && typeof matchMedia === 'function' && matchMedia('(prefers-color-scheme: dark)').matches);
 
+/* ---------- personal profiles: categories and budgets ---------- */
+const PCATS = [['Groceries', '🛒'], ['Eating out', '🍔'], ['Fuel', '⛽'], ['Vehicle', '🚗'], ['Hydro', '💡'], ['Natural gas', '🔥'], ['Phone & internet', '📱'], ['Rent or mortgage', '🏠'], ['Loans & credit cards', '💳'], ['Insurance', '🛡️'], ['Medical', '💊'], ['Pets', '🐾'], ['Household', '🧹'], ['Clothing', '👕'], ['Kids & family', '👪'], ['Entertainment', '🎬'], ['Subscriptions', '🔁'], ['Travel', '✈️'], ['Gifts & donations', '🎁'], ['Savings', '🏦'], ['Misc', '📦']];
+const PINCOME = ['Pay', 'Side work', 'Benefits', 'Refunds', 'Other income'];
+const isPersonal = () => (P.list.find(p => p.id === P.current) || {}).kind === 'personal';
+const catIcon = c => (PCATS.find(x => x[0] === c) || [0, '•'])[1];
+function budgetCats() { return [...new Set([...PCATS.map(c => c[0]), ...S.tx.filter(t => t.type === 'out').map(t => t.cat).filter(Boolean), ...Object.keys(S.budgets || {})])]; }
+function budgetsForm() {
+  const cats = budgetCats();
+  form('Monthly budgets', cats.map((c, i) => ({ k: 'b' + i, l: `${catIcon(c)} ${c}`, t: 'money', v: (S.budgets || {})[c] || '', ph: 'no limit' })), v => {
+    S.budgets = {}; cats.forEach((c, i) => { if (v['b' + i] > 0) S.budgets[c] = round(v['b' + i]); });
+  }, '<div class="mute">Set a monthly limit for any category you want to keep an eye on. Leave the rest blank.</div>');
+}
+function personalHome(notes) {
+  const ver = `<p class="mute" style="text-align:center;margin-top:24px;font-size:12px">StockPile version ${VERSION}</p>`;
+  const quick = `<div class="row bar" style="justify-content:center"><button class="btn" onclick="snapNew()">📷 Snap a receipt</button><button class="btn out" onclick="addTx('out')">− Money Out</button><button class="btn in" onclick="addTx('in')">+ Money In</button></div>`;
+  const grid = `<h3>Quick add</h3><div class="cats">${PCATS.map((c, i) => `<button class="cat" onclick="addTx('out',null,{cat:PCATS[${i}][0]})"><span>${c[1]}</span>${esc(c[0])}</button>`).join('')}</div>`;
+  if (!showNums) return `${notes}<div class="card" style="text-align:center;padding:24px 16px;margin-top:10px"><div style="font-size:42px">📦</div>
+      <h2 style="margin:8px 0 4px">Welcome back</h2><div class="mute">${new Date().toLocaleDateString('en-CA', { weekday: 'long', month: 'long', day: 'numeric' })}</div></div>
+    ${quick}${grid}<div style="text-align:center;margin-top:18px"><button class="btn sec" onclick="showNums=true;render()">👁 Show my summary</button></div>${ver}`;
+  const mt = S.tx.filter(t => t.date.startsWith(thisMonth())), mIn = sum(mt.filter(t => t.type === 'in'), t => t.amount), outs = mt.filter(t => t.type === 'out'), mOut = sum(outs, t => t.amount);
+  const cash = acctBal('cash'), bank = acctBal('bank'), od = S.debts.filter(overdue), mn = new Date().toLocaleDateString('en-CA', { month: 'long' });
+  const iOwe = sum(S.debts.filter(d => d.dir === 'owe'), d => Math.max(bal(d), 0)), owedMe = sum(S.debts.filter(d => d.dir === 'owed'), d => Math.max(bal(d), 0));
+  const spent = Object.fromEntries(groupBy(outs, t => t.cat)), B = S.budgets || {}, cats = [...new Set([...Object.keys(spent), ...Object.keys(B)])].sort((a, b) => (spent[b] || 0) - (spent[a] || 0)), top = Math.max(...Object.values(spent), 1);
+  return `${notes}<div class="row bar"><button class="btn" onclick="snapNew()">📷 Snap a receipt</button><button class="btn out" onclick="addTx('out')">− Out</button><button class="btn in" onclick="addTx('in')">+ In</button><button class="btn sec" onclick="showNums=false;render()">🙈 Hide</button></div>
+    <div class="grid">
+      <div class="card"><div class="lbl">Cash on hand</div><div class="big ${cash < 0 ? 'neg' : ''}">${fmt(cash)}</div></div>
+      <div class="card"><div class="lbl">In the bank</div><div class="big ${bank < 0 ? 'neg' : ''}">${fmt(bank)}</div></div>
+      <div class="card"><div class="lbl">In – ${mn}</div><div class="big pos">${fmt(mIn)}</div></div>
+      <div class="card"><div class="lbl">Out – ${mn}</div><div class="big neg">${fmt(mOut)}</div></div>
+      <div class="card"><div class="lbl">Left over – ${mn}</div><div class="big ${mIn - mOut < 0 ? 'neg' : 'pos'}">${fmt(mIn - mOut)}</div></div>
+      <div class="card"><div class="lbl">I owe</div><div class="big ${iOwe ? 'neg' : ''}">${fmt(iOwe)}</div></div>
+      ${owedMe ? `<div class="card"><div class="lbl">Owed to me</div><div class="big pos">${fmt(owedMe)}</div></div>` : ''}
+    </div>
+    <div class="row between" style="margin-top:22px"><h3 style="margin:0">Spending in ${mn}</h3><button class="btn sec sm" onclick="budgetsForm()">Set budgets</button></div>
+    <div class="card" style="margin-top:8px">${cats.length ? cats.map(c => { const s = spent[c] || 0, b = B[c] || 0, over = b > 0 && s > b;
+      return `<div class="br"><div class="row between"><span>${catIcon(c)} ${esc(c)}</span><b class="${over ? 'neg' : ''}">${fmt(s)}${b ? ' of ' + fmt(b) : ''}</b></div>
+        <div class="track"><div class="fill" style="width:${showNums ? Math.max(Math.min((b ? s / b : s / top) * 100, 100), s > 0 ? 2 : 0) : 0}%;background:${over ? 'var(--red)' : 'var(--accent)'}"></div></div></div>`; }).join('') : '<div class="empty">Nothing spent yet this month.</div>'}</div>
+    ${od.length ? `<h3>⚠️ Overdue</h3><div class="list">${od.map(d => `<div class="it"><div class="main" onclick="tab='debts';render()"><div class="t">${esc(d.name)}</div><div class="mute">${d.dir === 'owe' ? 'I owe them' : 'Owes me'} · was due ${niceDate(d.due)}</div></div><div class="amt neg">${fmt(bal(d))}</div></div>`).join('')}</div>` : ''}
+    <h3>Latest entries</h3><div class="list">${S.tx.length ? [...S.tx].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 6).map(txRow).join('') : '<div class="empty">Nothing yet. Tap a category above, or snap a receipt.</div>'}</div>${ver}`;
+}
+
+/* ---------- receipt photos: stored on this phone, encrypted when a PIN is set ---------- */
+const DBN = (BETA ? 'beta_' : '') + 'stockpile_photos', OKID = /^[a-z0-9]{1,24}$/i;
+let memPhotos = new Map(), dbp = null, thumbCache = new Map(), pendingPics = [], snapCtx = null, bigURL = '';
+function photoDB() {
+  if (typeof indexedDB === 'undefined') return null;
+  return dbp || (dbp = new Promise((res, rej) => { const r = indexedDB.open(DBN, 1); r.onupgradeneeded = () => r.result.createObjectStore('photos', { keyPath: 'id' }); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); }));
+}
+async function idb(mode, fn) { const d = await photoDB(); return new Promise((res, rej) => { const tx = d.transaction('photos', mode), rq = fn(tx.objectStore('photos')); tx.oncomplete = () => res(rq && rq.result); tx.onerror = tx.onabort = () => rej(tx.error); }); }
+const PS = {
+  put: r => photoDB() ? idb('readwrite', s => s.put(r)) : (memPhotos.set(r.id, r), Promise.resolve()),
+  get: id => photoDB() ? idb('readonly', s => s.get(id)) : Promise.resolve(memPhotos.get(id)),
+  del: id => photoDB() ? idb('readwrite', s => s.delete(id)) : (memPhotos.delete(id), Promise.resolve()),
+  all: () => photoDB() ? idb('readonly', s => s.getAll()) : Promise.resolve([...memPhotos.values()])
+};
+async function encBuf(key, buf) { const iv = rnd(12); return { iv: b64(iv), buf: await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, buf) }; }
+const decBuf = (key, o) => crypto.subtle.decrypt({ name: 'AES-GCM', iv: unb64(o.iv) }, key, o.buf);
+async function packPhoto(key, p) {   // p: {id, pid, date, w, h, buf, thumb}
+  const base = { id: p.id, pid: p.pid, date: p.date, w: p.w || 0, h: p.h || 0, size: p.buf.byteLength };
+  return key ? { ...base, enc: 1, ...await encBuf(key, p.buf), th: await enc(key, p.thumb || '') } : { ...base, buf: p.buf, thumb: p.thumb || '' };
+}
+async function unpackPhoto(key, r) { return r.enc ? { ...r, buf: await decBuf(key, r), thumb: await dec(key, r.th) } : r; }
+async function photoSave(p) { const id = p.id || uid(); await PS.put(await packPhoto(SEC ? DK : null, { ...p, id, pid: P.current, date: p.date || today() })); if (p.thumb) thumbCache.set(id, p.thumb); return id; }
+async function photoLoad(id) { const r = await PS.get(id); return r ? unpackPhoto(DK, r) : null; }
+function photoDel(id) { thumbCache.delete(id); return PS.del(id).catch(() => {}); }
+const dropPics = list => list.forEach(t => (t.pics || []).forEach(photoDel));
+// When a PIN is set or removed, re-save every photo the matching way. A photo that fails is left as it was.
+async function photosRekey(oldKey, newKey) { for (const r of await PS.all()) { try { await PS.put(await packPhoto(newKey, await unpackPhoto(oldKey, r))); } catch (e) {} } }
+async function photosDropProfile(pid) { for (const r of await PS.all()) if (r.pid === pid) await PS.del(r.id).catch(() => {}); }
+async function loadThumbs() {
+  for (const img of document.querySelectorAll('img[data-pic]')) {
+    const id = img.dataset.pic; if (img.dataset.done) continue; img.dataset.done = '1';
+    try { let th = thumbCache.get(id); if (th === undefined) { const p = await photoLoad(id); th = p ? p.thumb : ''; thumbCache.set(id, th); } if (th) img.src = th; else img.alt = '?'; } catch (e) { img.alt = '?'; }
+  }
+}
+async function shrink(file, max, q) {
+  const bmp = await createImageBitmap(file), sc = Math.min(1, max / Math.max(bmp.width, bmp.height)), c = document.createElement('canvas');
+  c.width = Math.round(bmp.width * sc); c.height = Math.round(bmp.height * sc); c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
+  return c;
+}
+const canvasBlob = (c, q) => new Promise(r => c.toBlob(r, 'image/jpeg', q));
+function snap(ctx, gallery) { snapCtx = ctx; const el = $(gallery ? '#pickFile' : '#snapFile'); el.value = ''; el.click(); }
+function snapNew(gallery) { snap({ mode: 'new' }, gallery); }
+async function onSnapFile(e) {
+  const f = e.target.files && e.target.files[0], ctx = snapCtx; if (!f || !ctx) return;
+  try {
+    // Kept large and at high quality so the print on a receipt stays readable when zoomed in.
+    const big = await shrink(f, 2400), blob = await canvasBlob(big, 0.9), small = await shrink(f, 220);
+    const id = await photoSave({ buf: await blob.arrayBuffer(), thumb: small.toDataURL('image/jpeg', 0.7), w: big.width, h: big.height });
+    if (ctx.mode === 'tx') { const t = S.tx.find(x => x.id === ctx.txId); if (!t) { photoDel(id); return; } (t.pics = t.pics || []).push(id); commit(); refreshStrip(t.pics); render(); }
+    else if (ctx.mode === 'pending') { pendingPics.push(id); refreshStrip(pendingPics); }
+    else { pendingPics = [id]; let g = null; try { g = await readReceipt(big); } catch (err) {} addTx('out', null, g || {}); }
+  } catch (err) { alert("That photo couldn't be saved. Try again, or pick a different picture."); }
+}
+function stripHTML(ids, txId) {
+  return `${ids.map(id => `<img class="th" data-pic="${id}" ${txId ? `onclick="viewPic('${id}')"` : ''}>`).join('')}
+    <button type="button" class="btn sm sec" onclick="snap(${txId ? `{mode:'tx',txId:'${txId}'}` : `{mode:'pending'}`})">📷 ${ids.length ? 'Add another' : 'Add receipt photo'}</button>
+    <button type="button" class="btn sm sec" onclick="snap(${txId ? `{mode:'tx',txId:'${txId}'}` : `{mode:'pending'}`},true)">🖼 Gallery</button>`;
+}
+function refreshStrip(ids) { const el = $('#picStrip'); if (el && !$('#modal').hidden) { el.innerHTML = stripHTML(ids, el.dataset.tx || ''); loadThumbs(); } }
+async function viewPic(id) {
+  const t = S.tx.find(x => (x.pics || []).includes(id)), m = $('#modal');
+  closeForm();
+  m.innerHTML = `<div class="sheet"><div class="row between"><h2 style="margin:0">Receipt photo</h2><button class="x" style="font-size:24px" onclick="closeForm()">✕</button></div>
+    ${t ? `<p class="mute">${niceDate(t.date)} · ${esc(t.cat || '')}${t.note ? ' · ' + esc(t.note) : ''} · <b>${cur(t.amount)}</b></p>` : ''}
+    <div style="overflow:auto;max-height:60vh;border-radius:10px;background:#000"><img id="bigPic" alt="Loading…" style="width:100%;display:block" onclick="this.style.width=this.style.width==='100%'?'250%':'100%'"></div>
+    <p class="mute">Tap the photo to zoom in and out.</p>
+    <div class="row"><button class="btn" onclick="sharePic('${id}')">Save or send</button>${t ? `<button class="btn sec" onclick="closeForm();editTx('${t.id}')">Open entry</button>` : ''}<button class="btn out" onclick="removePic('${id}')">Delete photo</button></div></div>`;
+  m.hidden = false; m.onclick = null;
+  try { const p = await photoLoad(id); if (!p) throw 0; bigURL = URL.createObjectURL(new Blob([p.buf], { type: 'image/jpeg' })); const im = $('#bigPic'); if (im) im.src = bigURL; }
+  catch (e) { const im = $('#bigPic'); if (im) im.alt = "This photo isn't on this phone. It may be in a backup made with photos."; }
+}
+async function sharePic(id) {
+  try {
+    const p = await photoLoad(id), t = S.tx.find(x => (x.pics || []).includes(id)), name = `receipt-${t ? t.date : today()}-${id.slice(-4)}.jpg`, file = new File([p.buf], name, { type: 'image/jpeg' });
+    if (navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file], title: 'Receipt' }); return; }
+    const a = document.createElement('a'); a.href = URL.createObjectURL(file); a.download = name; document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 500);
+  } catch (e) { if (!e || e.name !== 'AbortError') alert("Couldn't open that photo."); }
+}
+function removePic(id) {
+  if (!confirm('Delete this photo? The entry itself stays.')) return;
+  const t = S.tx.find(x => (x.pics || []).includes(id));
+  if (t) { t.pics = t.pics.filter(x => x !== id); if (!t.pics.length) delete t.pics; }
+  pendingPics = pendingPics.filter(x => x !== id); photoDel(id); closeForm(); commit(); render();
+}
+
+/* ---------- reading a receipt photo (only on phones whose browser can read text in pictures) ---------- */
+const CAT_HINTS = [['Fuel', /petro|\bshell\b|\besso\b|chevron|husky|co-?op gas|\bmobil\b|fas gas|gas bar|\bfuel\b|unleaded|diesel/i],
+  ['Eating out', /tim hortons|mcdonald|starbucks|a&w|subway|wendy|taco bell|burger|pizza|restaurant|cafe|sushi|\bpub\b|grill|diner|dairy queen|\bkfc\b|triple o/i],
+  ['Groceries', /save.?on|superstore|walmart|costco|safeway|no frills|freshco|thrifty|\biga\b|grocer|buy.?low|t&t|loblaws|sobeys|produce/i],
+  ['Hydro', /bc hydro|hydro one|\bhydro\b/i], ['Natural gas', /fortis/i], ['Phone & internet', /telus|rogers|\bbell\b|\bshaw\b|freedom mobile|koodo|\bfido\b|virgin plus/i],
+  ['Medical', /pharma|shoppers drug|london drugs|rexall|clinic|dental|optical/i], ['Pets', /petsmart|pet ?valu|bosley|veterinar|\bvet\b|pet food/i],
+  ['Household', /home depot|\brona\b|canadian tire|\blowe'?s\b|home hardware|ikea|dollarama|hardware/i], ['Vehicle', /auto ?parts|lordco|\bnapa\b|\btires?\b|oil change|icbc|car wash|parking/i],
+  ['Clothing', /winners|\bmark'?s\b|old navy|sport ?chek|h&m|clothing/i], ['Insurance', /insurance/i], ['Subscriptions', /netflix|spotify|disney\+|prime video|subscription/i], ['Entertainment', /cineplex|theatre|bowling|\bgolf\b/i]];
+const guessCat = text => { const hit = CAT_HINTS.find(h => h[1].test(text)); return hit ? hit[0] : ''; };
+function parseReceipt(text) {
+  const lines = String(text || '').split(/\r?\n/).map(l => l.trim()).filter(Boolean), money = /(\d{1,5})[.,](\d{2})(?!\d)/g, out = {};
+  const amts = l => [...l.matchAll(money)].map(m => parseFloat(m[1] + '.' + m[2]));
+  for (let i = lines.length - 1; i >= 0 && out.amount === undefined; i--) {
+    if (/total|amount due|balance due/i.test(lines[i]) && !/sub\s*-?total|savings|points/i.test(lines[i])) { const a = amts(lines[i]).concat(amts(lines[i + 1] || '')); if (a.length) out.amount = a[0]; }
+  }
+  if (out.amount === undefined) { const all = lines.flatMap(amts); if (all.length) out.amount = Math.max(...all); }
+  const iso = text.match(/\b(20\d{2})[-\/.](\d{1,2})[-\/.](\d{1,2})\b/), mon = text.match(/\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(\d{1,2}),?\s+(20\d{2})\b/i);
+  if (iso && +iso[2] <= 12 && +iso[3] <= 31) out.date = `${iso[1]}-${iso[2].padStart(2, '0')}-${iso[3].padStart(2, '0')}`;
+  else if (mon) out.date = `${mon[3]}-${String('janfebmaraprmayjunjulaugsepoctnovdec'.indexOf(mon[1].toLowerCase()) / 3 + 1).padStart(2, '0')}-${mon[2].padStart(2, '0')}`;
+  const store = lines.find(l => /[a-z]{3}/i.test(l) && !/receipt|invoice|welcome|thank/i.test(l));
+  if (store) out.note = store.replace(/\s+/g, ' ').slice(0, 40);
+  const cat = guessCat(text); if (cat) out.cat = cat;
+  if (out.amount !== undefined || out.note) out.read = true;
+  return out;
+}
+async function readReceipt(canvas) {
+  if (typeof TextDetector === 'undefined') return null;
+  const blocks = await new TextDetector().detect(canvas); if (!blocks || !blocks.length) return null;
+  blocks.sort((a, b) => (a.boundingBox.y - b.boundingBox.y) || (a.boundingBox.x - b.boundingBox.x));
+  return parseReceipt(blocks.map(b => b.rawValue).join('\n'));
+}
+
+/* ---------- Receipts tab: every entry that has a photo, searchable ---------- */
+let rcQ = '', rcCat = '', rcMonth = '';
+const rcAll = () => S.tx.filter(t => t.pics && t.pics.length).sort((a, b) => b.date.localeCompare(a.date));
+const rcShown = () => rcAll().filter(t => (!rcCat || t.cat === rcCat) && (!rcMonth || t.date.startsWith(rcMonth)) && (!rcQ.trim() || hasQ(rcQ, t.note, t.cat, t.date, niceDate(t.date), t.amount)));
+function rcBodyHTML() {
+  const list = rcShown();
+  return list.length ? `<div class="list">${list.map(t => `<div class="it"><img class="th" data-pic="${t.pics[0]}" onclick="viewPic('${t.pics[0]}')">
+      <div class="main" onclick="viewPic('${t.pics[0]}')"><div class="t">${esc(t.note || t.cat || 'Receipt')}</div><div class="mute">${niceDate(t.date)}${t.cat ? ' · ' + esc(t.cat) : ''}${t.pics.length > 1 ? ` · ${t.pics.length} photos` : ''}</div></div>
+      <div class="amt ${t.type === 'in' ? 'pos' : ''}">${fmt(t.amount)}</div></div>`).join('')}</div>`
+    : `<div class="card empty">${rcAll().length ? 'No receipts match.' : 'No receipt photos yet. Tap “Snap a receipt” to add your first one.'}</div>`;
+}
+
+async function photosForBackup() {
+  const out = [];
+  for (const id of new Set(S.tx.flatMap(t => t.pics || []))) { try { const p = await photoLoad(id); if (p) out.push({ id, date: p.date, w: p.w, h: p.h, thumb: p.thumb, b64: b64(p.buf) }); } catch (e) {} }
+  return out;
+}
+async function restorePhotos(list) {
+  let n = 0;
+  for (const p of list.slice(0, 3000)) {
+    try {
+      if (!p || !OKID.test(p.id) || typeof p.b64 !== 'string') continue;
+      await photoSave({ id: p.id, buf: unb64(p.b64).buffer, thumb: /^data:image\/jpeg;base64,[A-Za-z0-9+\/=]+$/.test(p.thumb) ? p.thumb : '', date: isDate(p.date) ? p.date : today(), w: num(p.w), h: num(p.h) }); n++;
+    } catch (e) {}
+  }
+  return n;
+}
+$('#snapFile').onchange = onSnapFile; $('#pickFile').onchange = onSnapFile;
+
 /* ---------- debts ---------- */
 const paid = d => sum(d.payments || [], p => p.amount);
 const bal = d => round(d.amount - paid(d));
@@ -1003,6 +1213,7 @@ async function enableEnc(pin) {
     let o; try { o = JSON.parse(r); } catch (e) { continue; }
     if (o && !o.enc) localStorage.setItem(keyFor(p.id), JSON.stringify({ enc: 1, ...await enc(key, r) }));
   }
+  await photosRekey(null, key);
   save(); await saveQ;
 }
 async function unwrapWithPin(pin) {
@@ -1023,6 +1234,7 @@ async function removeEnc(pin) {
     let o; try { o = JSON.parse(r); } catch (e) { continue; }
     if (o && o.enc) localStorage.setItem(keyFor(p.id), await dec(DK, o));
   }
+  await photosRekey(DK, null);
   SEC = null; DK = null; save();
 }
 async function openWith(raw) {
@@ -1041,7 +1253,7 @@ function unlocked() { $('#lock').hidden = true; $('#pinIn').value = ''; $('#pinM
 async function lockNow() {
   if (!SEC && !LEGACY) return;
   save(); await saveQ;
-  if (SEC) { DK = null; S = fresh(); P = defaultP(); }
+  if (SEC) { DK = null; S = fresh(); P = defaultP(); thumbCache.clear(); }
   resetView(); showLock(); render();
 }
 async function tryUnlock() {
@@ -1156,6 +1368,8 @@ function eraseAll() {
   if (!confirm('Without the PIN, a recovery key or your security answers, your data cannot be opened, and neither can backups locked with that PIN.\n\nThe only way forward is to erase StockPile on this phone and start fresh.\n\nErase everything?')) return;
   if (!confirm('Last check: erase ALL businesses and data in StockPile on this phone?')) return;
   try { Object.keys(localStorage).filter(k => k === PKEY || k.startsWith(KEY0)).forEach(k => localStorage.removeItem(k)); } catch (err) {}
+  memPhotos.clear(); thumbCache.clear();
+  try { if (typeof indexedDB !== 'undefined') { const old = dbp; dbp = null; Promise.resolve(old).then(d => { if (d) d.close(); indexedDB.deleteDatabase(DBN); }).catch(() => {}); } } catch (err) {}
   SEC = null; DK = null; LEGACY = null; S = fresh(); P = defaultP(); loadFailed = false; saveQ = Promise.resolve();
   $('#lock').hidden = true; resetView(); render();
   alert('Erased. If you have an unlocked backup, load it from More → Restore.');
@@ -1257,19 +1471,22 @@ $('#bioGo').onclick = bioUnlock;
 /* ---------- profiles (businesses) ---------- */
 function profiles() {
   const m = $('#modal');
-  m.innerHTML = `<div class="sheet"><h2>Businesses</h2><div class="mute">Each one keeps its own money, stock and debts. Tap a name to switch.</div>
-    <div class="list" style="margin:12px 0">${P.list.map(p => `<div class="it"><div class="main" onclick="switchProfile('${p.id}')"><div class="t">${esc(p.name)}${p.id === P.current ? ' ✓' : ''}</div></div>
+  m.innerHTML = `<div class="sheet"><h2>Your books</h2><div class="mute">Each one keeps its own entries. Tap a name to switch.</div>
+    <div class="list" style="margin:12px 0">${P.list.map(p => `<div class="it"><div class="main" onclick="switchProfile('${p.id}')"><div class="t">${esc(p.name)}${p.kind === 'personal' ? ' <span class="mute">(personal)</span>' : ''}${p.id === P.current ? ' ✓' : ''}</div></div>
       <button class="btn sm sec" onclick="renameProfile('${p.id}')">Rename</button>${P.list.length > 1 ? `<button class="x" title="Delete" onclick="delProfile('${p.id}')">×</button>` : ''}</div>`).join('')}</div>
-    <div class="row end"><button class="btn sec" onclick="closeForm()">Close</button><button class="btn" onclick="addProfile()">+ Add business</button></div></div>`;
+    <div class="row end"><button class="btn sec" onclick="closeForm()">Close</button><button class="btn" onclick="addProfile()">+ Add another</button></div></div>`;
   m.hidden = false;
   m.onclick = e => { if (e.target === m) closeForm(); };
 }
-function resetView() { selMode = false; sel.clear(); tab = 'home'; moneyFilter = 'month'; moneyView = 'list'; showNums = false; cart = []; posCust = ''; posMsg = ''; posPay = 'full'; posPaid = ''; posDue = ''; posDisc = ''; lastSale = ''; ledgerQ = ''; stockQ = ''; custQ = ''; }
+function resetView() { selMode = false; sel.clear(); tab = 'home'; moneyFilter = 'month'; moneyView = 'list'; showNums = false; cart = []; posCust = ''; posMsg = ''; posPay = 'full'; posPaid = ''; posDue = ''; posDisc = ''; lastSale = ''; ledgerQ = ''; stockQ = ''; custQ = ''; rcQ = ''; rcCat = ''; rcMonth = ''; thumbCache.clear(); }
 async function switchProfile(id) { save(); await saveQ; P.current = id; await loadProfile(); save(); resetView(); closeForm(); render(); window.scrollTo(0, 0); }
 function addProfile() {
-  form('Add business', [{ k: 'name', l: 'Business name', req: 1 }], v => {
-    save(); const id = uid(); P.list.push({ id, name: v.name }); P.current = id; S = fresh(); resetView();
-  }, '<div class="mute">Starts empty, with its own money, stock, debts and backups.</div>');
+  form('Add another set of books', [
+    { k: 'kind', l: 'What is it for?', t: 'select', v: 'business', o: [['business', 'A business'], ['personal', 'Personal or household money']] },
+    { k: 'name', l: 'Name', req: 1, ph: 'e.g. Home, or the business name' }
+  ], v => {
+    save(); const id = uid(); P.list.push({ id, name: v.name, ...(v.kind === 'personal' ? { kind: 'personal' } : {}) }); P.current = id; S = fresh(); resetView();
+  }, '<div class="mute">Starts empty, with its own entries and backups. A personal one swaps the Sell and Stock tabs for spending categories, budgets and receipt photos.</div>');
 }
 function renameProfile(id) {
   const p = P.list.find(x => x.id === id); if (!p) return;
@@ -1279,6 +1496,7 @@ async function delProfile(id) {
   const p = P.list.find(x => x.id === id); if (!p || P.list.length < 2) return;
   if (!confirm(`Delete "${p.name}" and ALL of its data?`) || !confirm('Are you sure? This cannot be undone.')) return;
   try { localStorage.removeItem(keyFor(id)); } catch (e) {}
+  photosDropProfile(id);
   P.list = P.list.filter(x => x.id !== id);
   if (P.current === id) { P.current = P.list[0].id; await loadProfile(); resetView(); }
   save(); render(); profiles();
@@ -1292,15 +1510,15 @@ function download(name, text, type) {
   setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 500);
 }
 // With a PIN set, backups are encrypted with the same key as the data (opened later with that PIN).
-async function backupText(plain) {
-  const s = JSON.stringify(S, null, 1);
+async function backupText(plain, withPhotos) {
+  const s = withPhotos ? JSON.stringify({ ...S, _photos: await photosForBackup() }) : JSON.stringify(S, null, 1);
   if (!SEC || !DK || plain) return s;
   return JSON.stringify({ stockpileBackup: 2, salt: SEC.salt, iter: SEC.iter, wrap: SEC.wrap, rec: SEC.rec, data: await enc(DK, s) });
 }
-async function backup(auto, plain) {
+async function backup(auto, plain, withPhotos) {
   if (plain && !confirm('An unlocked backup can be read by anyone who gets the file.\n\nIt is useful as a safety copy in case you forget your PIN, but keep it somewhere private.\n\nSave an unlocked backup?')) return;
   S.lastBackup = today(); S.dirty = 0; save();
-  download(`${fileBase()}${plain ? '-UNLOCKED' : ''}-${today()}.json`, await backupText(plain), 'application/json');
+  download(`${fileBase()}${plain ? '-UNLOCKED' : ''}${withPhotos ? '-with-photos' : ''}-${today()}.json`, await backupText(plain, withPhotos), 'application/json');
   if (!auto) render();
 }
 function commit() {
@@ -1332,7 +1550,10 @@ async function openBackup(d, pin) {
 }
 function applyBackup(o) {
   if (!o || !Array.isArray(o.tx) || !Array.isArray(o.items) || !Array.isArray(o.debts)) throw fail("That file doesn't look like a StockPile backup.");
-  S = clean(o); delete S.set.pin; loadFailed = false; save(); render(); alert('Backup restored.');
+  const ph = Array.isArray(o._photos) ? o._photos : [];
+  S = clean(o); delete S.set.pin; loadFailed = false; thumbCache.clear(); save(); render();
+  if (ph.length) restorePhotos(ph).then(() => render());
+  alert('Backup restored.' + (ph.length ? ` Loading ${ph.length} receipt photo${ph.length === 1 ? '' : 's'} too.` : ''));
 }
 function restore() { $('#restoreFile').value = ''; $('#restoreFile').click(); }
 async function restoreText(text) {
@@ -1368,7 +1589,7 @@ function exportStock() {
   download(`stockpile-stock-${today()}.csv`, csv(rows), 'text/csv');
 }
 function wipe() {
-  if (confirm(`Erase ALL data for "${profName()}"? Make a backup first if you might want it.`) && confirm('Are you sure? This cannot be undone.')) { S = fresh(); save(); render(); }
+  if (confirm(`Erase ALL data for "${profName()}"? Make a backup first if you might want it.`) && confirm('Are you sure? This cannot be undone.')) { photosDropProfile(P.current); thumbCache.clear(); S = fresh(); save(); render(); }
 }
 
 /* ---------- views ---------- */
@@ -1386,7 +1607,7 @@ function txRow(t) {
   return `<div class="it">${pick}<div class="main" onclick="${tap}"><div class="t">${esc(t.note || t.cat || (t.type === 'in' ? 'Money in' : 'Money out'))}</div>
     <div class="mute">${bits}</div></div>
     <div class="amt ${t.type === 'in' ? 'pos' : 'neg'}">${t.type === 'in' ? '+' : '−'}${fmt(t.amount)}</div>
-    ${t.sale || t.ret ? `<button class="x" title="Receipt" onclick="receipt('${t.sale || t.ret}')">🧾</button>` : ''}<button class="x" title="Delete" onclick="delTx('${t.id}')">×</button></div>`;
+    ${t.pics && t.pics.length ? `<button class="x" title="Photo" onclick="viewPic('${t.pics[0]}')">📎</button>` : ''}${t.sale || t.ret ? `<button class="x" title="Receipt" onclick="receipt('${t.sale || t.ret}')">🧾</button>` : ''}<button class="x" title="Delete" onclick="delTx('${t.id}')">×</button></div>`;
 }
 function groupBy(arr, key) { const o = {}; arr.forEach(t => { const k = key(t) || 'Other'; o[k] = (o[k] || 0) + t.amount; }); return Object.entries(o).sort((a, b) => b[1] - a[1]); }
 function bars(entries, color, f = fmt, open = false) {
@@ -1406,6 +1627,7 @@ const V = {
     const offNote = S.offRemind !== false && !(S.offSnooze && S.offSnooze > today()) && (since === null ? count >= 5 : since >= 14)
       ? `<div class="note">📤 ${since === null ? 'No backup has left this phone yet.' : `It's been ${since} days since a backup left this phone.`} If the phone is lost or broken, the backups in Downloads go with it.
         <div class="row" style="margin-top:8px"><button class="btn sm" onclick="shareBackup()">Send backup</button><button class="btn sm sec" onclick="S.offSnooze=addDays(7);save();render()">Not now</button></div></div>` : '';
+    if (isPersonal()) return personalHome(warn + backupNote + offNote);
     const quick = `<button class="btn in" onclick="addTx('in')">+ Money In</button><button class="btn out" onclick="addTx('out')">− Money Out</button>
       ${S.items.length ? `<button class="btn" onclick="tab='sell';render()">Sell</button>` : ''}`;
     if (!showNums) return `${warn}${backupNote}${offNote}
@@ -1480,6 +1702,17 @@ const V = {
       : '<div class="card empty">Type an item number and how many, or tap an item above.</div>'}
     ${staffMode ? '<p class="mute" style="margin-top:22px">Staff mode: selling only. Tap Lock at the top when you are done.</p>' : todaySalesHTML(todays)}`;
   },
+  receipts() {
+    const all = rcAll(), cats = [...new Set(all.map(t => t.cat).filter(Boolean))].sort(), months = [...new Set(all.map(t => t.date.slice(0, 7)))].sort().reverse();
+    const label = ym => new Date(ym + '-15').toLocaleDateString('en-CA', { month: 'long', year: 'numeric' });
+    return `<h2>Receipts</h2>
+    <div class="row bar"><button class="btn" onclick="snapNew()">📷 Snap a receipt</button><button class="btn sec" onclick="snapNew(true)">🖼 From gallery</button>${eye()}</div>
+    ${all.length ? `<div class="row bar">${searchBox('rcQ', rcQ, "rcQ=this.value;$('#rcBody').innerHTML=rcBodyHTML();loadThumbs()", 'Search receipts')}</div>
+    <div class="row bar"><select class="f" onchange="rcCat=this.value;render()"><option value="">All categories</option>${cats.map(c => `<option ${c === rcCat ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select>
+      <select class="f" onchange="rcMonth=this.value;render()"><option value="">Any date</option>${months.map(m => `<option value="${m}" ${m === rcMonth ? 'selected' : ''}>${label(m)}</option>`).join('')}</select>
+      <span class="mute">${rcShown().length} of ${all.length}</span></div>` : ''}
+    <div id="rcBody">${rcBodyHTML()}</div>`;
+  },
   money() {
     const months = [...new Set(S.tx.map(t => t.date.slice(0, 7)))].sort().reverse();
     let list = [...S.tx];
@@ -1499,11 +1732,12 @@ const V = {
         const it = t.itemId && S.items.find(i => i.id === t.itemId), k = it ? it.name : String(t.note || 'Other').replace(/^(Sold|Returned) \d+ × /, '');
         units[k] = (units[k] || 0) + (t.qty > 0 ? t.qty : 0) * (t.ret ? -1 : 1); prof[k] = (prof[k] || 0) + (t.saleAmt ?? t.amount) - (t.gst || 0) - t.cogs;
       });
+      const biz = isPersonal() ? '' : `<h3>Customers</h3><div class="card">${bars(groupBy(ins.filter(t => t.cust), t => t.cust), 'var(--accent)')}</div>
+      <h3>Best sellers</h3><div class="card">${bars(Object.entries(units).filter(e => e[1] > 0).sort((a, b) => b[1] - a[1]), 'var(--accent)', v => v + ' sold', true)}</div>
+      <h3>Profit by product</h3><div class="card">${bars(Object.entries(prof).map(e => [e[0], round(e[1])]).sort((a, b) => b[1] - a[1]), 'var(--green)')}</div>`;
       body = `<h3>Where the money went</h3><div class="card">${bars(groupBy(outs, t => t.cat), 'var(--red)')}</div>
       <h3>Where it came from</h3><div class="card">${bars(groupBy(ins, t => t.cat), 'var(--green)')}</div>
-      <h3>Customers</h3><div class="card">${bars(groupBy(ins.filter(t => t.cust), t => t.cust), 'var(--accent)')}</div>
-      <h3>Best sellers</h3><div class="card">${bars(Object.entries(units).filter(e => e[1] > 0).sort((a, b) => b[1] - a[1]), 'var(--accent)', v => v + ' sold', true)}</div>
-      <h3>Profit by product</h3><div class="card">${bars(Object.entries(prof).map(e => [e[0], round(e[1])]).sort((a, b) => b[1] - a[1]), 'var(--green)')}</div>
+      ${biz}
       ${Object.keys(off).length ? `<h3>Stock written off (at cost)</h3><div class="card">${bars(Object.entries(off).map(e => [e[0], round(e[1])]).sort((a, b) => b[1] - a[1]), 'var(--red)')}</div>` : ''}
       ${S.set.gst ? `<h3>GST</h3><div class="grid">
         <div class="card"><div class="lbl">Collected on sales</div><div class="big">${fmt(gc)}</div></div>
@@ -1511,7 +1745,7 @@ const V = {
         <div class="card"><div class="lbl">${gc - gp >= 0 ? 'Owing' : 'Refund'}</div><div class="big">${fmt(Math.abs(gc - gp))}</div></div></div>` : ''}`;
     }
     return `<h2>Ledger</h2>
-    <div class="row bar"><button class="btn in" onclick="addTx('in')">+ In</button><button class="btn out" onclick="addTx('out')">− Out</button><button class="btn sec" onclick="addMove()">⇄ Move</button></div>
+    <div class="row bar"><button class="btn in" onclick="addTx('in')">+ In</button><button class="btn out" onclick="addTx('out')">− Out</button><button class="btn sec" onclick="addMove()">⇄ Move</button>${isPersonal() ? '' : `<button class="btn sec" onclick="tab='receipts';render()">📎 Receipts</button>`}</div>
     <div class="row bar"><select class="f" onchange="moneyFilter=this.value;render()">
       <option value="month" ${moneyFilter === 'month' ? 'selected' : ''}>This month</option>
       <option value="all" ${moneyFilter === 'all' ? 'selected' : ''}>Everything</option>
@@ -1544,20 +1778,21 @@ const V = {
         <button class="btn sm sec" onclick="editDebt('${d.id}')">Edit</button><button class="btn sm sec" onclick="delDebt('${d.id}')">Delete</button></div></div>`;
     const owe = open.filter(d => d.dir === 'owe'), owed = open.filter(d => d.dir === 'owed');
     return `<h2>Owing</h2>
-    <div class="row bar"><button class="btn" onclick="editDebt()">+ Add a debt</button><button class="btn sec" onclick="customersSheet()">👥 Customers</button>${eye()}</div>
+    <div class="row bar"><button class="btn" onclick="editDebt()">+ Add a debt</button>${isPersonal() ? '' : '<button class="btn sec" onclick="customersSheet()">👥 Customers</button>'}${eye()}</div>
     <h3>I owe (${fmt(sum(owe, bal))})</h3>${owe.length ? owe.map(card).join('') : '<div class="mute">Nothing owed. 👍</div>'}
     <h3>Owed to me (${fmt(sum(owed, bal))})</h3>${owed.length ? owed.map(card).join('') : '<div class="mute">Nobody owes you right now.</div>'}
     ${closed.length ? `<h3>Paid off</h3>${closed.map(card).join('')}` : ''}`;
   },
   more() {
     return `<h2>Backup &amp; settings</h2>
-    <div class="card" style="margin-bottom:12px"><b>Businesses</b>
+    <div class="card" style="margin-bottom:12px"><b>Your books</b>
       <p class="mute">Now showing: <b>${esc(profName())}</b>. Keep separate books for each business.</p>
-      <button class="btn" onclick="profiles()">Switch or add a business</button></div>
+      <button class="btn" onclick="profiles()">Switch, or add business or personal books</button></div>
     <div class="card" style="margin-bottom:12px"><b>Back up “${esc(profName())}”</b>
       <p class="mute">Everything is saved inside this browser on this phone only. Nothing goes on the internet unless you share a backup yourself.</p>
       <p class="mute">Last backup: ${S.lastBackup ? niceDate(S.lastBackup) : 'never'}${S.dirty > 0 ? ` · ${S.dirty} change${S.dirty > 1 ? 's' : ''} since` : ''}</p>
       <div class="row"><button class="btn" onclick="backup()">💾 Back up now</button><button class="btn" onclick="shareBackup()">📤 Send backup</button><button class="btn sec" onclick="restore()">Restore</button></div>
+      ${S.tx.some(t => t.pics && t.pics.length) ? '<p><button class="btn sec sm" onclick="backup(false,false,true)">💾 Back up with receipt photos</button></p><p class="mute">Daily auto backups and “Send backup” leave the photos out so the files stay small. Use this button now and then to save the photos as well.</p>' : ''}
       <p class="mute">“Send backup” opens your phone's share menu (Quick Share, email, etc.). ${SEC ? 'Backups are locked 🔒: they can only be opened with the PIN that was set when they were made.' : 'Backups are not locked, so only send them to yourself or someone you trust. Set a PIN below to lock them.'}</p>
       ${SEC ? '<p><button class="btn sec sm" onclick="backup(false,true)">Save an unlocked safety copy</button></p>' : ''}
       <label class="chk"><input type="checkbox" ${S.auto !== false ? 'checked' : ''} onchange="S.auto=this.checked;save()"> Auto backup: save a backup file to Downloads the first time I change something each day</label>
@@ -1597,11 +1832,13 @@ const V = {
 };
 function render() {
   if (recDay !== today()) { recDay = today(); if (applyRecurring()) save(); }
+  const pers = isPersonal(); if (pers && (tab === 'sell' || tab === 'stock')) tab = 'home';
   if (staffMode) tab = 'sell';
   document.body.classList.toggle('dark', isDark()); document.body.classList.toggle('staff', staffMode);
-  document.querySelectorAll('#nav button').forEach(b => b.classList.toggle('on', b.dataset.t === tab));
+  document.querySelectorAll('#nav button').forEach(b => { const t = b.dataset.t; b.hidden = pers ? (t === 'sell' || t === 'stock') : t === 'receipts'; b.classList.toggle('on', t === tab); });
   $('#hdr').innerHTML = `<span>📦 StockPile${BETA ? ' <span class="beta">TEST COPY</span>' : ''}</span>` + (staffMode ? '<button onclick="lockNow()">🔒 Lock</button>' : `<button onclick="profiles()">${esc(profName())} ▾</button>`);
   $('#view').innerHTML = V[tab]();
+  loadThumbs();
 }
 async function init() {
   let raw = null;

@@ -10,6 +10,7 @@ A simple offline tracker for money in and out, stock, and debts. It runs entirel
 - **Separate books:** keep more than one business, each with its own money, stock and debts.
 - **Sell screen:** ring up sales by item number or by scanning a barcode, with part payments and pay-later sales that go to the Owing tab.
 - **Barcodes:** print labels for your products, or scan the barcode already on the packaging.
+- **Personal books (test copy):** a household profile with spending categories, monthly budgets and receipt photos you can search by date and category.
 - **Receipts and customers:** send or print a receipt, and see what each customer has bought and still owes.
 
 ## Install on Android
