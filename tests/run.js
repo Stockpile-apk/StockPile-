@@ -487,6 +487,9 @@ await saveQ; saveGen++; S=fresh();P=defaultP();Object.keys(store).forEach(k=>del
 await saveQ; saveGen++; S=fresh();P=defaultP();Object.keys(store).forEach(k=>delete store[k]); await init(); chooseUse('personal'); await enableEnc('first-pin'); await lockNow(); $('#pinIn').value='first-pin'; await tryUnlock();
 ok(isPersonal() && !bizOn() && !firstRun,'the personal-only choice survives a PIN and a lock'); await removeEnc('first-pin');
 store[KEY0]=JSON.stringify({tx:[],items:[],debts:[]}); delete store[PKEY]; await init(); ok(!firstRun,'someone who already has data is never asked'); allTabs(); tab='home';
+
+// version 3.0.1: backup file names carry the time, so same-day backups never collide
+ok(/^\\d{4}-\\d{2}-\\d{2}-\\d{6}$/.test(stamp()) && stamp().startsWith(today()),'backup file names include the date and the time');
 })().catch(e=>{console.log('CRASH',e);process.exitCode=1});
 `;
 const html=fs.readFileSync(process.argv[2]?require('path').resolve(process.argv[2]):require('path').join(__dirname,'..','beta','index.html'),'utf8');

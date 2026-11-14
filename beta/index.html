@@ -128,7 +128,7 @@ body.dark .sheet .rc{color:var(--ink)}body.dark .sheet .rcs{color:var(--mute)}bo
 // The test copy (served from /beta/) keeps its data under separate names, so it can never touch the real app's data.
 const BETA = /\/beta\//.test((typeof location !== 'undefined' && location.pathname) || '');
 const KEY0 = (BETA ? 'beta_' : '') + 'money_inventory_tracker_v1', PKEY = (BETA ? 'beta_' : '') + 'stockpile_profiles';
-const VERSION = '3.0.0';
+const VERSION = '3.0.1';
 const okDark = v => v === true || v === false ? v : undefined;
 const fresh = () => ({ tx: [], items: [], debts: [], lastBackup: null, dirty: 0, auto: true, offRemind: true, lastSent: null, offSnooze: null, contacts: [], adj: [], rec: [], budgets: {}, staff: [], set: { gst: false, gstRate: 5 } });
 const defaultP = () => ({ list: [{ id: 'default', name: 'My business' }], current: 'default' });
@@ -195,6 +195,8 @@ const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const today = () => new Date().toLocaleDateString('en-CA');
 const thisMonth = () => today().slice(0, 7);
+// Date and time for file names, so two backups made on the same day never share a name.
+const stamp = () => { const d = new Date(); return today() + '-' + String(d.getHours()).padStart(2, '0') + String(d.getMinutes()).padStart(2, '0') + String(d.getSeconds()).padStart(2, '0'); };
 const sum = (a, f) => a.reduce((t, x) => t + (f(x) || 0), 0);
 const round = n => Math.round(n * 100) / 100;
 const niceDate = d => { try { return new Date(d + 'T12:00').toLocaleDateString('en-CA', { month: 'short', day: 'numeric', year: 'numeric' }); } catch (e) { return d; } };
@@ -1686,7 +1688,7 @@ async function backupText(plain, withPhotos) {
 async function backup(auto, plain, withPhotos) { if (staffMode) return;
   if (plain && !confirm('An unlocked backup can be read by anyone who gets the file.\n\nIt is useful as a safety copy in case you forget your PIN, but keep it somewhere private.\n\nSave an unlocked backup?')) return;
   S.lastBackup = today(); S.dirty = 0; save();
-  download(`${fileBase()}${plain ? '-UNLOCKED' : ''}${withPhotos ? '-with-photos' : ''}-${today()}.json`, await backupText(plain, withPhotos), 'application/json');
+  download(`${fileBase()}${plain ? '-UNLOCKED' : ''}${withPhotos ? '-with-photos' : ''}-${stamp()}.json`, await backupText(plain, withPhotos), 'application/json');
   if (!auto) render();
 }
 function commit() {
@@ -1696,7 +1698,7 @@ function commit() {
 }
 async function shareBackup() { if (staffMode) return;
   try {
-    const f = new File([await backupText()], `${fileBase()}-${today()}.txt`, { type: 'text/plain' });
+    const f = new File([await backupText()], `${fileBase()}-${stamp()}.txt`, { type: 'text/plain' });
     if (navigator.canShare && navigator.canShare({ files: [f] })) {
       await navigator.share({ files: [f], title: 'StockPile backup' });
       S.lastBackup = today(); S.lastSent = today(); S.offSnooze = null; S.dirty = 0; save(); render(); return;
