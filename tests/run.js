@@ -213,7 +213,7 @@ showNums=false; ok(V.home().includes('StockPile version '+VERSION),'version show
 S=clean({tx:[],debts:[{id:'d9',name:'Dana',dir:'owed',amount:50,date:today(),due:'2026-12-01'}],items:[],contacts:[{name:' Dana ',phone:'(604) 555-0123',email:'dana@example.com',promo:1},{name:'Eli',phone:'<b>',email:'not-an-email',promo:0},{name:'',phone:'1'}]});
 ok(S.contacts.length===2 && S.contacts[0].key==='dana' && S.contacts[0].phone==='6045550123' && S.contacts[1].phone==='' && S.contacts[1].email==='','contacts are cleaned on load');
 ok(contactOf('DANA ').email==='dana@example.com' && customerList().some(c=>c.name==='Eli'),'contacts are found by name and listed as customers');
-const rt2=reminderText('Dana',50,'2026-12-01'); ok(/Hi Dana, a friendly reminder from My business: \\$50\\.00 is still owing, due Dec/.test(rt2),'reminder wording is right');
+const rt2=reminderText('Dana',50,'2026-12-01'); ok(/Hi Dana, just a friendly reminder from My business that \\$50\\.00 was due on Dec 1, 2026\\./.test(rt2) && /that \\$50\\.00 is still owing\\./.test(reminderText('Dana',50,'')),'reminder wording is right');
 ok(smsLink('6045550123','Hi & bye')==='sms:6045550123?body=Hi%20%26%20bye' && mailLink('a@b.co','Sub ject','Bo dy')==='mailto:a@b.co?subject=Sub%20ject&body=Bo%20dy' && mailLink('','S','B',['x@y.z','q@r.s']).endsWith('&bcc=x@y.z,q@r.s'),'text and email links are built correctly');
 location.href=''; remind('d9'); ok(/Send to Dana/.test($('#modal').innerHTML) && /💬 Text/.test($('#modal').innerHTML) && /✉️ Email/.test($('#modal').innerHTML),'Remind shows the message with Text and Email choices');
 sendNow('sms'); ok(location.href.startsWith('sms:6045550123?body=Hi%20Dana'),'Text opens the phone’s texting app with the reminder filled in');
@@ -224,6 +224,16 @@ $('#promoMsg').value='Sale today'; promoSend(custCache.findIndex(c=>c.name==='Da
 location.href=''; promoSend(custCache.findIndex(c=>c.name==='Eli'),'sms'); ok(location.href==='','customers who have not agreed cannot be sent a promotion');
 customersSheet(); customerSheet(custCache.findIndex(c=>c.name==='Dana')); ok(/6045550123/.test($('#modal').innerHTML) && /Send reminder/.test($('#modal').innerHTML) && !/undefined|NaN/.test($('#modal').innerHTML),'customer page shows contact details and a reminder button');
 ok(/🔔 Remind/.test(V.debts()),'Owing tab has a Remind button on money owed to me'); closeForm(); allTabs(); tab='home';
+
+// version 10.2: choose the wording of a reminder
+ok(REMIND.length===4 && REMIND.every(r=>!/undefined|NaN|\\[object/.test(r[2]('Dana','$5.00','Dec 1, 2026','Biz')) && !/undefined|NaN/.test(r[2]('Dana','$5.00','','Biz'))),'all four reminder messages fill in cleanly, with or without a due date');
+ok(/final reminder from My business that \\$50\\.00 has been outstanding since Dec 1, 2026/.test(reminderText('Dana',50,'2026-12-01','final')) && /split it into smaller payments/.test(reminderText('Dana',50,'','plan')),'final notice and payment plan wording is right');
+ok(remindDefault(addDays(-20))==='firm' && remindDefault(addDays(-3))==='friendly' && remindDefault('')==='friendly','long-overdue debts default to the firm message');
+remind('d9'); ok(/id="tplSel"/.test($('#modal').innerHTML) && /Final notice/.test($('#modal').innerHTML),'Remind lets you pick which message to send');
+tplPick('final'); ok(/final reminder/.test($('#tplPrev').textContent) && /final reminder/.test(pendMsg.body),'picking a message updates the preview');
+sendNow('sms'); ok(decodeURIComponent(location.href).includes('this is a final reminder from My business'),'the picked message is what gets sent');
+ok(thanksText('Dana',20,30)==='Hi Dana, got your payment of $20.00. Thank you! Your balance with My business is now $30.00.' && /all paid up/.test(thanksText('Dana',20,0)),'thank-you wording is right');
+S.debts[0].payments.push({amount:20,date:today()}); thankFor('Dana',20); ok(/got your payment of \\$20\\.00/.test($('#modal').innerHTML) && /now \\$30\\.00/.test($('#modal').innerHTML) && !/id="tplSel"/.test($('#modal').innerHTML),'thank-you message shows the new balance'); closeForm(); allTabs(); tab='home';
 })().catch(e=>{console.log('CRASH',e);process.exitCode=1});
 `;
 const html=fs.readFileSync(require('path').join(__dirname,'..','index.html'),'utf8');

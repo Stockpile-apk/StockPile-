@@ -105,7 +105,7 @@ select.f,input.f{padding:8px;border-radius:8px;border:1px solid var(--line);font
 
 <script>
 const KEY0 = 'money_inventory_tracker_v1', PKEY = 'stockpile_profiles';
-const VERSION = '10.1';
+const VERSION = '10.2';
 const fresh = () => ({ tx: [], items: [], debts: [], lastBackup: null, dirty: 0, auto: true, offRemind: true, lastSent: null, offSnooze: null, contacts: [], set: { gst: false, gstRate: 5 } });
 const defaultP = () => ({ list: [{ id: 'default', name: 'My business' }], current: 'default' });
 const CAN = !!(globalThis.crypto && crypto.subtle);
@@ -675,15 +675,27 @@ function contactForm(name, back) {
 }
 const smsLink = (phone, body) => 'sms:' + phone + '?body=' + encodeURIComponent(body);
 const mailLink = (to, subject, body, bcc) => 'mailto:' + (to || '') + '?subject=' + encodeURIComponent(subject) + '&body=' + encodeURIComponent(body) + (bcc && bcc.length ? '&bcc=' + bcc.join(',') : '');
-const reminderText = (name, amount, due) => `Hi ${name}, a friendly reminder from ${profName()}: ${cur(amount)} is still owing${due ? `, due ${niceDate(due)}` : ''}. Thank you!`;
+// Ready-made wording. n = name, a = amount, d = due date (may be blank), B = business name.
+const REMIND = [
+  ['friendly', 'Friendly reminder', (n, a, d, B) => `Hi ${n}, just a friendly reminder from ${B} that ${a} ${d ? `was due on ${d}` : 'is still owing'}. If you've already sent it, thank you and please ignore this. Otherwise, let me know when works for you.`],
+  ['firm', 'Firm follow-up', (n, a, d, B) => `Hi ${n}, this is ${B} following up on the ${a} ${d ? `that was due on ${d}` : 'still owing'}. Please send payment by ${niceDate(addDays(7))}, or get in touch so we can sort out a plan that works.`],
+  ['final', 'Final notice', (n, a, d, B) => `Hi ${n}, this is a final reminder from ${B} that ${a} has been outstanding${d ? ` since ${d}` : ''}. Please pay by ${niceDate(addDays(7))} or contact me today. Until it's settled, I won't be able to offer further orders on account.`],
+  ['plan', 'Offer a payment plan', (n, a, d, B) => `Hi ${n}, it's ${B}. I know things come up. If paying the full ${a} at once is hard right now, I'm happy to split it into smaller payments. Let me know what you can manage and we'll set it up.`]
+];
+const reminderText = (name, amount, due, kind = 'friendly') => (REMIND.find(r => r[0] === kind) || REMIND[0])[2](name, cur(amount), due ? niceDate(due) : '', profName());
+const thanksText = (name, paidAmt, balance) => `Hi ${name}, got your payment of ${cur(paidAmt)}. Thank you! ${balance > 0 ? `Your balance with ${profName()} is now ${cur(balance)}.` : `You're all paid up with ${profName()}.`}`;
+const remindDefault = due => due && daysSince(due) >= 14 ? 'firm' : 'friendly';
+function tplPick(kind) { if (!pendMsg || !pendMsg.tpl) return; pendMsg.body = reminderText(pendMsg.c.name, pendMsg.tpl.amount, pendMsg.tpl.due, kind); $('#tplPrev').textContent = pendMsg.body; }
 const promoText = msg => `${String(msg).trim()} - ${profName()}. Reply STOP to opt out.`;
 let pendMsg = null;
-function sendVia(name, subject, body, retry) {
+function sendVia(name, subject, body, retry, tpl) {
   const c = contactOf(name);
   if (!c || (!c.phone && !c.email)) { alert(`Add a mobile number or email for ${name} first.`); contactForm(name, retry); return; }
-  pendMsg = { c, subject, body };
+  pendMsg = { c, subject, body, tpl };
   const m = $('#modal');
-  m.innerHTML = `<div class="sheet"><h2>Send to ${esc(c.name)}</h2><div class="note">${esc(body)}</div>
+  m.innerHTML = `<div class="sheet"><h2>Send to ${esc(c.name)}</h2>
+    ${tpl ? `<label class="fl"><span>Which message?</span><select id="tplSel" onchange="tplPick(this.value)">${REMIND.map(r => `<option value="${r[0]}" ${r[0] === tpl.kind ? 'selected' : ''}>${r[1]}</option>`).join('')}</select></label>` : ''}
+    <div class="note" id="tplPrev">${esc(body)}</div>
     <p class="mute">This opens your own texting or email app with the message filled in. You can change the wording there before you send it.</p>
     <div class="row">${c.phone ? '<button class="btn" onclick="sendNow(\'sms\')">💬 Text</button>' : ''}${c.email ? '<button class="btn" onclick="sendNow(\'mail\')">✉️ Email</button>' : ''}<button class="btn sec" onclick="closeForm()">Cancel</button></div></div>`;
   m.hidden = false; m.onclick = e => { if (e.target === m) closeForm(); };
@@ -694,11 +706,18 @@ function sendNow(how) {
 }
 function remind(debtId) {
   const d = S.debts.find(x => x.id === debtId); if (!d || bal(d) <= 0) return;
-  sendVia(d.name, `Reminder from ${profName()}`, reminderText(d.name, bal(d), d.due), () => remind(debtId));
+  const kind = remindDefault(d.due);
+  sendVia(d.name, `Reminder from ${profName()}`, reminderText(d.name, bal(d), d.due, kind), () => remind(debtId), { amount: bal(d), due: d.due, kind });
 }
 function remindCustomer(i) {
   const c = custCache[i]; if (!c || !(c.owing > 0)) return;
-  sendVia(c.name, `Reminder from ${profName()}`, reminderText(c.name, c.owing), () => { custCache = customerList(); const j = custCache.findIndex(x => x.key === c.key); if (j >= 0) remindCustomer(j); });
+  const due = customerData(c).open.map(x => x.due).filter(Boolean).sort()[0], kind = remindDefault(due);
+  sendVia(c.name, `Reminder from ${profName()}`, reminderText(c.name, c.owing, due, kind), () => { custCache = customerList(); const j = custCache.findIndex(x => x.key === c.key); if (j >= 0) remindCustomer(j); }, { amount: c.owing, due, kind });
+}
+function thankFor(name, paidAmt) {
+  const k = contactOf(name); if (!k || (!k.phone && !k.email)) return;
+  const owing = round(sum(S.debts.filter(d => d.dir === 'owed' && ckey(d.name) === k.key), d => Math.max(bal(d), 0)));
+  if (confirm(`Send ${name} a thank-you message?`)) sendVia(name, `Thank you from ${profName()}`, thanksText(name, paidAmt, owing));
 }
 function promoSheet() {
   custCache = customerList();
@@ -751,6 +770,7 @@ function payDebt(id) {
     d.payments = d.payments || [];
     d.payments.push({ amount: round(v.amount), date: v.date || today() });
     if (v.rec) S.tx.push({ id: uid(), type: owe ? 'out' : 'in', amount: round(v.amount), cat: owe ? 'Debt payment' : 'Debt repaid to me', note: (owe ? 'Paid ' : 'From ') + d.name, acct: v.acct, date: v.date || today() });
+    if (!owe) setTimeout(() => thankFor(d.name, round(v.amount)), 200);
   }, `<div class="mute">Still left: ${cur(bal(d))}</div>`);
 }
 function delDebt(id) { if (confirm('Delete this debt and its payment history?')) { S.debts = S.debts.filter(x => x.id !== id); commit(); render(); } }
