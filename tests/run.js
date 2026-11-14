@@ -27,7 +27,7 @@ ok(/SecretWidget/.test(store[KEY0]) && S.items.length===1,'plain mode stores rea
 await enableEnc('123456');
 const all=()=>Object.keys(store).map(k=>store[k]).join('|');
 ok(!/SecretWidget|Bob|Hidden Biz|Second Biz|Gas/.test(all()),'after PIN: nothing readable in storage (data + business names)');
-ok(JSON.parse(store[PKEY]).sec && JSON.parse(store[keyFor('p2')]).enc===1,'header + other business encrypted');
+ok(JSON.parse(store[PKEY]).sec && JSON.parse(store[keyFor('p2')]).enc===2,'header + other business encrypted');
 S.tx.push({id:'t2',type:'out',amount:30,cat:'Tools',acct:'cash',date:today()}); save(); await saveQ;
 await lockNow();
 ok(DK===null && S.tx.length===0 && P.list.length===1 && els['#lock'].hidden===false,'lock wipes key and data from memory');
@@ -39,7 +39,7 @@ allTabs(); ok(true,'all screens render while encrypted');
 await switchProfile('p2'); ok(S.tx.length===1 && S.tx[0].cat==='Gas','switch business under encryption');
 await switchProfile('default'); ok(S.tx.length===2,'switch back');
 const bk=await backupText(); const bd=JSON.parse(bk);
-ok(bd.stockpileBackup===2 && !/SecretWidget|Bob/.test(bk),'backup file is encrypted');
+ok(bd.stockpileBackup===3 && !/SecretWidget|Bob/.test(bk),'backup file is encrypted');
 ok((await openBackup(bd)).items[0].name==='SecretWidget','backup opens on same phone without asking');
 const plain=await backupText(true); ok(/SecretWidget/.test(plain),'unlocked safety copy is readable');
 await changePin('123456','abcdef-long');
@@ -50,9 +50,9 @@ ok(els['#lock'].hidden===false && SEC && !DK && S.tx.length===0,'reopen: starts 
 els['#pinIn'].value='123456'; await tryUnlock(); ok(DK===null,'old PIN no longer works');
 els['#pinIn'].value='abcdef-long'; await tryUnlock(); ok(S.tx.length===2,'new PIN works after reopen');
 // old backup on a "different phone" (no key in memory)
-const keep=DK; DK=null; let np=false; try{ await openBackup(bd) }catch(e){ np=e.message==='needpin' } ok(np,'backup elsewhere asks for PIN');
+const keep=DK, keepKR=KR; DK=null; KR=new Map(); let np=false; try{ await openBackup(bd) }catch(e){ np=e.message==='needpin' } ok(np,'backup elsewhere asks for PIN');
 let wp=false; try{ await openBackup(bd,'wrong') }catch(e){wp=true} ok(wp,'backup rejects wrong PIN');
-ok((await openBackup(bd,'123456')).tx.length===2,'backup opens with the PIN from when it was made'); DK=keep;
+ok((await openBackup(bd,'123456')).tx.length===2,'backup opens with the PIN from when it was made'); DK=keep; KR=keepKR;
 // corrupted data must not be overwritten
 const good=store[KEY0]; const o=JSON.parse(good); o.ct=o.ct.slice(0,-8)+'AAAAAAA='; store[KEY0]=JSON.stringify(o);
 await loadProfile(); ok(loadFailed && S.tx.length===0,'damaged data detected');
@@ -72,7 +72,7 @@ eraseAll();
 ok(Object.keys(store).length===0 && !SEC && S.tx.length===0,'forgot PIN erases everything');
 
 // recovery key
-store[PKEY]&&0; SEC=null;DK=null;LEGACY=null;S=fresh();P=defaultP();Object.keys(store).forEach(k=>delete store[k]);
+store[PKEY]&&0; await saveQ; saveGen++; KR=new Map(); KEYS={}; staff=null; staffMode=false; SEC=null;DK=null;LEGACY=null;S=fresh();P=defaultP();Object.keys(store).forEach(k=>delete store[k]);
 S.items.push({id:'a',name:'SecretWidget',cost:5,price:12,qty:3,low:5}); save();
 await enableEnc('pin-one'); await makeRecovery(); const code=lastRec;
 ok(/^([0-9A-HJKMNP-TV-Z]{4}-){7}[0-9A-HJKMNP-TV-Z]{4}$/.test(code) && SEC.rec && !all().includes(code.replace(/-/g,'')),'recovery key created, not stored in readable form');
@@ -84,7 +84,7 @@ await recoverWithKey(code.toLowerCase().replace(/-/g,' '),'newpin1');
 ok(DK && S.items[0].name==='SecretWidget' && els['#lock'].hidden===true,'recovery key (typed loosely) unlocks and sets a new PIN');
 await lockNow(); els['#pinIn'].value='pin-one'; await tryUnlock(); ok(DK===null,'forgotten old PIN is dead after recovery');
 els['#pinIn'].value='newpin1'; await tryUnlock(); ok(S.items.length===1,'new PIN works');
-const k2=DK; DK=null; ok((await openBackup(bk2,code)).items.length===1,'recovery key also opens a locked backup'); DK=k2;
+const k2=DK, k2R=KR; DK=null; KR=new Map(); ok((await openBackup(bk2,code)).items.length===1,'recovery key also opens a locked backup'); DK=k2; KR=k2R;
 await lockNow(); await recoverWithKey(code,'newpin2'); ok(S.items.length===1,'recovery key still valid for next time');
 allTabs(); ok(/Recovery key: set/.test(V.more()),'settings show recovery key status');
 
@@ -239,7 +239,7 @@ S.debts[0].payments.push({amount:20,date:today()}); thankFor('Dana',20); ok(/got
 // ================= version 11 =================
 const F=(k,v)=>{document.getElementById('f_'+k).value=String(v)}, FC=(k,b)=>{document.getElementById('f_'+k).checked=b}, SAVE=()=>$('#fSave').onclick(), tick=ms=>new Promise(r=>setTimeout(r,ms));
 ok(BETA===!!process.env.BETA && KEY0.startsWith('beta_')===BETA && PKEY.startsWith('beta_')===BETA,'the test copy keeps its data under separate names');
-SEC=null;DK=null;LEGACY=null;S=fresh();P=defaultP();Object.keys(store).forEach(k=>delete store[k]);
+await saveQ; saveGen++; KR=new Map(); KEYS={}; staff=null; staffMode=false; SEC=null;DK=null;LEGACY=null;S=fresh();P=defaultP();Object.keys(store).forEach(k=>delete store[k]);
 const mk11=()=>clean({tx:[],debts:[],items:[{id:'a',name:'Widget',cost:5,price:10,qty:20,num:1},{id:'b',name:'Gadget',cost:2,price:5,qty:20,num:2}]});
 // discounts
 S=mk11(); cart=[{id:'a',qty:2,price:10},{id:'b',qty:1,price:5}]; posDisc='10%'; let ct=cartTotals();
@@ -302,25 +302,10 @@ S.contacts=[{key:'zed',name:'Zed',phone:'',email:'',promo:false},{key:'amy',name
 moneyFilter='month'; tab='home';
 // dark mode
 P.dark=true; ok(isDark()===true,'dark mode can be switched on'); save(); ok(JSON.parse(store[PKEY]).dark===true,'dark mode choice is saved'); P.dark=false; ok(isDark()===false,'and off'); P.dark=undefined;
-// staff PIN
-S=mk11(); S.tx.push({id:'priv',type:'in',amount:777,cat:'Sales',acct:'cash',gst:0,date:today(),cogs:1,qty:1}); save();
-await enableEnc('owner-1'); const st=rnd(16); SEC.staff={salt:b64(st),iter:ITER,...await enc(await pinKey('staff-1',st,ITER),b64(await crypto.subtle.exportKey('raw',DK)))}; save(); await saveQ;
-await lockNow(); $('#pinIn').value='staff-1'; await tryUnlock();
-ok(DK && staffMode===true && tab==='sell' && els['#lock'].hidden===true,'staff PIN unlocks into staff mode');
-tab='more'; render(); ok(tab==='sell','staff mode cannot leave the Sell screen');
-const sv=V.sell(); ok(!/Today.s sales/.test(sv) && !/777/.test(sv) && /Staff mode/.test(sv),'staff mode hides sales totals');
-cart=[{id:'a',qty:1,price:10}]; posPay='full'; posDisc=''; posDone(); await saveQ; ok(S.tx.length===2 && S.items[0].qty===19,'staff can ring up a sale');
-receipt(lastSale); ok(!/Void sale/.test($('#modal').innerHTML) && !/Return items/.test($('#modal').innerHTML),'staff cannot void or return'); closeForm();
-await lockNow(); ok(staffMode===false,'locking ends staff mode'); $('#pinIn').value='nope'; await tryUnlock(); ok(DK===null,'wrong PIN still rejected with a staff PIN set');
-$('#pinIn').value='owner-1'; await tryUnlock(); ok(DK && staffMode===false && S.tx.length===2,'owner PIN opens everything, including the staff sale');
-ok(/Staff PIN: set/.test(V.more()),'settings show the staff PIN');
-setStaffPin(); F('p1','owner-1'); F('p2','owner-1'); lastAlert=''; SAVE(); await tick(1500); ok(/different from your own/.test(lastAlert),'staff PIN must differ from the owner PIN');
-await changePin('owner-1','owner-2'); await lockNow(); $('#pinIn').value='staff-1'; await tryUnlock(); ok(staffMode===true,'staff PIN survives an owner PIN change'); await lockNow();
-$('#pinIn').value='owner-2'; await tryUnlock(); removeStaffPin(); await saveQ; ok(!SEC.staff,'staff PIN can be removed'); await removeEnc('owner-2');
 allTabs(); tab='home'; staffMode=false;
 
 // ================= version 11.1: personal books, budgets, receipt photos =================
-SEC=null;DK=null;LEGACY=null;S=fresh();P=defaultP();Object.keys(store).forEach(k=>delete store[k]);memPhotos.clear();thumbCache.clear();pendingPics=[];
+await saveQ; saveGen++; KR=new Map(); KEYS={}; staff=null; staffMode=false; SEC=null;DK=null;LEGACY=null;S=fresh();P=defaultP();Object.keys(store).forEach(k=>delete store[k]);memPhotos.clear();thumbCache.clear();pendingPics=[];
 ok(!isPersonal() && categories('out').includes('Supplies'),'business books keep business categories');
 P.list.push({id:'home1',name:'Home',kind:'personal'}); P.current='home1'; S=fresh(); sanitizeP();
 ok(isPersonal() && P.list[1].kind==='personal' && categories('out')[0]==='Groceries' && categories('in')[0]==='Pay','personal books use household categories');
@@ -351,12 +336,12 @@ rcQ='milk'; ok(rcShown().length===1,'receipts search by text'); rcQ='8.48'; ok(r
 ok(clean({tx:[{id:'a1',type:'out',amount:1,date:today(),pics:['good1','<bad>',5,'ok2']}]}).tx[0].pics.join()==='good1,ok2','photo links are cleaned on load');
 // photos and encryption
 save(); await enableEnc('pin-photo'); let raw1=memPhotos.get(pid1);
-ok(raw1.enc===1 && !raw1.thumb && new Uint8Array(raw1.buf).join()!=='9,8,7,6,5','setting a PIN encrypts the stored photos');
+ok(raw1.enc===2 && !raw1.thumb && new Uint8Array(raw1.buf).join()!=='9,8,7,6,5','setting a PIN encrypts the stored photos');
 pl=await photoLoad(pid1); ok(new Uint8Array(pl.buf).join()==='9,8,7,6,5' && pl.thumb===TH,'encrypted photos open normally while unlocked');
-const pid3=await photoSave({buf:bytes,thumb:TH}); ok(memPhotos.get(pid3).enc===1,'new photos are encrypted too'); await photoDel(pid3);
+const pid3=await photoSave({buf:bytes,thumb:TH}); ok(memPhotos.get(pid3).enc===2,'new photos are encrypted too'); await photoDel(pid3);
 const bkp=await backupText(true,true), bko=JSON.parse(bkp); ok(bko._photos.length===1 && bko._photos[0].id===pid1 && bko._photos[0].b64===b64(bytes),'“back up with photos” includes the pictures');
 ok(!JSON.parse(await backupText(true))._photos,'ordinary backups leave photos out');
-const lockedB=await backupText(false,true); ok(!lockedB.includes(b64(bytes)) && JSON.parse(lockedB).stockpileBackup===2,'a locked backup with photos is encrypted');
+const lockedB=await backupText(false,true); ok(!lockedB.includes(b64(bytes)) && JSON.parse(lockedB).stockpileBackup===3,'a locked backup with photos is encrypted');
 await lockNow(); ok(thumbCache.size===0,'locking clears photo previews from memory'); $('#pinIn').value='pin-photo'; await tryUnlock();
 await removeEnc('pin-photo'); ok(!memPhotos.get(pid1).enc && new Uint8Array(memPhotos.get(pid1).buf).join()==='9,8,7,6,5','removing the PIN stores photos unlocked again');
 memPhotos.clear(); bko._photos.push({id:'<evil>',b64:'AAAA'},{id:'x9',b64:5},null); applyBackup(bko); await tick(50);
@@ -379,27 +364,112 @@ showNums=false; ok(/Welcome back/.test(V.home()) && !/Quick add/.test(V.home()),
 allTabs(); V.receipts(); tab='home';
 
 // version 11.2: switch books from a drop-down at the top
-SEC=null;DK=null;LEGACY=null;S=fresh();P=defaultP();Object.keys(store).forEach(k=>delete store[k]);
+await saveQ; saveGen++; KR=new Map(); KEYS={}; staff=null; staffMode=false; SEC=null;DK=null;LEGACY=null;S=fresh();P=defaultP();Object.keys(store).forEach(k=>delete store[k]);
 P.list.push({id:'h2',name:'Home & <Family>',kind:'personal'}); S.tx.push({id:'biz1',type:'in',amount:5,cat:'Sales',acct:'cash',gst:0,date:today()}); save(); render();
 let hd=$('#hdr').innerHTML; ok(/<select id="profSel"/.test(hd) && /<option value="default" selected>My business<\\/option>/.test(hd) && /<option value="h2" >Home &amp; &lt;Family&gt; \\(personal\\)<\\/option>/.test(hd) && !/profiles\\(\\)/.test(hd),'the top bar is a drop-down listing every set of books');
 await switchProfile('h2'); ok(P.current==='h2' && isPersonal() && S.tx.length===0 && /<option value="h2" selected>/.test($('#hdr').innerHTML),'picking one from the drop-down switches to it');
 await switchProfile('default'); ok(S.tx.length===1 && /Add, rename or delete books/.test(V.more()),'adding and managing books lives under More');
 staffMode=true; render(); ok(!/<select/.test($('#hdr').innerHTML) && /Lock/.test($('#hdr').innerHTML),'staff mode shows Lock in place of the drop-down'); staffMode=false; tab='home'; render();
 
-// version 11.3: the staff PIN never opens personal books
-SEC=null;DK=null;LEGACY=null;S=fresh();P=defaultP();Object.keys(store).forEach(k=>delete store[k]);
-S.items.push({id:'a',name:'Widget',num:1,qty:5,cost:1,price:2}); save();
-P.list.push({id:'hm',name:'Home',kind:'personal'}); P.current='hm'; S=fresh(); S.tx.push({id:'secret',type:'out',amount:4321,cat:'Loans & credit cards',note:'private loan',acct:'bank',gst:0,date:today()}); save();
-await enableEnc('owner-9'); const st2=rnd(16); SEC.staff={salt:b64(st2),iter:ITER,...await enc(await pinKey('staff-9',st2,ITER),b64(await crypto.subtle.exportKey('raw',DK)))}; save(); await saveQ;
-ok(P.current==='hm' && isPersonal(),'owner leaves the app on personal books');
-await lockNow(); $('#pinIn').value='staff-9'; await tryUnlock(); render();
-ok(staffMode && P.current==='default' && !isPersonal() && tab==='sell' && S.items.length===1 && !S.tx.some(t=>t.id==='secret'),'staff PIN opens business books even when personal was last open');
-ok(!/4321|private loan|Home/.test($('#hdr').innerHTML + $('#view').innerHTML),'nothing from the personal books is on screen for staff');
-await lockNow(); $('#pinIn').value='owner-9'; await tryUnlock(); await switchProfile('hm'); ok(!staffMode && S.tx[0].id==='secret','owner still sees the personal books');
-await delProfile('default'); await saveQ; ok(P.list.length===1 && isPersonal(),'(only personal books left)');
-await lockNow(); $('#pinIn').value='staff-9'; await tryUnlock();
-ok(DK===null && !staffMode && els['#lock'].hidden===false && /only opens business books/.test($('#pinMsg').textContent) && S.tx.length===0,'with only personal books, the staff PIN opens nothing');
-$('#pinIn').value='owner-9'; await tryUnlock(); await removeEnc('owner-9'); tab='home';
+
+
+// ================= version 12: separate keys per books, per-person staff PINs, private PINs =================
+const wait=async(cond,ms=8000)=>{const t0=Date.now(); while(!cond()&&Date.now()-t0<ms) await tick(40);};
+const fails=async p=>{try{await p;return false}catch(e){return true}};
+await saveQ; saveGen++; KR=new Map(); KEYS={}; staff=null; staffMode=false; SEC=null;DK=null;LEGACY=null;S=fresh();P=defaultP();Object.keys(store).forEach(k=>delete store[k]);memPhotos.clear();thumbCache.clear();
+S.items.push({id:'a',name:'Widget',num:1,qty:10,cost:5,price:10}); S.debts.push({id:'ow1',name:'Supplier',dir:'owe',amount:50,date:today(),payments:[]},{id:'od1',name:'Cust',dir:'owed',amount:30,date:today(),payments:[]}); S.tx.push({id:'bizsecret',type:'in',amount:555,cat:'Sales',acct:'cash',gst:0,date:today()}); save();
+P.list.push({id:'hm',name:'Home',kind:'personal'}); P.current='hm'; S=fresh(); S.tx.push({id:'homesecret',type:'out',amount:4321,cat:'Loans & credit cards',note:'private loan',acct:'bank',gst:0,date:today()}); save();
+const hpic=await photoSave({buf:new Uint8Array([4,4,4]).buffer,thumb:'data:image/jpeg;base64,BBBB'}); S.tx[0].pics=[hpic]; save();
+await enableEnc('owner-12');
+ok(SEC.v===2 && JSON.parse(store[KEY0]).enc===2 && JSON.parse(store[keyFor('hm')]).enc===2 && KEYS.default && KEYS.hm && KEYS.default!==KEYS.hm,'each set of books gets its own encryption key');
+ok(await fails(dec(await KR.get('default'),JSON.parse(store[keyFor('hm')]))) && await fails(dec(DK,JSON.parse(store[keyFor('hm')]))),'one set of books cannot be opened with another’s key, or with the master key directly');
+ok(memPhotos.get(hpic).enc===2 && memPhotos.get(hpic).pid==='hm' && new Uint8Array((await photoLoad(hpic)).buf).join()==='4,4,4','photos are encrypted under the key of the books they belong to');
+KR.set('hm2',KR.get('default')); P.list.push({id:'hm2',name:'X'}); dataReady=false; const pc0=P.current; P.current='hm2'; S=fresh(); S.tx.push({id:'zz',type:'in',amount:1,date:today()}); save(); await saveQ; ok(!store[keyFor('hm2')],'books that have not finished loading can never be saved over'); dataReady=true; P.current=pc0; P.list=P.list.filter(p=>p.id!=='hm2'); KR.delete('hm2'); await loadProfile();
+await lockNow(); ok(DK===null && KR.size===0 && Object.keys(KEYS).length===0,'locking drops every key from memory');
+$('#pinIn').value='owner-12'; await tryUnlock(); ok(S.tx[0].id==='homesecret' && KR.size===2,'the owner PIN opens ordinary books as before');
+await switchProfile('default'); ok(S.tx[0].id==='bizsecret','and can switch between them');
+// adding books while encrypted
+addProfile(); F('kind','business'); F('name','Shop Two'); SAVE(); await saveQ; const s2=P.current;
+ok(KEYS[s2] && JSON.parse(store[keyFor(s2)]).enc===2,'new books get their own key straight away'); S.items.push({id:'z',name:'Zed',num:1,qty:1,cost:1,price:2}); save(); await saveQ;
+await lockNow(); $('#pinIn').value='owner-12'; await tryUnlock(); ok(P.current===s2 && S.items[0].name==='Zed','new books reopen after a lock'); await switchProfile('default');
+// staff
+staffForm(); F('who','Dana'); F('p1','owner-12'); PERMS.forEach(p=>FC('pm_'+p[0],false)); lastAlert=''; SAVE(); await wait(()=>lastAlert);
+ok(/already in use/.test(lastAlert) && !(S.staff||[]).length,'a staff PIN cannot match the owner PIN');
+F('p1','dana-1'); SAVE(); await wait(()=>(S.staff||[]).length===1); await saveQ;
+ok(S.staff[0].who==='Dana' && Object.keys(S.staff[0].perms).length===0 && SEC.staff.length===1 && SEC.staff[0].pid==='default' && SEC.ssalt,'a staff member is added with their own PIN');
+closeForm(); staffForm(); F('who','Eli'); F('p1','dana-1'); FC('pm_stock',true); FC('pm_stockEdit',true); FC('pm_owing',true); FC('pm_sales',true); FC('pm_refunds',true); lastAlert=''; SAVE(); await wait(()=>lastAlert);
+ok(/already in use/.test(lastAlert) && S.staff.length===1,'two staff cannot share a PIN');
+F('p1','eli-22'); SAVE(); await wait(()=>S.staff.length===2); await saveQ; closeForm();
+ok(/Staff: 2 people/.test(V.more()) && /Manage staff/.test(V.more()),'More shows the staff for this business');
+await lockNow(); const hdrBefore=store[PKEY]; $('#pinIn').value='dana-1'; await tryUnlock(); render();
+ok(staffMode && staff.who==='Dana' && DK===null && KR.size===1 && P.list.length===1 && P.current==='default' && S.items[0].name==='Widget' && tab==='sell','a staff PIN unlocks its own business on the Sell screen');
+ok(await fails(dec(await KR.get('default'),JSON.parse(store[keyFor('hm')]))) && await fails(dec(await KR.get('default'),JSON.parse(store[keyFor(s2)]))) && await fails(dec(await KR.get('default'),JSON.parse(store[PKEY]).body)),'staff hold no key for personal books, other businesses, or the list of books');
+ok(await fails(photoLoad(hpic)),'staff cannot open photos from other books');
+ok(staffTabs().join()==='sell' && (tab='stock',render(),tab==='sell') && (tab='more',render(),tab==='sell') && (tab='home',render(),tab==='sell'),'with no extra permissions, staff see only Sell');
+const svd=V.sell(); ok(!/Today.s sales/.test(svd) && !/555/.test(svd) && /Dana · Lock/.test($('#hdr').innerHTML) && !/<select/.test($('#hdr').innerHTML),'no sales totals, and the top bar shows who is signed in');
+$('#modal').innerHTML='x'; addTx('in'); editItem('a'); profiles(); customersSheet(); restock('a'); ok($('#modal').innerHTML==='x','staff cannot open owner-only forms');
+ok((await backupText())===JSON.stringify(S,null,1) && (await backup(),true),'(staff backup is blocked at the door)');
+cart=[{id:'a',qty:2,price:10}]; posPay='full'; posDisc=''; posCust=''; posDone(); await saveQ;
+ok(S.tx[S.tx.length-1].by==='Dana' && S.items[0].qty===8 && store[PKEY]===hdrBefore,'a staff sale is saved and marked with their name, without touching the owner’s settings');
+receipt(lastSale); ok(/Served by Dana/.test($('#modal').innerHTML) && !/Void sale|Return items/.test($('#modal').innerHTML),'receipt names the staff member; no void or return without permission'); closeForm();
+await lockNow(); ok(!staffMode && staff===null && KR.size===0,'locking ends the staff session');
+$('#pinIn').value='eli-22'; await tryUnlock(); render();
+ok(staffMode && staff.who==='Eli' && staffTabs().join()==='sell,stock,debts','a second staff member has their own permissions');
+tab='stock'; render(); ok(tab==='stock' && /Restock/.test(V.stock()) && !/Edit<\\/button>|Delete<\\/button>|Add product|Profit|Cost \\$/.test(V.stock()) && /Sells \\$10\\.00/.test(V.stock()),'stock permission shows prices and restock, not costs or editing');
+tab='debts'; render(); const dv=V.debts(); ok(/Cust/.test(dv) && /Add payment/.test(dv) && !/Supplier|I owe|Add a debt|Edit<\\/button>/.test(dv),'owing permission shows what customers owe, not what the owner owes');
+ok(/Today.s sales/.test(V.sell()) && /by Dana/.test(V.sell()),'sales permission shows today’s sales and who made them');
+receipt(S.tx[S.tx.length-1].sale); ok(/Void sale/.test($('#modal').innerHTML) && /Return items/.test($('#modal').innerHTML),'refund permission allows returns and voids'); closeForm();
+await lockNow(); $('#pinIn').value='owner-12'; await tryUnlock(); await switchProfile('default');
+ok(!staffMode && DK && S.tx.some(t=>t.by==='Dana') && S.tx.some(t=>t.id==='bizsecret'),'the owner sees everything, including staff sales');
+staffForm(S.staff[0].id); F('who','Dana'); F('p1',''); PERMS.forEach(p=>FC('pm_'+p[0],p[0]==='sales')); SAVE(); await wait(()=>S.staff.find(x=>x.who==='Dana').perms.sales); await saveQ; closeForm();
+await lockNow(); $('#pinIn').value='dana-1'; await tryUnlock(); ok(staffMode && can('sales') && !can('stock'),'permissions can be changed without changing the PIN');
+await lockNow(); $('#pinIn').value='owner-12'; await tryUnlock(); await switchProfile('default');
+SEC.staff=SEC.staff.filter(x=>x.id!==S.staff.find(y=>y.who==='Dana').id); S.staff=S.staff.filter(x=>x.who!=='Dana'); save(); await saveQ;
+await lockNow(); $('#pinIn').value='dana-1'; await tryUnlock(); ok(DK===null && !staffMode && els['#lock'].hidden===false,'a removed staff member’s PIN stops working');
+$('#pinIn').value='owner-12'; await tryUnlock();
+await changePin('owner-12','owner-13'); await lockNow(); $('#pinIn').value='eli-22'; await tryUnlock(); ok(staffMode && staff.who==='Eli','staff PINs survive an owner PIN change'); await lockNow();
+// private PIN on the personal books
+$('#pinIn').value='owner-13'; await tryUnlock(); await switchProfile('hm'); ok(isPersonal() && !/Manage staff/.test(V.more()) && /Set a private PIN/.test(V.more()),'personal books offer a private PIN, not staff');
+privateForm(); F('p1','owner-13'); F('p2','owner-13'); lastAlert=''; SAVE(); await wait(()=>lastAlert); ok(/different from your main PIN/.test(lastAlert) && !isPriv('hm'),'the private PIN must differ from the main PIN');
+lastRec=''; F('p1','priv-1'); F('p2','priv-1'); SAVE(); await wait(()=>lastRec); await saveQ; const pcode=lastRec; closeForm();
+ok(isPriv('hm') && !KEYS.hm && SEC.priv.hm.rec && /^([0-9A-HJKMNP-TV-Z]{4}-){7}/.test(pcode) && !/"hm"/.test(await dec(DK,JSON.parse(store[PKEY]).body).then(b=>JSON.stringify(JSON.parse(b).keys))),'setting a private PIN takes that key out of the owner’s reach and gives its own recovery key');
+ok(S.tx[0].id==='homesecret' && /ON 🔒/.test(V.more()),'the books stay open for the rest of this session');
+const pbk=JSON.parse(await backupText()); ok(pbk.stockpileBackup===3 && pbk.priv && !pbk.wrap && !pbk.pk,'a backup of private books is locked by the private PIN only');
+await lockNow(); $('#pinIn').value='owner-13'; await tryUnlock(); render();
+ok(DK && P.current==='hm' && needKey() && S.tx.length===0 && /have their own PIN/.test($('#view').innerHTML) && !/4321|private loan/.test($('#view').innerHTML) && /🔒 Home/.test($('#hdr').innerHTML),'after a lock, the main PIN opens the app but not the private books');
+ok(await fails(dec(DK,JSON.parse(store[keyFor('hm')]))) && [...KR.keys()].join()!=='hm' && !KR.has('hm') && await fails(photoLoad(hpic)),'nothing the main PIN unlocks can decrypt the private books or their photos');
+S.tx.push({id:'junk',type:'in',amount:1,date:today()}); const hmBefore=store[keyFor('hm')]; save(); await saveQ; ok(store[keyFor('hm')]===hmBefore,'while shut, nothing can be saved over the private books'); S=fresh();
+ok(await fails(removeEnc('owner-13')) && SEC,'the main PIN cannot be removed while private books are shut');
+ok(await fails(openBackup(pbk)) && await fails(openBackup(pbk,'owner-13')) && (await openBackup(pbk,'priv-1')).tx[0].id==='homesecret' && (await openBackup(pbk,pcode)).tx[0].id==='homesecret','the private backup opens with the private PIN or its recovery key, not the main PIN');
+privUnlockForm(); F('pin','nope'); lastAlert=''; SAVE(); await wait(()=>lastAlert); ok(/wrong/.test(lastAlert) && needKey(),'a wrong private PIN is refused');
+F('pin','priv-1'); SAVE(); await wait(()=>!needKey()&&S.tx.length); ok(S.tx[0].id==='homesecret' && new Uint8Array((await photoLoad(hpic)).buf).join()==='4,4,4','the private PIN opens the books and their photos');
+await switchProfile('default'); await switchProfile('hm'); ok(!needKey() && S.tx[0].id==='homesecret','no need to re-enter it until the app locks');
+await lockNow(); $('#pinIn').value='owner-13'; await tryUnlock(); await switchProfile('default'); ok(S.tx.some(t=>t.id==='bizsecret') && !needKey(),'other books are unaffected'); await switchProfile('hm');
+privRecoverForm(); F('code','AAAA-BBBB-CCCC-DDDD-EEEE-FFFF-GGGG-HHHH'); F('p1','priv-2'); F('p2','priv-2'); lastAlert=''; SAVE(); await wait(()=>lastAlert); ok(/recovery key isn.t right/.test(lastAlert) && needKey(),'a wrong recovery key is refused');
+F('code',pcode.toLowerCase()); SAVE(); await wait(()=>!needKey()&&S.tx.length,4000); await saveQ; ok(S.tx.length===1 && S.tx[0].id==='homesecret','the books’ own recovery key resets the private PIN without losing anything');
+await lockNow(); $('#pinIn').value='owner-13'; await tryUnlock(); privUnlockForm(); F('pin','priv-1'); lastAlert=''; SAVE(); await wait(()=>lastAlert); ok(needKey(),'the old private PIN no longer works');
+F('pin','priv-2'); SAVE(); await wait(()=>!needKey()&&S.tx.length); ok(S.tx[0].id==='homesecret','the new private PIN does');
+// main recovery key still works, and does not open private books
+await switchProfile('default'); await makeRecovery(); const mcode=lastRec; closeForm(); await lockNow(); await recoverWithKey(mcode,'owner-14');
+ok(DK && KR.has('default') && !KR.has('hm') && S.tx.some(t=>t.id==='bizsecret'),'the main recovery key resets the main PIN, and still cannot open private books');
+await switchProfile('hm'); privUnlockForm(); F('pin','priv-2'); SAVE(); await wait(()=>!needKey()&&S.tx.length);
+await removePrivate(); await saveQ; ok(!isPriv('hm') && KEYS.hm,'the private PIN can be removed'); await lockNow(); $('#pinIn').value='owner-14'; await tryUnlock(); ok(P.current==='hm' && !needKey() && S.tx[0].id==='homesecret','then the main PIN opens those books again');
+await switchProfile('default'); await delProfile(s2); await saveQ; ok(!KEYS[s2] && !P.list.some(p=>p.id===s2),'deleting books removes their key');
+await removeEnc('owner-14'); ok(!SEC && /Widget/.test(store[KEY0]) && /homesecret/.test(store[keyFor('hm')]) && !memPhotos.get(hpic).enc,'removing the main PIN stores everything unlocked again');
+// data saved by the previous version (one key for everything) is upgraded on unlock
+await saveQ; saveGen++; KR=new Map(); KEYS={}; staff=null; staffMode=false; SEC=null;DK=null;LEGACY=null;S=fresh();P=defaultP();Object.keys(store).forEach(k=>delete store[k]);memPhotos.clear();thumbCache.clear();
+const oraw=rnd(32), okey=await importDK(oraw), osalt=rnd(16);
+const osec={salt:b64(osalt),iter:ITER,wrap:await enc(await pinKey('old-pin',osalt,ITER),b64(oraw)),staff:{salt:'x',iter:1,iv:'x',ct:'x'}};
+store[PKEY]=JSON.stringify({sec:osec,body:await enc(okey,JSON.stringify({list:[{id:'default',name:'Biz'},{id:'p9',name:'Home',kind:'personal'}],current:'default'}))});
+store[KEY0]=JSON.stringify({enc:1,...await enc(okey,JSON.stringify({tx:[{id:'o1',type:'in',amount:9,date:today(),pics:['oph']}],items:[],debts:[]}))});
+store[keyFor('p9')]=JSON.stringify({enc:1,...await enc(okey,JSON.stringify({tx:[{id:'o2',type:'out',amount:3,date:today()}],items:[],debts:[]}))});
+memPhotos.set('oph',{id:'oph',pid:'default',date:today(),w:1,h:1,size:3,enc:1,...await encBuf(okey,new Uint8Array([7,7,7]).buffer),th:await enc(okey,'data:image/jpeg;base64,CCCC')});
+await init(); ok(els['#lock'].hidden===false && SEC && !DK,'(older data starts locked)');
+$('#pinIn').value='old-pin'; await tryUnlock(); await saveQ;
+ok(DK && S.tx[0].id==='o1' && SEC.v===2 && !SEC.staff && JSON.parse(store[KEY0]).enc===2 && JSON.parse(store[keyFor('p9')]).enc===2 && KEYS.default && KEYS.p9,'data from the previous version is upgraded to separate keys on first unlock');
+ok(memPhotos.get('oph').enc===2 && new Uint8Array((await photoLoad('oph')).buf).join()==='7,7,7','older photos are upgraded too');
+await switchProfile('p9'); ok(S.tx[0].id==='o2','every set of books survives the upgrade'); await lockNow(); $('#pinIn').value='old-pin'; await tryUnlock(); ok(S.tx[0].id==='o2' && isPersonal(),'and reopens normally afterwards');
+await removeEnc('old-pin'); allTabs(); tab='home';
 })().catch(e=>{console.log('CRASH',e);process.exitCode=1});
 `;
 const html=fs.readFileSync(process.argv[2]?require('path').resolve(process.argv[2]):require('path').join(__dirname,'..','beta','index.html'),'utf8');

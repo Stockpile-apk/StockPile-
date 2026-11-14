@@ -72,7 +72,6 @@ select.f,input.f{padding:8px;border-radius:8px;border:1px solid var(--line);font
 .reccode{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:19px;font-weight:700;letter-spacing:1px;background:#f3f4f6;border:1px solid var(--line);border-radius:10px;padding:14px;text-align:center;overflow-wrap:anywhere;margin:12px 0;color:#000;user-select:all}
 #printArea{display:none}
 .beta{background:#f59e0b;color:#1d2433;border-radius:6px;padding:2px 6px;font-size:11px;margin-left:6px;vertical-align:middle}
-body.staff nav{display:none}
 nav button[hidden]{display:none}
 .th{width:48px;height:48px;border-radius:8px;object-fit:cover;background:#e5e7eb;flex:none;cursor:pointer}
 .strip{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:8px 0}
@@ -127,9 +126,9 @@ body.dark .sheet .rc{color:var(--ink)}body.dark .sheet .rcs{color:var(--mute)}bo
 // The test copy (served from /beta/) keeps its data under separate names, so it can never touch the real app's data.
 const BETA = /\/beta\//.test((typeof location !== 'undefined' && location.pathname) || '');
 const KEY0 = (BETA ? 'beta_' : '') + 'money_inventory_tracker_v1', PKEY = (BETA ? 'beta_' : '') + 'stockpile_profiles';
-const VERSION = '11.3';
+const VERSION = '12.0';
 const okDark = v => v === true || v === false ? v : undefined;
-const fresh = () => ({ tx: [], items: [], debts: [], lastBackup: null, dirty: 0, auto: true, offRemind: true, lastSent: null, offSnooze: null, contacts: [], adj: [], rec: [], budgets: {}, set: { gst: false, gstRate: 5 } });
+const fresh = () => ({ tx: [], items: [], debts: [], lastBackup: null, dirty: 0, auto: true, offRemind: true, lastSent: null, offSnooze: null, contacts: [], adj: [], rec: [], budgets: {}, staff: [], set: { gst: false, gstRate: 5 } });
 const defaultP = () => ({ list: [{ id: 'default', name: 'My business' }], current: 'default' });
 const CAN = !!(globalThis.crypto && crypto.subtle);
 let S = fresh(), P = defaultP(), storageOK = true, loadFailed = false;
@@ -138,36 +137,55 @@ let DK = null, SEC = null, LEGACY = null, saveQ = Promise.resolve();
 const keyFor = id => id === 'default' ? KEY0 : KEY0 + '_' + id;
 const profName = () => (P.list.find(p => p.id === P.current) || {}).name || 'My business';
 const fileBase = () => 'stockpile-' + (profName().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'business') + '-backup';
+// ----- keys -----
+// DK is the master key (opened by the owner's PIN, recovery key, security answers or fingerprint).
+// Every set of books has its own key. Ordinary books keep theirs inside the master-encrypted header (KEYS),
+// so the owner's PIN opens them. Books with a private PIN keep theirs wrapped by that PIN only (SEC.priv).
+// A staff PIN wraps the key of one business only (SEC.staff), so staff can never decrypt any other books.
+let KR = new Map(), KEYS = {}, staff = null, staffMode = false, saveGen = 0, dataReady = true;
+const isPriv = pid => !!(SEC && SEC.priv && SEC.priv[pid]);
+const needKey = () => !!SEC && !!DK && !staffMode && isPriv(P.current) && !KR.has(P.current);
+function newKey(pid) { const raw = rnd(32); KEYS[pid] = b64(raw); KR.set(pid, importDK(raw)); }
+const rawOf = async pid => KEYS[pid] || b64(await crypto.subtle.exportKey('raw', await KR.get(pid)));
+const headerBody = () => JSON.stringify({ list: P.list, current: P.current, dark: P.dark, keys: KEYS });
+const can = perm => !staffMode || !!(staff && staff.perms && staff.perms[perm]);
 async function loadProfile() {
-  S = fresh(); loadFailed = false;
+  S = fresh(); loadFailed = false; dataReady = false;   // until the books are actually loaded, nothing may be saved over them
+  if (needKey()) return;   // private books stay closed until their own PIN is entered
   try {
     const r = localStorage.getItem(keyFor(P.current));
-    if (r) { let o = JSON.parse(r); if (o && o.enc) o = JSON.parse(await dec(DK, o)); S = clean(o); }
+    if (r) {
+      let o = JSON.parse(r);
+      if (o && o.enc === 2) o = JSON.parse(await dec(await KR.get(P.current), o));
+      else if (o && o.enc) o = JSON.parse(await dec(DK, o));   // saved by an older version
+      S = clean(o);
+    }
   } catch (e) { loadFailed = true; }
+  dataReady = true;
   if (S.set.pin && !SEC && !LEGACY) LEGACY = S.set.pin;
   delete S.set.pin;
   if (applyRecurring()) save();
 }
 function save() {
   if (loadFailed) return;
-  const pid = P.current, sText = JSON.stringify(S), pBody = { list: P.list, current: P.current, dark: P.dark };
+  const pid = P.current, sText = JSON.stringify(S);
   if (!SEC) {
-    try { localStorage.setItem(keyFor(pid), sText); localStorage.setItem(PKEY, JSON.stringify({ ...pBody, pin: LEGACY })); } catch (e) { storageOK = false; }
+    try { localStorage.setItem(keyFor(pid), sText); localStorage.setItem(PKEY, JSON.stringify({ list: P.list, current: P.current, dark: P.dark, pin: LEGACY })); } catch (e) { storageOK = false; }
     return;
   }
-  if (!DK) return;
-  const key = DK, sec = SEC;
+  const pk = dataReady ? KR.get(pid) : null, mk = DK, sec = SEC, body = mk && !staffMode ? headerBody() : null, gen = saveGen;
+  if (!pk && !body) return;
   saveQ = saveQ.then(async () => {
-    const a = await enc(key, sText), b = await enc(key, JSON.stringify(pBody));
-    localStorage.setItem(keyFor(pid), JSON.stringify({ enc: 1, ...a }));
-    localStorage.setItem(PKEY, JSON.stringify({ sec, body: b }));
+    if (gen !== saveGen) return;   // everything was erased since this save was queued: don't write it back
+    if (pk) localStorage.setItem(keyFor(pid), JSON.stringify({ enc: 2, ...await enc(await pk, sText) }));
+    if (body) localStorage.setItem(PKEY, JSON.stringify({ sec, body: await enc(mk, body) }));
   }).catch(() => { storageOK = false; });
 }
 
 let tab = 'home', moneyFilter = 'month', moneyView = 'list', showNums = false, hiddenAt = 0;
 const money = new Intl.NumberFormat('en-CA', { style: 'currency', currency: 'CAD' });
 const cur = n => money.format(n || 0);
-const fmt = n => showNums ? cur(n) : '$ •••';
+const fmt = n => showNums || staffMode ? cur(n) : '$ •••';
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -180,7 +198,7 @@ const ACCT = { cash: 'Cash', bank: 'Bank' };
 const acct = t => t.acct || 'cash';
 const acctBal = a => sum(S.tx, t => t.type === 'move' ? (t.from === a ? -t.amount : t.amount) : acct(t) !== a ? 0 : t.type === 'in' ? t.amount : -t.amount);
 const gstOf = (amount, inc) => S.set.gst && inc ? round(amount * S.set.gstRate / (100 + S.set.gstRate)) : 0;
-const eye = () => `<button class="btn sec sm" onclick="showNums=!showNums;render()">${showNums ? '🙈 Hide amounts' : '👁 Show amounts'}</button>`;
+const eye = () => staffMode ? '' : `<button class="btn sec sm" onclick="showNums=!showNums;render()">${showNums ? '🙈 Hide amounts' : '👁 Show amounts'}</button>`;
 
 /* ---------- safety: only accept well-formed data (from storage or a backup file) ---------- */
 const num = v => { v = parseFloat(v); return Number.isFinite(v) ? v : 0; };
@@ -203,6 +221,7 @@ function clean(d) {
       if (t.sale) r.sale = okId(t.sale);
       if (t.saleAmt !== undefined) r.saleAmt = num(t.saleAmt);
       if (t.disc) r.disc = num(t.disc);
+      if (t.by) r.by = str(t.by).slice(0, 40);
       if (Array.isArray(t.pics)) { const pp = t.pics.filter(x => typeof x === 'string' && /^[a-z0-9]{1,24}$/i.test(x)).slice(0, 6); if (pp.length) r.pics = pp; }
       if (t.ret) { r.ret = okId(t.ret); if (t.line) r.line = okId(t.line); if (t.back) r.back = true; if (t.owedCut) r.owedCut = num(t.owedCut); }
     }
@@ -220,6 +239,7 @@ function clean(d) {
   o.adj = arr(d.adj).map(a => ({ id: okId(a.id), date: okDate(a.date), itemId: okId(a.itemId), name: str(a.name), qty: Math.round(num(a.qty)), why: str(a.why), note: str(a.note), value: num(a.value) }));
   o.rec = arr(d.rec).map(r => ({ id: okId(r.id), name: str(r.name), amount: num(r.amount), cat: str(r.cat), acct: r.acct === 'bank' ? 'bank' : 'cash', day: Math.min(Math.max(Math.round(num(r.day)) || 1, 1), 28), last: /^\d{4}-\d{2}$/.test(r.last) ? r.last : today().slice(0, 7) }));
   if (d.budgets && typeof d.budgets === 'object') Object.entries(d.budgets).slice(0, 80).forEach(([k, v]) => { if (num(v) > 0 && str(k)) o.budgets[str(k).slice(0, 60)] = num(v); });
+  o.staff = arr(d.staff).map(x => ({ id: okId(x.id), who: str(x.who).slice(0, 40), perms: Object.fromEntries(['stock', 'stockEdit', 'owing', 'sales', 'refunds'].filter(k => x.perms && x.perms[k]).map(k => [k, true])) }));
   o.offRemind = d.offRemind !== false; o.lastSent = isDate(d.lastSent) ? d.lastSent : null; o.offSnooze = isDate(d.offSnooze) ? d.offSnooze : null;
   const st = d.set && typeof d.set === 'object' ? d.set : {};
   o.set = { gst: !!st.gst, gstRate: num(st.gstRate) || 5 };
@@ -292,7 +312,7 @@ function categories(type) {
 const customers = () => [...new Set(S.tx.map(t => t.cust).filter(Boolean))];
 
 /* ---------- money ---------- */
-function addTx(type, t, preset) {
+function addTx(type, t, preset) { if (staffMode) return;
   const isEdit = !!t, isIn = type === 'in';
   t = t || { date: today(), type, amount: '', cat: '', note: '', cust: '', acct: 'cash', ...(preset || {}) };
   if (!isDate(t.date)) t.date = today();
@@ -312,7 +332,7 @@ function addTx(type, t, preset) {
   }, `${preset && preset.read ? '<div class="note">Filled in from the photo. Check the amount before you save.</div>' : ''}<div class="strip" id="picStrip" data-tx="${isEdit ? t.id : ''}">${stripHTML(isEdit ? (t.pics || []) : pendingPics, isEdit ? t.id : '')}</div>`, isEdit ? () => delTx(t.id) : null);
   loadThumbs();
 }
-function addMove(t) {
+function addMove(t) { if (staffMode) return;
   const isEdit = !!t;
   t = t || { date: today(), amount: '', from: 'cash', note: '' };
   form(isEdit ? 'Edit move' : 'Move money', [
@@ -325,8 +345,8 @@ function addMove(t) {
     if (isEdit) Object.assign(t, data); else S.tx.push({ id: uid(), type: 'move', ...data });
   }, '<div class="mute">For deposits and withdrawals. It shifts money between Cash and Bank without counting as income or spending.</div>', isEdit ? () => delTx(t.id) : null);
 }
-function editTx(id) { const t = S.tx.find(x => x.id === id); if (t) t.type === 'move' ? addMove(t) : addTx(t.type, t); }
-function delTx(id) {
+function editTx(id) { if (staffMode) return; const t = S.tx.find(x => x.id === id); if (t) t.type === 'move' ? addMove(t) : addTx(t.type, t); }
+function delTx(id) { if (staffMode) return;
   const t = S.tx.find(x => x.id === id); if (!t || !confirm('Delete this entry?')) return;
   const it = t.itemId && t.qty > 0 && S.items.find(i => i.id === t.itemId);
   if (t.ret) {
@@ -345,7 +365,7 @@ let selMode = false, sel = new Set(), listIds = [];
 function togSel(id) { if (sel.has(id)) sel.delete(id); else sel.add(id); render(); }
 function selToggleMode() { selMode = !selMode; sel.clear(); render(); }
 function selAll() { if (listIds.every(id => sel.has(id))) sel.clear(); else listIds.forEach(id => sel.add(id)); render(); }
-function delSelected() {
+function delSelected() { if (staffMode) return;
   const list = S.tx.filter(t => sel.has(t.id)); if (!list.length) return;
   if (!confirm(`Delete ${list.length} ${list.length === 1 ? 'entry' : 'entries'}?`)) return;
   const sold = list.filter(t => !t.ret && t.itemId && t.qty > 0 && S.items.some(i => i.id === t.itemId));
@@ -358,7 +378,7 @@ function delSelected() {
 }
 
 /* ---------- inventory ---------- */
-function editItem(id) {
+function editItem(id) { if (staffMode) return;
   const it = S.items.find(x => x.id === id) || { name: '', cost: '', price: '', qty: '', low: '', num: nextNum() };
   form(id ? 'Edit product' : 'Add product', [
     { k: 'name', l: 'Product name', v: it.name, req: 1 },
@@ -374,11 +394,11 @@ function editItem(id) {
     if (id) Object.assign(it, data); else S.items.push({ id: uid(), ...data });
   }, '', id ? () => delItem(id) : null);
 }
-function delItem(id) {
+function delItem(id) { if (staffMode) return;
   const it = S.items.find(x => x.id === id);
   if (it && confirm(`Delete "${it.name}" from your stock list?\n(Ledger entries already recorded stay.)`)) { S.items = S.items.filter(x => x.id !== id); commit(); render(); }
 }
-function sell(id) {
+function sell(id) { if (staffMode) return;
   const it = S.items.find(x => x.id === id); if (!it) return;
   form('Record a sale: ' + it.name, [
     { k: 'qty', l: 'How many sold', t: 'number', v: 1, req: 1, pos: 1 },
@@ -397,7 +417,7 @@ function sell(id) {
     if (r.owing > 0) setTimeout(() => alert(saleMsg(r, v.cust.trim())), 50);
   }, `<div class="mute">In stock: ${it.qty}. This adds the money to “Money In” and takes them off your stock count.</div>`);
 }
-function restock(id) {
+function restock(id) { if (!can('stockEdit')) return;
   const it = S.items.find(x => x.id === id); if (!it) return;
   form('Restock: ' + it.name, [
     { k: 'qty', l: 'How many you got', t: 'number', v: '', req: 1, pos: 1, ph: '0' },
@@ -436,7 +456,7 @@ function recordSale(lines, o) {
     const cash = owing > 0 ? (i === lines.length - 1 ? left : Math.min(left, round(P * full / T))) : full;
     left = round(left - cash);
     l.it.qty -= l.qty;
-    const t = { id: uid(), type: 'in', amount: round(cash), cat: 'Sales', note: `Sold ${l.qty} × ${l.it.name}`, cust, acct: o.acct === 'bank' ? 'bank' : 'cash', gst: gstOf(full, o.gstInc), date, cogs: round(l.qty * (l.it.cost || 0)), itemId: l.it.id, qty: l.qty, sale };
+    const t = { id: uid(), type: 'in', amount: round(cash), cat: 'Sales', note: `Sold ${l.qty} × ${l.it.name}`, cust, acct: o.acct === 'bank' ? 'bank' : 'cash', gst: gstOf(full, o.gstInc), date, cogs: round(l.qty * (l.it.cost || 0)), itemId: l.it.id, qty: l.qty, sale, ...(staffMode && staff ? { by: staff.who } : {}) };
     if (owing > 0) t.saleAmt = full;
     if (net[i].d > 0) t.disc = net[i].d;
     S.tx.push(t);
@@ -528,14 +548,14 @@ function itemByCode(v) {
   const own = S.items.find(i => i.code && i.code === v); if (own) return own;
   return /^2\d{12}$/.test(v) && +v[12] === eanCheck(v.slice(0, 12)) ? itemByNum(parseInt(v.slice(1, 12), 10)) : undefined;
 }
-function printLabels() {
+function printLabels() { if (staffMode) return;
   if (!S.items.length) return;
   const n = Math.min(Math.max(parseInt(prompt('How many labels for each product?', '1')) || 0, 0), 60); if (!n) return;
   const price = confirm('Show the price on each label?\n\nOK = show prices, Cancel = no prices');
   const items = [...S.items].sort((a, b) => a.num - b.num);
   printHTML(`<div class="labs">${items.map(i => Array(n).fill(`<div class="lab"><div class="ln">#${i.num} ${esc(i.name)}</div>${eanSVG(itemEAN(i.num))}${price ? `<div class="lp">${cur(i.price)}</div>` : ''}</div>`).join('')).join('')}</div>`);
 }
-function barcodeSheet(id) {
+function barcodeSheet(id) { if (staffMode) return;
   const it = S.items.find(i => i.id === id); if (!it) return;
   const m = $('#modal');
   m.innerHTML = `<div class="sheet"><h2>Barcode: ${esc(it.name)}</h2>
@@ -624,11 +644,11 @@ function saleInfo(id) {
   const lines = tx.map(t => { const it = t.itemId && S.items.find(i => i.id === t.itemId), amount = (t.saleAmt ?? t.amount) + (t.disc || 0), qty = t.qty > 0 ? t.qty : 1; return { name: it ? it.name : String(t.note || 'Item').replace(/^Sold \d+ × /, ''), qty, each: round(amount / qty), amount }; });
   const disc = round(sum(tx, t => t.disc)), total = round(sum(lines, l => l.amount) - disc), owing = debt ? Math.max(bal(debt), 0) : 0;
   const returns = S.tx.filter(t => t.ret === id), returned = round(sum(returns, t => -(t.saleAmt || 0)));
-  return { id, tx, debt, lines, total, owing, disc, returns, returned, paid: round(total - returned - owing), gst: round(sum(tx, t => t.gst)), date: tx[0].date, cust: tx[0].cust || (debt ? debt.name : ''), no: 'R-' + tx[0].date.replace(/-/g, '') + '-' + id.slice(-4).toUpperCase() };
+  return { id, tx, debt, lines, total, owing, disc, returns, returned, paid: round(total - returned - owing), gst: round(sum(tx, t => t.gst)), date: tx[0].date, by: tx[0].by || '', cust: tx[0].cust || (debt ? debt.name : ''), no: 'R-' + tx[0].date.replace(/-/g, '') + '-' + id.slice(-4).toUpperCase() };
 }
 function receiptBody(r) {
   return `<div class="rc"><div class="rch">${esc(profName())}</div><div class="rcs">Receipt ${esc(r.no)} · ${niceDate(r.date)}</div>
-    ${r.cust ? `<div class="rcs">Customer: <b>${esc(r.cust)}</b></div>` : ''}
+    ${r.cust ? `<div class="rcs">Customer: <b>${esc(r.cust)}</b></div>` : ''}${r.by ? `<div class="rcs">Served by ${esc(r.by)}</div>` : ''}
     <table><tr><th>Item</th><th>Qty</th><th>Each</th><th>Amount</th></tr>${r.lines.map(l => `<tr><td>${esc(l.name)}</td><td>${l.qty}</td><td>${cur(l.each)}</td><td>${cur(l.amount)}</td></tr>`).join('')}</table>
     ${r.disc > 0 ? `<div class="rct"><span>Subtotal</span><span>${cur(r.total + r.disc)}</span></div><div class="rct"><span>Discount</span><span>−${cur(r.disc)}</span></div>` : ''}
     <div class="rct"><span>Total</span><b>${cur(r.total)}</b></div>
@@ -646,10 +666,10 @@ function receipt(id) {
   const m = $('#modal');
   m.innerHTML = `<div class="sheet">${receiptBody(r)}
     <div class="row" style="margin-top:14px"><button class="btn" onclick="printHTML(receiptBody(saleInfo('${id}')))">Print</button><button class="btn" onclick="shareText('Receipt',receiptText(saleInfo('${id}')))">Send</button>
-      ${staffMode ? '' : `<button class="btn sec" onclick="closeForm();returnForm('${id}')">Return items</button><button class="btn out" onclick="voidSale('${id}')">Void sale</button>`}<button class="btn sec" onclick="closeForm()">Close</button></div></div>`;
+      ${!can('refunds') ? '' : `<button class="btn sec" onclick="closeForm();returnForm('${id}')">Return items</button><button class="btn out" onclick="voidSale('${id}')">Void sale</button>`}<button class="btn sec" onclick="closeForm()">Close</button></div></div>`;
   m.hidden = false; m.onclick = e => { if (e.target === m) closeForm(); };
 }
-function voidSale(id) {
+function voidSale(id) { if (!can('refunds')) return;
   const r = saleInfo(id); if (!r) return;
   const later = r.debt ? paid(r.debt) : 0;
   if (!confirm(`Void this whole sale (${cur(r.total)})?\n\nThe items go back into stock and the sale is removed from your records${r.debt ? ', along with the amount on the Owing tab' : ''}.` + (later > 0 ? `\n\nNote: ${cur(later)} in payments already recorded against it will stay in your Ledger. Delete those entries yourself if they should go too.` : ''))) return;
@@ -672,7 +692,7 @@ function customerList() {
   (S.contacts || []).forEach(k => get(k.name));
   return [...m.values()].map(c => ({ ...c, sales: round(c.sales), owing: round(c.owing), count: c.ids.size })).sort((a, b) => b.owing - a.owing || b.sales - a.sales || a.name.localeCompare(b.name));
 }
-function customersSheet() {
+function customersSheet() { if (!can('owing')) return;
   custCache = customerList();
   const m = $('#modal');
   m.innerHTML = `<div class="sheet"><h2>Customers</h2>
@@ -757,7 +777,7 @@ function sendNow(how) {
   const p = pendMsg; if (!p) return; closeForm();
   location.href = how === 'sms' ? smsLink(p.c.phone, p.body) : mailLink(p.c.email, p.subject, p.body);
 }
-function remind(debtId) {
+function remind(debtId) { if (!can('owing')) return;
   const d = S.debts.find(x => x.id === debtId); if (!d || bal(d) <= 0) return;
   const kind = remindDefault(d.due);
   sendVia(d.name, `Reminder from ${profName()}`, reminderText(d.name, bal(d), d.due, kind), () => remind(debtId), { amount: bal(d), due: d.due, kind });
@@ -795,7 +815,7 @@ function promoSend(i, how) {
 }
 
 /* ---------- returns and refunds ---------- */
-function returnForm(id) {
+function returnForm(id) { if (!can('refunds')) return;
   const r = saleInfo(id); if (!r) return;
   const lines = r.tx.map(t => { const sold = t.qty > 0 ? t.qty : 1, it = t.itemId && S.items.find(i => i.id === t.itemId); return { t, it, sold, name: it ? it.name : String(t.note || 'Item').replace(/^Sold \d+ × /, ''), left: sold - sum(r.returns.filter(x => x.line === t.id), x => x.qty) }; }).filter(l => l.left > 0);
   if (!lines.length) { alert('Everything on this sale has already been returned.'); return; }
@@ -821,7 +841,7 @@ function returnForm(id) {
 
 /* ---------- stock adjustments (damaged, lost, personal use, recount) ---------- */
 const ADJ_WHY = ['Damaged', 'Lost or stolen', 'Personal use', 'Given away', 'Counted wrong', 'Other'];
-function adjustForm(id) {
+function adjustForm(id) { if (!can('stockEdit')) return;
   const it = S.items.find(i => i.id === id); if (!it) return;
   form('Adjust stock: ' + it.name, [
     { k: 'dir', l: 'What happened?', t: 'select', v: 'out', o: [['out', 'Take some out of stock'], ['in', 'Add some to stock (not a purchase)']] },
@@ -915,11 +935,12 @@ function stockBodyHTML() {
   return items.length ? items.map(i => { const isLow = i.low > 0 && i.qty <= i.low; return `<div class="card prod ${isLow ? 'low' : ''}">
       <div class="top"><div><div class="t" style="font-weight:700;font-size:17px"><span class="mute">#${i.num}</span> ${esc(i.name)}</div>
         ${isLow ? '<div class="neg" style="font-weight:700;font-size:14px">⚠️ Low – time to restock</div>' : ''}
-        <div class="mute">Cost ${fmt(i.cost)} · Sells ${fmt(i.price)}${i.price && i.cost ? ` · Profit ${fmt(i.price - i.cost)} each` : ''}</div>
+        <div class="mute">${staffMode ? `Sells ${cur(i.price)}` : `Cost ${fmt(i.cost)} · Sells ${fmt(i.price)}${i.price && i.cost ? ` · Profit ${fmt(i.price - i.cost)} each` : ''}`}</div>
         ${i.low > 0 ? `<div class="mute">Alert at ${i.low} or fewer</div>` : ''}</div>
         <div><div class="qty ${i.qty <= 0 ? 'neg' : ''}">${i.qty}</div><div class="mute" style="text-align:right">in stock</div></div></div>
-      <div class="row" style="margin-top:12px"><button class="btn sm in" onclick="sell('${i.id}')">Sold</button><button class="btn sm" onclick="restock('${i.id}')">Restock</button>
-        <button class="btn sm sec" onclick="adjustForm('${i.id}')">Adjust</button><button class="btn sm sec" onclick="barcodeSheet('${i.id}')">Barcode</button><button class="btn sm sec" onclick="editItem('${i.id}')">Edit</button><button class="btn sm sec" onclick="delItem('${i.id}')">Delete</button></div>
+      ${staffMode ? (can('stockEdit') ? `<div class="row" style="margin-top:12px"><button class="btn sm" onclick="restock('${i.id}')">Restock</button><button class="btn sm sec" onclick="adjustForm('${i.id}')">Adjust</button></div>` : '')
+        : `<div class="row" style="margin-top:12px"><button class="btn sm in" onclick="sell('${i.id}')">Sold</button><button class="btn sm" onclick="restock('${i.id}')">Restock</button>
+        <button class="btn sm sec" onclick="adjustForm('${i.id}')">Adjust</button><button class="btn sm sec" onclick="barcodeSheet('${i.id}')">Barcode</button><button class="btn sm sec" onclick="editItem('${i.id}')">Edit</button><button class="btn sm sec" onclick="delItem('${i.id}')">Delete</button></div>`}
     </div>`; }).join('') : `<div class="card empty">${S.items.length ? 'Nothing matches your search.' : 'No products yet. Tap “+ Add product”.'}</div>`;
 }
 function custBodyHTML() {
@@ -942,26 +963,7 @@ function posTotals() {
   posOwing();
 }
 
-/* ---------- staff PIN (opens the Sell screen only) and dark mode ---------- */
-let staffMode = false;
-function setStaffPin() {
-  if (!SEC || !DK || staffMode) return;
-  form(SEC.staff ? 'Change staff PIN' : 'Set a staff PIN', [
-    { k: 'p1', l: 'Staff PIN (4 or more characters)', t: 'pin', req: 1 },
-    { k: 'p2', l: 'Same again', t: 'pin', req: 1 }
-  ], v => {
-    if (v.p1.length < 4) { alert('Use at least 4 characters.'); return false; }
-    if (v.p1 !== v.p2) { alert("The two don't match."); return false; }
-    return busy(async () => {
-      let same = true; try { await unwrapWithPin(v.p1); } catch (e) { same = false; }
-      if (same) throw fail('Choose a staff PIN that is different from your own PIN.');
-      const salt = rnd(16); await saveQ;
-      SEC.staff = { salt: b64(salt), iter: ITER, ...await enc(await pinKey(v.p1, salt, ITER), b64(await crypto.subtle.exportKey('raw', DK))) };
-      save(); await saveQ;
-    });
-  }, '<div class="mute">Unlocking with this PIN opens only the Sell screen: no totals, Ledger, Owing, Stock or settings. Your own PIN still opens everything.</div>');
-}
-function removeStaffPin() { if (SEC && SEC.staff && !staffMode && confirm('Remove the staff PIN?')) { delete SEC.staff; save(); render(); } }
+/* ---------- dark mode ---------- */
 const isDark = () => P.dark === true || (P.dark == null && typeof matchMedia === 'function' && matchMedia('(prefers-color-scheme: dark)').matches);
 
 /* ---------- personal profiles: categories and budgets ---------- */
@@ -1023,15 +1025,23 @@ async function encBuf(key, buf) { const iv = rnd(12); return { iv: b64(iv), buf:
 const decBuf = (key, o) => crypto.subtle.decrypt({ name: 'AES-GCM', iv: unb64(o.iv) }, key, o.buf);
 async function packPhoto(key, p) {   // p: {id, pid, date, w, h, buf, thumb}
   const base = { id: p.id, pid: p.pid, date: p.date, w: p.w || 0, h: p.h || 0, size: p.buf.byteLength };
-  return key ? { ...base, enc: 1, ...await encBuf(key, p.buf), th: await enc(key, p.thumb || '') } : { ...base, buf: p.buf, thumb: p.thumb || '' };
+  return key ? { ...base, enc: 2, ...await encBuf(key, p.buf), th: await enc(key, p.thumb || '') } : { ...base, buf: p.buf, thumb: p.thumb || '' };
 }
-async function unpackPhoto(key, r) { return r.enc ? { ...r, buf: await decBuf(key, r), thumb: await dec(key, r.th) } : r; }
-async function photoSave(p) { const id = p.id || uid(); await PS.put(await packPhoto(SEC ? DK : null, { ...p, id, pid: P.current, date: p.date || today() })); if (p.thumb) thumbCache.set(id, p.thumb); return id; }
-async function photoLoad(id) { const r = await PS.get(id); return r ? unpackPhoto(DK, r) : null; }
+async function unpackPhoto(r) {
+  if (!r.enc) return r;
+  const key = r.enc === 2 ? await KR.get(r.pid) : DK; if (!key) throw new Error('nokey');
+  return { ...r, buf: await decBuf(key, r), thumb: await dec(key, r.th) };
+}
+async function photoSave(p) {
+  const id = p.id || uid(), key = SEC ? await KR.get(P.current) : null; if (SEC && !key) throw new Error('nokey');
+  await PS.put(await packPhoto(key, { ...p, id, pid: P.current, date: p.date || today() })); if (p.thumb) thumbCache.set(id, p.thumb); return id; }
+async function photoLoad(id) { const r = await PS.get(id); return r ? unpackPhoto(r) : null; }
 function photoDel(id) { thumbCache.delete(id); return PS.del(id).catch(() => {}); }
 const dropPics = list => list.forEach(t => (t.pics || []).forEach(photoDel));
-// When a PIN is set or removed, re-save every photo the matching way. A photo that fails is left as it was.
-async function photosRekey(oldKey, newKey) { for (const r of await PS.all()) { try { await PS.put(await packPhoto(newKey, await unpackPhoto(oldKey, r))); } catch (e) {} } }
+// When a PIN is set, re-save every photo under the key of the books it belongs to. A photo that fails is left as it was.
+async function photosResave() {
+  for (const r of await PS.all()) { try { const p = await unpackPhoto(r), key = SEC ? await KR.get(p.pid) : null; if (SEC && !key) continue; await PS.put(await packPhoto(key, p)); } catch (e) {} }
+}
 async function photosDropProfile(pid) { for (const r of await PS.all()) if (r.pid === pid) await PS.del(r.id).catch(() => {}); }
 async function loadThumbs() {
   for (const img of document.querySelectorAll('img[data-pic]')) {
@@ -1151,10 +1161,106 @@ async function restorePhotos(list) {
 }
 $('#snapFile').onchange = onSnapFile; $('#pickFile').onchange = onSnapFile;
 
+/* ---------- staff: one PIN per person, each opening one business only ---------- */
+const PERMS = [['stock', 'See the Stock list'], ['stockEdit', 'Restock and adjust stock'], ['owing', 'See what customers owe and take payments'], ['sales', "See today's sales and receipts"], ['refunds', 'Do returns and void sales']];
+const staffTabs = () => ['sell', ...(can('stock') || can('stockEdit') ? ['stock'] : []), ...(can('owing') ? ['debts'] : [])];
+async function pinInUse(pin, exceptId) {
+  try { await unwrapWithPin(pin); return true; } catch (e) {}
+  if (Array.isArray(SEC.staff) && SEC.ssalt) { const k = await pinKey(pin, unb64(SEC.ssalt), ITER); for (const r of SEC.staff) { if (r.id === exceptId) continue; try { await dec(k, r); return true; } catch (e) {} } }
+  return false;
+}
+function staffForm(id) {
+  if (!SEC || !DK || staffMode || isPersonal()) return;
+  const me = (S.staff || []).find(x => x.id === id) || { who: '', perms: {} };
+  form(id ? 'Edit staff member' : 'Add staff member', [
+    { k: 'who', l: 'Name', v: me.who, req: 1 },
+    { k: 'p1', l: id ? 'New PIN (leave blank to keep the current one)' : 'Their PIN (4 or more characters)', t: 'pin', req: id ? 0 : 1 },
+    ...PERMS.map(p => ({ k: 'pm_' + p[0], l: p[1], t: 'check', v: !!me.perms[p[0]] }))
+  ], v => {
+    if (v.p1 && v.p1.length < 4) { alert('Use at least 4 characters for the PIN.'); return false; }
+    return busy(async () => {
+      const sid = id || uid(), pid = P.current;
+      if (v.p1) {
+        if (await pinInUse(v.p1, sid)) throw fail('That PIN is already in use. Each person needs their own, different from yours.');
+        if (!SEC.ssalt) SEC.ssalt = b64(rnd(16));
+        const rec = { id: sid, pid, ...await enc(await pinKey(v.p1, unb64(SEC.ssalt), ITER), JSON.stringify({ k: await rawOf(pid), pid })) };
+        SEC.staff = (Array.isArray(SEC.staff) ? SEC.staff : []).filter(x => x.id !== sid).concat(rec);
+      }
+      const perms = {}; PERMS.forEach(p => { if (v['pm_' + p[0]]) perms[p[0]] = true; });
+      S.staff = (S.staff || []).filter(x => x.id !== sid).concat({ id: sid, who: String(v.who).trim().slice(0, 40), perms });
+      save(); await saveQ; setTimeout(staffSheet, 60);
+    });
+  }, `<div class="mute">This PIN opens only “${esc(profName())}”, starting on the Sell screen. Tick anything else they are allowed to do. They never see Home, the Ledger, Receipts, More, or any of your other books.</div>`,
+  id ? () => { if (confirm(`Remove ${me.who}? Their PIN stops working.`)) { SEC.staff = (SEC.staff || []).filter(x => x.id !== id); S.staff = (S.staff || []).filter(x => x.id !== id); commit(); render(); setTimeout(staffSheet, 60); } } : null);
+}
+function staffSheet() {
+  const m = $('#modal'), list = S.staff || [];
+  m.innerHTML = `<div class="sheet"><h2>Staff for ${esc(profName())}</h2>
+    ${list.length ? `<div class="list">${list.map(x => `<div class="it"><div class="main" onclick="staffForm('${x.id}')"><div class="t">👤 ${esc(x.who)}</div>
+      <div class="mute">Sell${PERMS.filter(p => x.perms[p[0]]).map(p => ' · ' + p[1]).join('')}</div></div></div>`).join('')}</div>` : '<div class="card empty">No staff yet.</div>'}
+    <p class="mute">Each person has their own PIN that opens only this business. Sales they ring up are marked with their name.</p>
+    <div class="row end"><button class="btn sec" onclick="closeForm()">Close</button><button class="btn" onclick="staffForm()">+ Add staff member</button></div></div>`;
+  m.hidden = false; m.onclick = e => { if (e.target === m) closeForm(); };
+}
+
+/* ---------- private PIN: books that only their own PIN can open ---------- */
+function privateForm() {
+  const pid = P.current; if (!SEC || !DK || staffMode || !KR.has(pid)) return;
+  form(isPriv(pid) ? 'Change the private PIN' : 'Set a private PIN', [
+    { k: 'p1', l: 'Private PIN or password (4 or more characters)', t: 'pin', req: 1 },
+    { k: 'p2', l: 'Same again', t: 'pin', req: 1 }
+  ], v => {
+    if (v.p1.length < 4) { alert('Use at least 4 characters.'); return false; }
+    if (v.p1 !== v.p2) { alert("The two don't match."); return false; }
+    return busy(async () => {
+      if (await pinInUse(v.p1)) throw fail('Choose a PIN that is different from your main PIN and from any staff PIN.');
+      const raw = await rawOf(pid), salt = rnd(16), code = newRecCode(), rsalt = rnd(16); await saveQ;
+      SEC.priv = SEC.priv || {};
+      SEC.priv[pid] = { salt: b64(salt), iter: ITER, ...await enc(await pinKey(v.p1, salt, ITER), raw), rec: { salt: b64(rsalt), ...await enc(await recKey(code, rsalt), raw) } };
+      delete KEYS[pid];   // from now on the main PIN alone cannot open these books
+      save(); await saveQ; setTimeout(() => showRecovery(code, profName()), 80);
+    });
+  }, `<div class="mute">“${esc(profName())}” will be encrypted under this PIN alone. Your main PIN opens the app, but these books stay shut until this PIN is entered.<br><br><b>You'll get a separate recovery key for these books. Without the private PIN or that key, nobody can open them, including with your main PIN.</b></div>`);
+}
+async function removePrivate() {
+  const pid = P.current; if (!isPriv(pid) || !KR.has(pid) || !confirm(`Remove the private PIN from “${profName()}”? Your main PIN will open it again.`)) return;
+  KEYS[pid] = await rawOf(pid); delete SEC.priv[pid]; save(); await saveQ; render();
+}
+function privUnlockForm() {
+  const pid = P.current, pv = SEC.priv[pid];
+  form(`PIN for “${profName()}”`, [{ k: 'pin', l: 'Private PIN', t: 'pin', req: 1 }], v => busy(async () => {
+    let raw; try { raw = unb64(await dec(await pinKey(v.pin, unb64(pv.salt), pv.iter), pv)); } catch (e) { throw fail('That PIN is wrong.'); }
+    KR.set(pid, await importDK(raw)); await loadProfile();
+  }), `<p><a href="#" onclick="event.preventDefault();closeForm();privRecoverForm()">Forgot it? Use the recovery key for these books</a></p>`);
+}
+function privRecoverForm() {
+  const pid = P.current, pv = SEC.priv[pid];
+  form(`Reset the PIN for “${profName()}”`, [
+    { k: 'code', l: 'Recovery key for these books', req: 1, ph: 'XXXX-XXXX-XXXX-…' },
+    { k: 'p1', l: 'New private PIN (4 or more characters)', t: 'pin', req: 1 },
+    { k: 'p2', l: 'Same again', t: 'pin', req: 1 }
+  ], v => {
+    if (v.p1.length < 4) { alert('Use at least 4 characters.'); return false; }
+    if (v.p1 !== v.p2) { alert("The two don't match."); return false; }
+    return busy(async () => {
+      let raw; try { raw = await dec(await recKey(v.code, unb64(pv.rec.salt)), pv.rec); } catch (e) { throw fail("That recovery key isn't right. Check it and try again."); }
+      const salt = rnd(16); await saveQ;
+      SEC.priv[pid] = { salt: b64(salt), iter: ITER, ...await enc(await pinKey(v.p1, salt, ITER), raw), rec: pv.rec };
+      KR.set(pid, await importDK(unb64(raw)));
+      await loadProfile();   // load the books before anything is saved, so they are never written over empty
+      save(); await saveQ;
+    });
+  });
+}
+const privCard = () => `<div class="card" style="text-align:center;padding:28px 16px;margin-top:10px"><div style="font-size:42px">🔒</div>
+  <h2 style="margin:8px 0 4px">${esc(profName())}</h2><div class="mute">These books have their own PIN.</div>
+  <div class="row" style="justify-content:center;margin-top:16px"><button class="btn" onclick="privUnlockForm()">Enter PIN</button></div>
+  <p class="mute" style="margin-top:14px">To open different books, use the drop-down at the top right.</p></div>`;
+
 /* ---------- debts ---------- */
 const paid = d => sum(d.payments || [], p => p.amount);
 const bal = d => round(d.amount - paid(d));
-function editDebt(id) {
+function editDebt(id) { if (staffMode) return;
   const d = S.debts.find(x => x.id === id) || { name: '', dir: 'owe', amount: '', note: '', date: today() };
   form(id ? 'Edit debt' : 'Add a debt', [
     { k: 'dir', l: 'Which way?', t: 'select', v: d.dir, o: [['owe', 'I owe them'], ['owed', 'They owe me']] },
@@ -1168,7 +1274,7 @@ function editDebt(id) {
     if (id) Object.assign(d, data); else S.debts.push({ id: uid(), payments: [], ...data });
   }, '', id ? () => delDebt(id) : null);
 }
-function payDebt(id) {
+function payDebt(id) { if (!can('owing')) return;
   const d = S.debts.find(x => x.id === id); if (!d) return;
   const owe = d.dir === 'owe';
   form(owe ? `Payment to ${d.name}` : `Payment from ${d.name}`, [
@@ -1183,7 +1289,7 @@ function payDebt(id) {
     if (!owe) setTimeout(() => thankFor(d.name, round(v.amount)), 200);
   }, `<div class="mute">Still left: ${cur(bal(d))}</div>`);
 }
-function delDebt(id) { if (confirm('Delete this debt and its payment history?')) { S.debts = S.debts.filter(x => x.id !== id); commit(); render(); } }
+function delDebt(id) { if (staffMode) return; if (confirm('Delete this debt and its payment history?')) { S.debts = S.debts.filter(x => x.id !== id); commit(); render(); } }
 
 /* ---------- PIN lock + encryption ---------- */
 function hashPin(p) { let h = 5381; const s = 'stockpile:' + p; for (let r = 0; r < 500; r++) for (let i = 0; i < s.length; i++) h = (((h << 5) + h) ^ s.charCodeAt(i) ^ r) >>> 0; return h.toString(36); }
@@ -1201,20 +1307,20 @@ const importDK = raw => crypto.subtle.importKey('raw', raw, 'AES-GCM', true, ['e
 async function enc(key, text) { const iv = rnd(12); return { iv: b64(iv), ct: b64(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, te.encode(text))) }; }
 async function dec(key, o) { return td.decode(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: unb64(o.iv) }, key, unb64(o.ct))); }
 
-// Turn encryption on. The header is written first, so a failure part-way leaves data readable.
+// Turn encryption on. The header (with every key) is written first, so a failure part-way leaves data readable.
 async function enableEnc(pin) {
   save(); await saveQ;
   const raw = rnd(32), salt = rnd(16), key = await importDK(raw);
-  const sec = { salt: b64(salt), iter: ITER, wrap: await enc(await pinKey(pin, salt, ITER), b64(raw)) };
-  const body = await enc(key, JSON.stringify({ list: P.list, current: P.current }));
-  localStorage.setItem(PKEY, JSON.stringify({ sec, body }));
+  const sec = { v: 2, salt: b64(salt), iter: ITER, wrap: await enc(await pinKey(pin, salt, ITER), b64(raw)) };
+  KEYS = {}; KR = new Map(); for (const p of P.list) newKey(p.id);
+  localStorage.setItem(PKEY, JSON.stringify({ sec, body: await enc(key, headerBody()) }));
   SEC = sec; DK = key; LEGACY = null;
   for (const p of P.list) {
     const r = localStorage.getItem(keyFor(p.id)); if (!r) continue;
     let o; try { o = JSON.parse(r); } catch (e) { continue; }
-    if (o && !o.enc) localStorage.setItem(keyFor(p.id), JSON.stringify({ enc: 1, ...await enc(key, r) }));
+    if (o && !o.enc) localStorage.setItem(keyFor(p.id), JSON.stringify({ enc: 2, ...await enc(await KR.get(p.id), r) }));
   }
-  await photosRekey(null, key);
+  await photosResave();
   save(); await saveQ;
 }
 async function unwrapWithPin(pin) {
@@ -1229,20 +1335,43 @@ async function changePin(oldPin, newPin) {
 // Turn encryption off. Data is written back readable first, the header last.
 async function removeEnc(pin) {
   await unwrapWithPin(pin);
+  const shut = P.list.find(p => isPriv(p.id) && !KR.has(p.id));
+  if (shut) throw fail(`“${shut.name}” has its own PIN. Open it, or remove its private PIN, before removing the main PIN.`);
   save(); await saveQ;
   for (const p of P.list) {
     const r = localStorage.getItem(keyFor(p.id)); if (!r) continue;
     let o; try { o = JSON.parse(r); } catch (e) { continue; }
-    if (o && o.enc) localStorage.setItem(keyFor(p.id), await dec(DK, o));
+    if (o && o.enc) localStorage.setItem(keyFor(p.id), await dec(o.enc === 2 ? await KR.get(p.id) : DK, o));
   }
-  await photosRekey(DK, null);
-  SEC = null; DK = null; save();
+  for (const r of await PS.all()) { try { await PS.put(await packPhoto(null, await unpackPhoto(r))); } catch (e) {} }
+  SEC = null; DK = null; KR = new Map(); KEYS = {}; staff = null; staffMode = false; save();
 }
 async function openWith(raw) {
-  const key = await importDK(raw), stored = JSON.parse(localStorage.getItem(PKEY));
-  const body = JSON.parse(await dec(key, stored.body));
-  DK = key; P = Object.assign(defaultP(), { list: body.list, current: body.current, dark: okDark(body.dark) }); sanitizeP();
+  const key = await importDK(raw), stored = JSON.parse(localStorage.getItem(PKEY)), body = JSON.parse(await dec(key, stored.body));
+  DK = key; staff = null; staffMode = false;
+  P = Object.assign(defaultP(), { list: body.list, current: body.current, dark: okDark(body.dark) }); sanitizeP();
+  KEYS = {}; KR = new Map();
+  const ks = body.keys && typeof body.keys === 'object' ? body.keys : {}; let fresh1 = false;
+  for (const p of P.list) {
+    if (isPriv(p.id)) continue;
+    if (typeof ks[p.id] === 'string') { KEYS[p.id] = ks[p.id]; KR.set(p.id, await importDK(unb64(ks[p.id]))); } else { newKey(p.id); fresh1 = true; }
+  }
+  if (SEC.staff && !Array.isArray(SEC.staff)) { delete SEC.staff; fresh1 = true; }   // staff PIN from an older version: set it up again
+  if (fresh1 || SEC.v !== 2) await upgradeStorage();
   await loadProfile();
+}
+// Data saved by an older version (everything under the one master key) is re-saved under per-books keys.
+async function upgradeStorage() {
+  SEC.v = 2;
+  localStorage.setItem(PKEY, JSON.stringify({ sec: SEC, body: await enc(DK, headerBody()) }));   // keys are safely stored before anything is converted
+  for (const p of P.list) {
+    try {
+      const r = localStorage.getItem(keyFor(p.id)); if (!r || !KR.has(p.id)) continue;
+      const o = JSON.parse(r); if (!o || o.enc !== 1) continue;
+      localStorage.setItem(keyFor(p.id), JSON.stringify({ enc: 2, ...await enc(await KR.get(p.id), await dec(DK, o)) }));
+    } catch (e) {}
+  }
+  for (const r of await PS.all()) { try { if (r.enc === 1 && KR.has(r.pid)) await PS.put(await packPhoto(await KR.get(r.pid), await unpackPhoto(r))); } catch (e) {} }
 }
 function showLock() {
   showNums = false; staffMode = false; closeForm();
@@ -1254,8 +1383,24 @@ function unlocked() { $('#lock').hidden = true; $('#pinIn').value = ''; $('#pinM
 async function lockNow() {
   if (!SEC && !LEGACY) return;
   save(); await saveQ;
-  if (SEC) { DK = null; S = fresh(); P = defaultP(); thumbCache.clear(); }
+  if (SEC) { DK = null; KR = new Map(); KEYS = {}; staff = null; staffMode = false; S = fresh(); P = defaultP(); thumbCache.clear(); }
   resetView(); showLock(); render();
+}
+// A staff PIN opens exactly one business: the PIN unwraps that business's key and nothing else.
+async function staffUnlock(pin) {
+  if (!SEC || !Array.isArray(SEC.staff) || !SEC.staff.length || !SEC.ssalt) return false;
+  const k = await pinKey(pin, unb64(SEC.ssalt), ITER);
+  for (const rec of SEC.staff) {
+    let blob; try { blob = JSON.parse(await dec(k, rec)); } catch (e) { continue; }
+    DK = null; KEYS = {}; KR = new Map([[blob.pid, await importDK(unb64(blob.k))]]);
+    P = { list: [{ id: blob.pid, name: 'Staff' }], current: blob.pid }; staffMode = true; staff = null;
+    await loadProfile();
+    const me = !loadFailed && (S.staff || []).find(x => x.id === rec.id);
+    if (!me) { KR = new Map(); S = fresh(); P = defaultP(); staffMode = false; return false; }
+    staff = { id: me.id, who: me.who, perms: me.perms || {}, pid: blob.pid }; tab = 'sell';
+    return true;
+  }
+  return false;
 }
 async function tryUnlock() {
   const pin = $('#pinIn').value; if (!pin) return;
@@ -1263,16 +1408,9 @@ async function tryUnlock() {
   try {
     if (SEC) {
       if (!CAN) { $('#pinMsg').textContent = "This browser can't unlock StockPile. Open it in Chrome."; return; }
-      let raw, staff = false;
-      try { raw = await unwrapWithPin(pin); }
-      catch (e) { if (!SEC.staff) throw e; raw = unb64(await dec(await pinKey(pin, unb64(SEC.staff.salt), SEC.staff.iter), SEC.staff)); staff = true; }
-      await openWith(raw);
-      if (staff && isPersonal()) {   // staff never land in personal books: move to business books, or refuse
-        const biz = P.list.find(p => p.kind !== 'personal');
-        if (!biz) { await lockNow(); $('#pinMsg').textContent = 'The staff PIN only opens business books, and there are none.'; return; }
-        P.current = biz.id; await loadProfile();
-      }
-      staffMode = staff; if (staff) tab = 'sell';
+      let raw = null;
+      try { raw = await unwrapWithPin(pin); } catch (e) { if (!(await staffUnlock(pin))) throw e; }
+      if (raw) await openWith(raw);
     } else {
       if (hashPin(pin) !== LEGACY) throw 0;
       if (CAN) { try { await enableEnc(pin); } catch (e) {} }
@@ -1322,7 +1460,7 @@ function removePin() {
 
 /* ---------- recovery key (a second way in if the PIN is forgotten) ---------- */
 const RALPHA = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
-let lastRec = '';
+let lastRec = '', lastRecFor = '';
 function newRecCode() { const b = rnd(32); let s = ''; for (let i = 0; i < 32; i++) s += RALPHA[b[i] & 31]; return s.match(/.{4}/g).join('-'); }
 const normRec = s => String(s).toUpperCase().replace(/O/g, '0').replace(/[IL]/g, '1').replace(/[^0-9A-Z]/g, '');
 const recKey = (code, salt) => pinKey(normRec(code), salt, 1000);
@@ -1334,19 +1472,19 @@ async function makeRecovery() {
   SEC.rec = { salt: b64(salt), ...await enc(await recKey(code, salt), b64(await crypto.subtle.exportKey('raw', DK))) };
   save(); await saveQ; render(); showRecovery(code);
 }
-function showRecovery(code) {
-  lastRec = code;
+function showRecovery(code, books) {
+  lastRec = code; lastRecFor = books || '';
   const m = $('#modal');
-  m.innerHTML = `<div class="sheet"><h2>Your recovery key</h2>
+  m.innerHTML = `<div class="sheet"><h2>${books ? `Recovery key for “${esc(books)}”` : 'Your recovery key'}</h2>
     <div class="note">This is shown <b>only once</b>. Save it now, somewhere other than this phone.</div>
     <div class="reccode">${esc(code)}</div>
     <div class="row"><button class="btn sec" onclick="recCopy()">Copy</button><button class="btn sec" onclick="recSave()">Save as file</button><button class="btn sec" onclick="recPrint()">Print</button></div>
-    <p class="mute">If you forget your PIN, tap “Forgot PIN?” on the lock screen and enter this key to choose a new PIN. It also opens your locked backups.</p>
+    <p class="mute">${books ? 'If you forget the private PIN for these books, open them, tap Enter PIN, then “Forgot it?” and enter this key. Your main PIN and main recovery key do not open these books, so this key is the only way back in.' : 'If you forget your PIN, tap “Forgot PIN?” on the lock screen and enter this key to choose a new PIN. It also opens your locked backups.'}</p>
     <p class="mute">Anyone who has this key can open your StockPile, so keep it private.</p>
     <div class="row end" style="margin-top:14px"><button class="btn" onclick="lastRec='';closeForm()">I've saved it</button></div></div>`;
   m.hidden = false; m.onclick = null;
 }
-const recText = () => `StockPile recovery key\n\n${lastRec}\n\nCreated ${today()}.\nIf you forget your PIN: open StockPile, tap "Forgot PIN?" and enter this key.\nKeep this private. Anyone with this key can open your StockPile and its locked backups.\n`;
+const recText = () => `StockPile recovery key${lastRecFor ? ` for the books "${lastRecFor}"` : ''}\n\n${lastRec}\n\nCreated ${today()}.\n${lastRecFor ? `If you forget the private PIN for "${lastRecFor}": open those books, tap Enter PIN, then "Forgot it?" and enter this key. Your main PIN and main recovery key do not open these books.` : 'If you forget your PIN: open StockPile, tap "Forgot PIN?" and enter this key.'}\nKeep this private. Anyone with this key can open your StockPile and its locked backups.\n`;
 function recCopy() { try { navigator.clipboard.writeText(lastRec).then(() => alert('Copied.'), () => alert("Couldn't copy. Write it down or save it as a file.")); } catch (e) { alert("Couldn't copy. Write it down or save it as a file."); } }
 function recSave() { download('stockpile-recovery-key.txt', recText(), 'text/plain'); }
 function recPrint() {
@@ -1375,9 +1513,9 @@ function eraseAll() {
   if (!confirm('Without the PIN, a recovery key or your security answers, your data cannot be opened, and neither can backups locked with that PIN.\n\nThe only way forward is to erase StockPile on this phone and start fresh.\n\nErase everything?')) return;
   if (!confirm('Last check: erase ALL businesses and data in StockPile on this phone?')) return;
   try { Object.keys(localStorage).filter(k => k === PKEY || k.startsWith(KEY0)).forEach(k => localStorage.removeItem(k)); } catch (err) {}
-  memPhotos.clear(); thumbCache.clear();
+  saveGen++; memPhotos.clear(); thumbCache.clear();
   try { if (typeof indexedDB !== 'undefined') { const old = dbp; dbp = null; Promise.resolve(old).then(d => { if (d) d.close(); indexedDB.deleteDatabase(DBN); }).catch(() => {}); } } catch (err) {}
-  SEC = null; DK = null; LEGACY = null; S = fresh(); P = defaultP(); loadFailed = false; saveQ = Promise.resolve();
+  SEC = null; DK = null; LEGACY = null; KR = new Map(); KEYS = {}; staff = null; staffMode = false; S = fresh(); P = defaultP(); loadFailed = false; saveQ = Promise.resolve();
   $('#lock').hidden = true; resetView(); render();
   alert('Erased. If you have an unlocked backup, load it from More → Restore.');
 }
@@ -1476,7 +1614,7 @@ async function bioUnlock() {
 $('#bioGo').onclick = bioUnlock;
 
 /* ---------- profiles (businesses) ---------- */
-function profiles() {
+function profiles() { if (staffMode) return;
   const m = $('#modal');
   m.innerHTML = `<div class="sheet"><h2>Your books</h2><div class="mute">Each one keeps its own entries. Add, rename or delete them here.</div>
     <div class="list" style="margin:12px 0">${P.list.map(p => `<div class="it"><div class="main" onclick="switchProfile('${p.id}')"><div class="t">${esc(p.name)}${p.kind === 'personal' ? ' <span class="mute">(personal)</span>' : ''}${p.id === P.current ? ' ✓' : ''}</div></div>
@@ -1486,13 +1624,13 @@ function profiles() {
   m.onclick = e => { if (e.target === m) closeForm(); };
 }
 function resetView() { selMode = false; sel.clear(); tab = 'home'; moneyFilter = 'month'; moneyView = 'list'; showNums = false; cart = []; posCust = ''; posMsg = ''; posPay = 'full'; posPaid = ''; posDue = ''; posDisc = ''; lastSale = ''; ledgerQ = ''; stockQ = ''; custQ = ''; rcQ = ''; rcCat = ''; rcMonth = ''; thumbCache.clear(); }
-async function switchProfile(id) { save(); await saveQ; P.current = id; await loadProfile(); save(); resetView(); closeForm(); render(); window.scrollTo(0, 0); }
+async function switchProfile(id) { if (staffMode) return; save(); await saveQ; P.current = id; await loadProfile(); save(); resetView(); closeForm(); render(); window.scrollTo(0, 0); }
 function addProfile() {
   form('Add another set of books', [
     { k: 'kind', l: 'What is it for?', t: 'select', v: 'business', o: [['business', 'A business'], ['personal', 'Personal or household money']] },
     { k: 'name', l: 'Name', req: 1, ph: 'e.g. Home, or the business name' }
   ], v => {
-    save(); const id = uid(); P.list.push({ id, name: v.name, ...(v.kind === 'personal' ? { kind: 'personal' } : {}) }); P.current = id; S = fresh(); resetView();
+    save(); const id = uid(); P.list.push({ id, name: v.name, ...(v.kind === 'personal' ? { kind: 'personal' } : {}) }); P.current = id; S = fresh(); resetView(); if (SEC) newKey(id);
   }, '<div class="mute">Starts empty, with its own entries and backups. A personal one swaps the Sell and Stock tabs for spending categories, budgets and receipt photos.</div>');
 }
 function renameProfile(id) {
@@ -1504,6 +1642,8 @@ async function delProfile(id) {
   if (!confirm(`Delete "${p.name}" and ALL of its data?`) || !confirm('Are you sure? This cannot be undone.')) return;
   try { localStorage.removeItem(keyFor(id)); } catch (e) {}
   photosDropProfile(id);
+  delete KEYS[id]; KR.delete(id);
+  if (SEC) { if (SEC.priv) delete SEC.priv[id]; if (Array.isArray(SEC.staff)) SEC.staff = SEC.staff.filter(x => x.pid !== id); }
   P.list = P.list.filter(x => x.id !== id);
   if (P.current === id) { P.current = P.list[0].id; await loadProfile(); resetView(); }
   save(); render(); profiles();
@@ -1519,10 +1659,13 @@ function download(name, text, type) {
 // With a PIN set, backups are encrypted with the same key as the data (opened later with that PIN).
 async function backupText(plain, withPhotos) {
   const s = withPhotos ? JSON.stringify({ ...S, _photos: await photosForBackup() }) : JSON.stringify(S, null, 1);
-  if (!SEC || !DK || plain) return s;
-  return JSON.stringify({ stockpileBackup: 2, salt: SEC.salt, iter: SEC.iter, wrap: SEC.wrap, rec: SEC.rec, data: await enc(DK, s) });
+  const sec = SEC, mk = DK, pid = P.current, pk = sec && !staffMode ? await KR.get(pid) : null;
+  if (!pk || plain) return s;
+  const pv = sec.priv && sec.priv[pid];
+  if (!pv && !mk) return s;
+  return JSON.stringify({ stockpileBackup: 3, ...(pv ? { priv: pv } : { salt: sec.salt, iter: sec.iter, wrap: sec.wrap, rec: sec.rec, pk: await enc(mk, await rawOf(pid)) }), data: await enc(pk, s) });
 }
-async function backup(auto, plain, withPhotos) {
+async function backup(auto, plain, withPhotos) { if (staffMode) return;
   if (plain && !confirm('An unlocked backup can be read by anyone who gets the file.\n\nIt is useful as a safety copy in case you forget your PIN, but keep it somewhere private.\n\nSave an unlocked backup?')) return;
   S.lastBackup = today(); S.dirty = 0; save();
   download(`${fileBase()}${plain ? '-UNLOCKED' : ''}${withPhotos ? '-with-photos' : ''}-${today()}.json`, await backupText(plain, withPhotos), 'application/json');
@@ -1530,10 +1673,10 @@ async function backup(auto, plain, withPhotos) {
 }
 function commit() {
   S.dirty = (S.dirty || 0) + 1; save();
-  if (S.auto !== false && S.lastBackup !== today() && (S.tx.length || S.items.length || S.debts.length)) backup(true);
+  if (!staffMode && S.auto !== false && S.lastBackup !== today() && (S.tx.length || S.items.length || S.debts.length)) backup(true);
   try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {}); } catch (e) {}
 }
-async function shareBackup() {
+async function shareBackup() { if (staffMode) return;
   try {
     const f = new File([await backupText()], `${fileBase()}-${today()}.txt`, { type: 'text/plain' });
     if (navigator.canShare && navigator.canShare({ files: [f] })) {
@@ -1545,15 +1688,23 @@ async function shareBackup() {
   alert("This browser won't share straight from here, so the backup was saved to Downloads instead.\n\nTo send it: open My Files → Downloads, press and hold the newest stockpile backup file, then tap Share.");
 }
 async function openBackup(d, pin) {
-  if (!d || d.stockpileBackup !== 2) return d;
+  if (!d || (d.stockpileBackup !== 2 && d.stockpileBackup !== 3)) return d;
   if (!CAN) throw fail("This browser can't open locked backups. Open StockPile in Chrome.");
-  if (DK) { try { return JSON.parse(await dec(DK, d.data)); } catch (e) {} }
+  const clampIter = n => Math.min(Math.max(parseInt(n) || 0, 1000), 2000000), open = async k => JSON.parse(await dec(k, d.data));
+  for (const k of [DK, ...KR.values()]) { if (k) { try { return await open(await k); } catch (e) {} } }   // keys already open on this phone
+  if (DK && d.pk) { try { return await open(await importDK(unb64(await dec(DK, d.pk)))); } catch (e) {} }
   if (pin == null) throw new Error('needpin');
-  const iter = Math.min(Math.max(parseInt(d.iter) || 0, 1000), 2000000);
+  if (d.priv) {   // books with their own PIN
+    let raw;
+    try { raw = unb64(await dec(await pinKey(pin, unb64(d.priv.salt), clampIter(d.priv.iter)), d.priv)); }
+    catch (e) { if (!d.priv.rec) throw e; raw = unb64(await dec(await recKey(pin, unb64(d.priv.rec.salt)), d.priv.rec)); }
+    return open(await importDK(raw));
+  }
   let raw;
-  try { raw = unb64(await dec(await pinKey(pin, unb64(d.salt), iter), d.wrap)); }
+  try { raw = unb64(await dec(await pinKey(pin, unb64(d.salt), clampIter(d.iter)), d.wrap)); }
   catch (e) { if (!d.rec) throw e; raw = unb64(await dec(await recKey(pin, unb64(d.rec.salt)), d.rec)); }
-  return JSON.parse(await dec(await importDK(raw), d.data));
+  const mk = await importDK(raw);
+  return d.stockpileBackup === 2 ? open(mk) : open(await importDK(unb64(await dec(mk, d.pk))));
 }
 function applyBackup(o) {
   if (!o || !Array.isArray(o.tx) || !Array.isArray(o.items) || !Array.isArray(o.debts)) throw fail("That file doesn't look like a StockPile backup.");
@@ -1562,7 +1713,7 @@ function applyBackup(o) {
   if (ph.length) restorePhotos(ph).then(() => render());
   alert('Backup restored.' + (ph.length ? ` Loading ${ph.length} receipt photo${ph.length === 1 ? '' : 's'} too.` : ''));
 }
-function restore() { $('#restoreFile').value = ''; $('#restoreFile').click(); }
+function restore() { if (staffMode) return; $('#restoreFile').value = ''; $('#restoreFile').click(); }
 async function restoreText(text) {
   let d;
   try { d = JSON.parse(text); } catch (e) { alert("That file doesn't look like a StockPile backup."); return; }
@@ -1595,7 +1746,7 @@ function exportStock() {
   const rows = [['Item #', 'Product', 'In stock', 'Cost each', 'Price each', 'Stock value (cost)']].concat([...S.items].sort((a, b) => a.num - b.num).map(i => [i.num, i.name, i.qty, i.cost, i.price, round(i.qty * i.cost)]));
   download(`stockpile-stock-${today()}.csv`, csv(rows), 'text/csv');
 }
-function wipe() {
+function wipe() { if (staffMode) return;
   if (confirm(`Erase ALL data for "${profName()}"? Make a backup first if you might want it.`) && confirm('Are you sure? This cannot be undone.')) { photosDropProfile(P.current); thumbCache.clear(); S = fresh(); save(); render(); }
 }
 
@@ -1605,16 +1756,16 @@ function todaySalesHTML(todays) {
     <div class="list" style="margin-top:8px">${todays.length ? todays.map(txRow).join('') : '<div class="empty">No sales yet today.</div>'}</div>`;
 }
 function txRow(t) {
-  const pick = selMode ? `<input type="checkbox" class="pk" ${sel.has(t.id) ? 'checked' : ''} onclick="event.stopPropagation();togSel('${t.id}')">` : '', tap = selMode ? `togSel('${t.id}')` : `editTx('${t.id}')`;
+  const pick = selMode ? `<input type="checkbox" class="pk" ${sel.has(t.id) ? 'checked' : ''} onclick="event.stopPropagation();togSel('${t.id}')">` : '', tap = selMode ? `togSel('${t.id}')` : staffMode ? (t.sale || t.ret ? `receipt('${t.sale || t.ret}')` : '') : `editTx('${t.id}')`;
   if (t.type === 'move') return `<div class="it">${pick}<div class="main" onclick="${tap}"><div class="t">${t.from === 'cash' ? 'Moved Cash → Bank' : 'Moved Bank → Cash'}</div>
     <div class="mute">${niceDate(t.date)}${t.note ? ' · ' + esc(t.note) : ''}</div></div>
-    <div class="amt mute">⇄ ${fmt(t.amount)}</div><button class="x" title="Delete" onclick="delTx('${t.id}')">×</button></div>`;
+    <div class="amt mute">⇄ ${fmt(t.amount)}</div>${staffMode ? '' : `<button class="x" title="Delete" onclick="delTx('${t.id}')">×</button>`}</div>`;
   const part = t.saleAmt !== undefined && t.saleAmt !== t.amount;
-  const bits = [niceDate(t.date), t.note && t.cat ? esc(t.cat) : '', t.cust ? esc(t.cust) : '', part ? `sale ${fmt(t.saleAmt)}, ${t.amount > 0 ? 'part paid' : 'on account'}` : ACCT[acct(t)]].filter(Boolean).join(' · ');
+  const bits = [niceDate(t.date), t.note && t.cat ? esc(t.cat) : '', t.cust ? esc(t.cust) : '', t.by ? 'by ' + esc(t.by) : '', part ? `sale ${fmt(t.saleAmt)}, ${t.amount > 0 ? 'part paid' : 'on account'}` : ACCT[acct(t)]].filter(Boolean).join(' · ');
   return `<div class="it">${pick}<div class="main" onclick="${tap}"><div class="t">${esc(t.note || t.cat || (t.type === 'in' ? 'Money in' : 'Money out'))}</div>
     <div class="mute">${bits}</div></div>
     <div class="amt ${t.type === 'in' ? 'pos' : 'neg'}">${t.type === 'in' ? '+' : '−'}${fmt(t.amount)}</div>
-    ${t.pics && t.pics.length ? `<button class="x" title="Photo" onclick="viewPic('${t.pics[0]}')">📎</button>` : ''}${t.sale || t.ret ? `<button class="x" title="Receipt" onclick="receipt('${t.sale || t.ret}')">🧾</button>` : ''}<button class="x" title="Delete" onclick="delTx('${t.id}')">×</button></div>`;
+    ${t.pics && t.pics.length ? `<button class="x" title="Photo" onclick="viewPic('${t.pics[0]}')">📎</button>` : ''}${t.sale || t.ret ? `<button class="x" title="Receipt" onclick="receipt('${t.sale || t.ret}')">🧾</button>` : ''}${staffMode ? '' : `<button class="x" title="Delete" onclick="delTx('${t.id}')">×</button>`}</div>`;
 }
 function groupBy(arr, key) { const o = {}; arr.forEach(t => { const k = key(t) || 'Other'; o[k] = (o[k] || 0) + t.amount; }); return Object.entries(o).sort((a, b) => b[1] - a[1]); }
 function bars(entries, color, f = fmt, open = false) {
@@ -1707,7 +1858,7 @@ const V = {
       <div class="row"><button class="btn in" style="flex:1" id="posBtn" onclick="posDone()">Complete sale · ${cur(total)}</button><button class="btn sec" onclick="posClear()">Clear</button></div>
       <p class="mute">Tip: tap a line to change its price for this sale.</p>`
       : '<div class="card empty">Type an item number and how many, or tap an item above.</div>'}
-    ${staffMode ? '<p class="mute" style="margin-top:22px">Staff mode: selling only. Tap Lock at the top when you are done.</p>' : todaySalesHTML(todays)}`;
+    ${can('sales') ? todaySalesHTML(todays) : '<p class="mute" style="margin-top:22px">Staff mode. Tap Lock at the top when you are done.</p>'}`;
   },
   receipts() {
     const all = rcAll(), cats = [...new Set(all.map(t => t.cat).filter(Boolean))].sort(), months = [...new Set(all.map(t => t.date.slice(0, 7)))].sort().reverse();
@@ -1768,10 +1919,10 @@ const V = {
   },
   stock() {
     return `<h2>Stock</h2>
-    <div class="row bar"><button class="btn" onclick="editItem()">+ Add product</button>${S.items.length ? '<button class="btn sec" onclick="printLabels()">🏷 Print barcode labels</button>' : ''}${eye()}</div>
+    ${staffMode ? '' : `<div class="row bar"><button class="btn" onclick="editItem()">+ Add product</button>${S.items.length ? '<button class="btn sec" onclick="printLabels()">🏷 Print barcode labels</button>' : ''}${eye()}</div>`}
     ${S.items.length > 3 || stockQ ? `<div class="row bar">${searchBox('stockQ', stockQ, "stockQ=this.value;$('#stockBody').innerHTML=stockBodyHTML()", 'Search products')}</div>` : ''}
     <div id="stockBody">${stockBodyHTML()}</div>
-    ${(S.adj || []).length ? `<h3>Recent stock adjustments</h3><div class="list">${[...S.adj].reverse().slice(0, 8).map(a => `<div class="it"><div class="main"><div class="t">${a.qty > 0 ? '+' : '−'}${Math.abs(a.qty)} × ${esc(a.name)}</div><div class="mute">${niceDate(a.date)} · ${esc(a.why)}${a.note ? ' · ' + esc(a.note) : ''}</div></div><div class="amt mute">${fmt(a.value)}</div></div>`).join('')}</div>` : ''}`;
+    ${(S.adj || []).length && can('stockEdit') ? `<h3>Recent stock adjustments</h3><div class="list">${[...S.adj].reverse().slice(0, 8).map(a => `<div class="it"><div class="main"><div class="t">${a.qty > 0 ? '+' : '−'}${Math.abs(a.qty)} × ${esc(a.name)}</div><div class="mute">${niceDate(a.date)} · ${esc(a.why)}${a.note ? ' · ' + esc(a.note) : ''}</div></div><div class="amt mute">${fmt(a.value)}</div></div>`).join('')}</div>` : ''}`;
   },
   debts() {
     const open = S.debts.filter(d => bal(d) > 0), closed = S.debts.filter(d => bal(d) <= 0);
@@ -1782,13 +1933,13 @@ const V = {
         <div class="mute">Original ${fmt(d.amount)} · paid ${fmt(paid(d))}${(d.payments || []).length ? ` in ${d.payments.length} payment${d.payments.length > 1 ? 's' : ''}` : ''}</div></div>
         <div><div class="amt big ${bal(d) > 0 ? (d.dir === 'owe' ? 'neg' : 'pos') : ''}">${bal(d) > 0 ? fmt(bal(d)) : 'Paid ✓'}</div>${bal(d) > 0 ? '<div class="mute" style="text-align:right">left</div>' : ''}</div></div>
       <div class="row" style="margin-top:12px">${bal(d) > 0 ? `<button class="btn sm" onclick="payDebt('${d.id}')">Add payment</button>` : ''}${bal(d) > 0 && d.dir === 'owed' ? `<button class="btn sm sec" onclick="remind('${d.id}')">🔔 Remind</button>` : ''}
-        <button class="btn sm sec" onclick="editDebt('${d.id}')">Edit</button><button class="btn sm sec" onclick="delDebt('${d.id}')">Delete</button></div></div>`;
+        ${staffMode ? '' : `<button class="btn sm sec" onclick="editDebt('${d.id}')">Edit</button><button class="btn sm sec" onclick="delDebt('${d.id}')">Delete</button>`}</div></div>`;
     const owe = open.filter(d => d.dir === 'owe'), owed = open.filter(d => d.dir === 'owed');
     return `<h2>Owing</h2>
-    <div class="row bar"><button class="btn" onclick="editDebt()">+ Add a debt</button>${isPersonal() ? '' : '<button class="btn sec" onclick="customersSheet()">👥 Customers</button>'}${eye()}</div>
-    <h3>I owe (${fmt(sum(owe, bal))})</h3>${owe.length ? owe.map(card).join('') : '<div class="mute">Nothing owed. 👍</div>'}
+    <div class="row bar">${staffMode ? '' : '<button class="btn" onclick="editDebt()">+ Add a debt</button>'}${isPersonal() ? '' : '<button class="btn sec" onclick="customersSheet()">👥 Customers</button>'}${eye()}</div>
+    ${staffMode ? '' : `<h3>I owe (${fmt(sum(owe, bal))})</h3>${owe.length ? owe.map(card).join('') : '<div class="mute">Nothing owed. 👍</div>'}`}
     <h3>Owed to me (${fmt(sum(owed, bal))})</h3>${owed.length ? owed.map(card).join('') : '<div class="mute">Nobody owes you right now.</div>'}
-    ${closed.length ? `<h3>Paid off</h3>${closed.map(card).join('')}` : ''}`;
+    ${closed.filter(d => !staffMode || d.dir === 'owed').length ? `<h3>Paid off</h3>${closed.filter(d => !staffMode || d.dir === 'owed').map(card).join('')}` : ''}`;
   },
   more() {
     return `<h2>Backup &amp; settings</h2>
@@ -1812,8 +1963,10 @@ const V = {
         <p><button class="btn ${SEC.rec ? 'sec' : ''}" onclick="makeRecovery()">${SEC.rec ? 'Make a new recovery key' : 'Create recovery key'}</button></p>
         <p class="mute">Security questions: ${SEC.qa ? 'set ✓' : 'not set'}</p>
         <p class="row"><button class="btn sec" onclick="setQuestions()">${SEC.qa ? 'Change questions' : 'Set security questions'}</button>${SEC.qa ? '<button class="btn sec" onclick="removeQuestions()">Remove</button>' : ''}</p>
-        <p class="mute">Staff PIN: ${SEC.staff ? 'set ✓' : 'not set'}. It opens the Sell screen only, with no totals or settings.</p>
-        <p class="row"><button class="btn sec" onclick="setStaffPin()">${SEC.staff ? 'Change staff PIN' : 'Set a staff PIN'}</button>${SEC.staff ? '<button class="btn sec" onclick="removeStaffPin()">Remove</button>' : ''}</p>` : ''}
+        ${isPersonal() ? '' : `<p class="mute">Staff: ${(S.staff || []).length ? S.staff.length + (S.staff.length === 1 ? ' person' : ' people') : 'none yet'}. Each person gets their own PIN that opens only this business.</p>
+        <p><button class="btn sec" onclick="staffSheet()">👥 Manage staff</button></p>`}
+        <p class="mute">Private PIN for “${esc(profName())}”: ${isPriv(P.current) ? 'ON 🔒. Only that PIN opens these books, not your main PIN.' : 'off. Your main PIN opens these books.'}</p>
+        <p class="row"><button class="btn sec" onclick="privateForm()">${isPriv(P.current) ? 'Change private PIN' : 'Set a private PIN'}</button>${isPriv(P.current) ? '<button class="btn sec" onclick="removePrivate()">Remove</button>' : ''}</p>` : ''}
       ${SEC ? (SEC.bio ? '<p class="mute">Fingerprint unlock is ON.</p><button class="btn sec" onclick="disableBio()">Turn off fingerprint</button>'
         : bioOK() ? '<p class="mute">Unlock with your fingerprint instead of typing the PIN.</p><button class="btn" onclick="enableBio()">Turn on fingerprint unlock</button>'
         : '<p class="mute">Fingerprint unlock is available in the installed app version.</p>') : ''}</div>
@@ -1840,11 +1993,11 @@ const V = {
 function render() {
   if (recDay !== today()) { recDay = today(); if (applyRecurring()) save(); }
   const pers = isPersonal(); if (pers && (tab === 'sell' || tab === 'stock')) tab = 'home';
-  if (staffMode) tab = 'sell';
+  if (staffMode && !staffTabs().includes(tab)) tab = 'sell';
   document.body.classList.toggle('dark', isDark()); document.body.classList.toggle('staff', staffMode);
-  document.querySelectorAll('#nav button').forEach(b => { const t = b.dataset.t; b.hidden = pers ? (t === 'sell' || t === 'stock') : t === 'receipts'; b.classList.toggle('on', t === tab); });
-  $('#hdr').innerHTML = `<span>📦 StockPile${BETA ? ' <span class="beta">TEST COPY</span>' : ''}</span>` + (staffMode ? '<button onclick="lockNow()">🔒 Lock</button>' : `<select id="profSel" aria-label="Switch books" onchange="switchProfile(this.value)">${P.list.map(p => `<option value="${p.id}" ${p.id === P.current ? 'selected' : ''}>${esc(p.name)}${p.kind === 'personal' ? ' (personal)' : ''}</option>`).join('')}</select>`);
-  $('#view').innerHTML = V[tab]();
+  document.querySelectorAll('#nav button').forEach(b => { const t = b.dataset.t; b.hidden = staffMode ? !staffTabs().includes(t) : pers ? (t === 'sell' || t === 'stock') : t === 'receipts'; b.classList.toggle('on', t === tab); });
+  $('#hdr').innerHTML = `<span>📦 StockPile${BETA ? ' <span class="beta">TEST COPY</span>' : ''}</span>` + (staffMode ? `<button onclick="lockNow()">🔒 ${esc(staff ? staff.who : 'Staff')} · Lock</button>` : `<select id="profSel" aria-label="Switch books" onchange="switchProfile(this.value)">${P.list.map(p => `<option value="${p.id}" ${p.id === P.current ? 'selected' : ''}>${isPriv(p.id) ? '🔒 ' : ''}${esc(p.name)}${p.kind === 'personal' ? ' (personal)' : ''}</option>`).join('')}</select>`);
+  $('#view').innerHTML = needKey() ? privCard() : V[tab]();
   loadThumbs();
 }
 async function init() {
