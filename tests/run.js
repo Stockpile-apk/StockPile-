@@ -145,7 +145,7 @@ const rc=clean(JSON.parse(JSON.stringify(S))); ok(rc.tx[0].saleAmt===40 && rc.de
 cart=[{id:'a',qty:1,price:10}]; posPay='part'; posPaid='4'; posCust='Gus'; tab='sell'; ok(/6\.00 will be added to Owing/.test(V.sell()),'sell screen shows the amount that will be owing'); allTabs(); cart=[]; posPay='full'; tab='home';
 
 // ---- version 7 features ----
-ok(VERSION>=7 && V.more().includes('version '+VERSION),'version number shows under More');
+ok(/^\\d+\\.\\d+\\.\\d+$/.test(VERSION) && V.more().includes('version '+VERSION),'version number shows under More');
 // barcodes
 ok(eanCheck('400638133393')===1 && itemEAN(12)==='2000000000121'.slice(0,12)+eanCheck('200000000012') && itemEAN(12).length===13,'barcode check digit is right');
 ok(eanBits(itemEAN(12)).length===95 && /^<svg/.test(eanSVG(itemEAN(12))),'barcode drawing has the right number of bars');
