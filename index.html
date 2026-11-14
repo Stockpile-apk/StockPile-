@@ -129,7 +129,7 @@ body.dark .sheet .rc{color:var(--ink)}body.dark .sheet .rcs{color:var(--mute)}bo
 // The test copy (served from /beta/) keeps its data under separate names, so it can never touch the real app's data.
 const BETA = /\/beta\//.test((typeof location !== 'undefined' && location.pathname) || '');
 const KEY0 = (BETA ? 'beta_' : '') + 'money_inventory_tracker_v1', PKEY = (BETA ? 'beta_' : '') + 'stockpile_profiles';
-const VERSION = '3.1.0';
+const VERSION = '3.2.0';
 const okDark = v => v === true || v === false ? v : undefined;
 const fresh = () => ({ tx: [], items: [], debts: [], lastBackup: null, dirty: 0, auto: true, offRemind: true, lastSent: null, offSnooze: null, contacts: [], adj: [], rec: [], budgets: {}, staff: [], gone: {}, mm: {}, set: { gst: false, gstRate: 5 } });
 const defaultP = () => ({ list: [{ id: 'default', name: 'My business' }], current: 'default' });
@@ -178,7 +178,7 @@ function save() {
   if (!SEC) {
     stampChanges();
     try { localStorage.setItem(keyFor(pid), JSON.stringify(S)); localStorage.setItem(PKEY, JSON.stringify({ list: P.list, current: P.current, dark: P.dark, biz: P.biz, pin: LEGACY })); } catch (e) { storageOK = false; }
-    return;
+    linkNudge(); return;
   }
   const pk = dataReady ? KR.get(pid) : null, mk = DK, sec = SEC, body = mk && !staffMode ? headerBody() : null, gen = saveGen;
   if (!pk && !body) return;
@@ -189,6 +189,7 @@ function save() {
     if (pk) localStorage.setItem(keyFor(pid), JSON.stringify({ enc: 2, ...await enc(await pk, sText) }));
     if (body) localStorage.setItem(PKEY, JSON.stringify({ sec, body: await enc(mk, body) }));
   }).catch(() => { storageOK = false; });
+  if (pk) linkNudge();
 }
 
 let tab = 'home', moneyFilter = 'month', moneyView = 'list', showNums = false, hiddenAt = 0;
@@ -595,11 +596,11 @@ function clearCode(id) { const it = S.items.find(i => i.id === id); if (it) { de
 /* ---------- camera scanner ---------- */
 let scan = null;
 function stopScan() { if (scan) { clearTimeout(scan.timer); try { scan.stream.getTracks().forEach(t => t.stop()); } catch (e) {} scan = null; } }
-async function startScan(mode, target) {
+async function startScan(mode, target, cb) {
   if (!('BarcodeDetector' in window) || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { alert("This phone's browser can't scan barcodes from here. Use the item number instead."); return; }
   stopScan();
   const m = $('#modal');
-  m.innerHTML = `<div class="sheet"><h2>${mode === 'sell' ? 'Scan to sell' : 'Scan the barcode'}</h2>
+  m.innerHTML = `<div class="sheet"><h2>${mode === 'sell' ? 'Scan to sell' : mode === 'link' ? 'Scan the other phone’s code' : 'Scan the barcode'}</h2>
     <video id="scanVid" playsinline muted style="width:100%;max-height:42vh;border-radius:12px;background:#000;object-fit:cover"></video>
     <div id="scanAsk" style="margin-top:10px"></div>
     <div id="scanMsg" class="note" style="margin-top:10px">Starting the camera…</div>
@@ -610,11 +611,12 @@ async function startScan(mode, target) {
     const vid = $('#scanVid');
     if (!vid || $('#modal').hidden) { stream.getTracks().forEach(t => t.stop()); return; }
     vid.srcObject = stream; await vid.play();
-    let formats = ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'code_39', 'itf'];
+    let formats = mode === 'link' ? ['qr_code'] : ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'code_39', 'itf'];
     try { const sup = await BarcodeDetector.getSupportedFormats(); formats = formats.filter(f => sup.includes(f)); } catch (e) {}
+    if (!formats.length) { stream.getTracks().forEach(t => t.stop()); $('#scanMsg').textContent = "This phone's browser can't read that kind of code."; return; }
     const det = new BarcodeDetector({ formats });
-    scan = { stream, mode, target, last: '', lastAt: 0, pending: null, timer: 0 };
-    $('#scanMsg').textContent = 'Point the camera at a barcode.';
+    scan = { stream, mode, target, cb, last: '', lastAt: 0, pending: null, timer: 0 };
+    $('#scanMsg').textContent = mode === 'link' ? 'Point the camera at the code on the other phone.' : 'Point the camera at a barcode.';
     const tick = async () => {
       if (!scan) return;
       try { if (!scan.pending) { const r = await det.detect(vid); if (scan && r.length) onScan(r[0].rawValue); } } catch (e) {}
@@ -628,6 +630,10 @@ function onScan(v) {
   const now = Date.now(); if (v === scan.last && now - scan.lastAt < 2500) return;
   scan.last = v; scan.lastAt = now;
   const msg = $('#scanMsg');
+  if (scan.mode === 'link') {
+    if (!String(v).startsWith('SPL1:')) { msg.textContent = 'That is not a StockPile link code.'; return; }
+    const cb = scan.cb; closeForm(); if (cb) cb(String(v)); return;
+  }
   if (scan.mode === 'sell') {
     const it = itemByCode(v);
     if (!it) { msg.textContent = `No product has the barcode ${cleanCode(v) || 'that was scanned'}. Add it from the Stock tab → Barcode.`; return; }
@@ -1447,6 +1453,212 @@ function joinShare(d) {
 function stopShare() { if (S.share && confirm('Stop sharing these books on this phone?\n\nYour entries stay. You just won’t be able to send or merge updates until you share again.')) { delete S.share; const p = P.list.find(x => x.id === P.current); if (p) delete p.share; commit(); render(); } }
 $('#shareFile').onchange = e => { const f = e.target.files && e.target.files[0]; if (!f) return; const r = new FileReader(); r.onload = () => onShareFile(String(r.result)); r.readAsText(f); };
 
+/* ---------- QR codes (made on the phone, used to pair two phones for a live link) ---------- */
+// [error-correction bytes per block, blocks in group 1, data bytes each, blocks in group 2, data bytes each], level L
+const QR_L = [null, [7, 1, 19, 0, 0], [10, 1, 34, 0, 0], [15, 1, 55, 0, 0], [20, 1, 80, 0, 0], [26, 1, 108, 0, 0], [18, 2, 68, 0, 0], [20, 2, 78, 0, 0], [24, 2, 97, 0, 0], [30, 2, 116, 0, 0], [18, 2, 68, 2, 69], [20, 4, 81, 0, 0], [24, 2, 92, 2, 93], [26, 4, 107, 0, 0],
+  [30, 3, 115, 1, 116], [22, 5, 87, 1, 88], [24, 5, 98, 1, 99], [28, 1, 107, 5, 108], [30, 5, 120, 1, 121], [28, 3, 113, 4, 114], [28, 3, 107, 5, 108], [28, 4, 116, 4, 117], [28, 2, 111, 7, 112], [30, 4, 121, 5, 122], [30, 6, 117, 4, 118], [26, 8, 106, 4, 107]];
+const QR_AL = [null, [], [6, 18], [6, 22], [6, 26], [6, 30], [6, 34], [6, 22, 38], [6, 24, 42], [6, 26, 46], [6, 28, 50], [6, 30, 54], [6, 32, 58], [6, 34, 62], [6, 26, 46, 66], [6, 26, 48, 70], [6, 26, 50, 74], [6, 30, 54, 78], [6, 30, 56, 82], [6, 30, 58, 86], [6, 34, 62, 90],
+  [6, 28, 50, 72, 94], [6, 26, 50, 74, 98], [6, 30, 54, 78, 102], [6, 28, 54, 80, 106], [6, 32, 58, 84, 110]];
+const GF_EXP = new Uint8Array(512), GF_LOG = new Uint8Array(256);
+(() => { let x = 1; for (let i = 0; i < 255; i++) { GF_EXP[i] = x; GF_LOG[x] = i; x <<= 1; if (x & 256) x ^= 0x11d; } for (let i = 255; i < 512; i++) GF_EXP[i] = GF_EXP[i - 255]; })();
+const gfMul = (a, b) => a && b ? GF_EXP[GF_LOG[a] + GF_LOG[b]] : 0;
+function rsBytes(data, n) {   // n error-correction bytes for one block
+  let gen = [1]; for (let i = 0; i < n; i++) { const next = new Array(gen.length + 1).fill(0); for (let j = 0; j < gen.length; j++) { next[j] ^= gfMul(gen[j], 1); next[j + 1] ^= gfMul(gen[j], GF_EXP[i]); } gen = next; }
+  const rem = new Array(n).fill(0);
+  for (const d of data) { const f = d ^ rem.shift(); rem.push(0); for (let j = 0; j < n; j++) rem[j] ^= gfMul(gen[j + 1], f); }
+  return rem;
+}
+// Sizes are kept to what a phone camera reads easily off another phone's screen (up to version 18).
+function qrMatrix(text) {
+  const bytes = [...new TextEncoder().encode(text)];
+  let ver = 0; for (let v = 1; v <= 18; v++) { const [, b1, d1, b2, d2] = QR_L[v], cap = b1 * d1 + b2 * d2; if (bytes.length + (v < 10 ? 2 : 3) <= cap) { ver = v; break; } }
+  if (!ver) return null;
+  const [ecn, b1, d1, b2, d2] = QR_L[ver], cap = b1 * d1 + b2 * d2, bits = [];
+  const put = (val, n) => { for (let i = n - 1; i >= 0; i--) bits.push((val >>> i) & 1); };
+  put(4, 4); put(bytes.length, ver < 10 ? 8 : 16); bytes.forEach(b => put(b, 8)); put(0, Math.min(4, cap * 8 - bits.length));
+  while (bits.length % 8) bits.push(0);
+  const data = []; for (let i = 0; i < bits.length; i += 8) data.push(parseInt(bits.slice(i, i + 8).join(''), 2));
+  for (let pad = 0xec; data.length < cap; pad ^= 0xec ^ 0x11) data.push(pad);
+  const blocks = []; let off = 0;
+  for (let i = 0; i < b1 + b2; i++) { const len = i < b1 ? d1 : d2, d = data.slice(off, off + len); off += len; blocks.push({ d, e: rsBytes(d, ecn) }); }
+  const out = [];
+  for (let i = 0; i < Math.max(d1, d2); i++) for (const b of blocks) if (i < b.d.length) out.push(b.d[i]);
+  for (let i = 0; i < ecn; i++) for (const b of blocks) out.push(b.e[i]);
+  const size = 17 + 4 * ver, M = Array.from({ length: size }, () => new Array(size).fill(false)), F = Array.from({ length: size }, () => new Array(size).fill(false));
+  const set = (x, y, dark) => { M[y][x] = !!dark; F[y][x] = true; };
+  for (let i = 0; i < size; i++) { set(6, i, i % 2 === 0); set(i, 6, i % 2 === 0); }
+  const finder = (cx, cy) => { for (let dy = -4; dy <= 4; dy++) for (let dx = -4; dx <= 4; dx++) { const x = cx + dx, y = cy + dy, dist = Math.max(Math.abs(dx), Math.abs(dy)); if (x >= 0 && x < size && y >= 0 && y < size) set(x, y, dist !== 2 && dist !== 4); } };
+  finder(3, 3); finder(size - 4, 3); finder(3, size - 4);
+  const al = QR_AL[ver];
+  for (let i = 0; i < al.length; i++) for (let j = 0; j < al.length; j++) {
+    if ((i === 0 && j === 0) || (i === 0 && j === al.length - 1) || (i === al.length - 1 && j === 0)) continue;
+    for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) set(al[i] + dx, al[j] + dy, Math.max(Math.abs(dx), Math.abs(dy)) !== 1);
+  }
+  const fmt = mask => {
+    const d = (1 << 3) | mask; let rem = d; for (let i = 0; i < 10; i++) rem = (rem << 1) ^ ((rem >>> 9) * 0x537);
+    const b = ((d << 10) | rem) ^ 0x5412, bit = i => ((b >>> i) & 1) !== 0;
+    for (let i = 0; i <= 5; i++) set(8, i, bit(i));
+    set(8, 7, bit(6)); set(8, 8, bit(7)); set(7, 8, bit(8));
+    for (let i = 9; i < 15; i++) set(14 - i, 8, bit(i));
+    for (let i = 0; i < 8; i++) set(size - 1 - i, 8, bit(i));
+    for (let i = 8; i < 15; i++) set(8, size - 15 + i, bit(i));
+    set(8, size - 8, true);
+  };
+  fmt(0);
+  if (ver >= 7) { let rem = ver; for (let i = 0; i < 12; i++) rem = (rem << 1) ^ ((rem >>> 11) * 0x1f25); const b = (ver << 12) | rem; for (let i = 0; i < 18; i++) { const bit = ((b >>> i) & 1) !== 0, a = size - 11 + i % 3, c = Math.floor(i / 3); set(a, c, bit); set(c, a, bit); } }
+  let k = 0;
+  for (let right = size - 1; right >= 1; right -= 2) {
+    if (right === 6) right = 5;
+    for (let vert = 0; vert < size; vert++) for (let j = 0; j < 2; j++) {
+      const x = right - j, up = ((right + 1) & 2) === 0, y = up ? size - 1 - vert : vert;
+      if (!F[y][x] && k < out.length * 8) { M[y][x] = ((out[k >>> 3] >>> (7 - (k & 7))) & 1) !== 0; k++; }
+    }
+  }
+  const maskFn = [(x, y) => (x + y) % 2 === 0, (x, y) => y % 2 === 0, (x, y) => x % 3 === 0, (x, y) => (x + y) % 3 === 0, (x, y) => (Math.floor(x / 3) + Math.floor(y / 2)) % 2 === 0,
+    (x, y) => x * y % 2 + x * y % 3 === 0, (x, y) => (x * y % 2 + x * y % 3) % 2 === 0, (x, y) => ((x + y) % 2 + x * y % 3) % 2 === 0];
+  const apply = m => { for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) if (!F[y][x] && maskFn[m](x, y)) M[y][x] = !M[y][x]; };
+  const penalty = () => {
+    let p = 0, dark = 0;
+    for (let y = 0; y < size; y++) for (let dir = 0; dir < 2; dir++) { let run = 1; for (let x = 1; x <= size; x++) { const a = dir ? M[x - 1][y] : M[y][x - 1], b = x < size ? (dir ? M[x][y] : M[y][x]) : !a; if (a === b) run++; else { if (run >= 5) p += run - 2; run = 1; } } }
+    for (let y = 0; y < size - 1; y++) for (let x = 0; x < size - 1; x++) { const c = M[y][x]; if (c === M[y][x + 1] && c === M[y + 1][x] && c === M[y + 1][x + 1]) p += 3; }
+    const pat = [true, false, true, true, true, false, true];
+    for (let y = 0; y < size; y++) for (let x = 0; x + 6 < size; x++) for (let dir = 0; dir < 2; dir++) { let ok = true; for (let i = 0; i < 7 && ok; i++) ok = (dir ? M[x + i][y] : M[y][x + i]) === pat[i]; if (ok) p += 40; }
+    for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) if (M[y][x]) dark++;
+    return p + Math.floor(Math.abs(dark * 20 - size * size * 10) / (size * size)) * 10;
+  };
+  let best = 0, bestP = Infinity;
+  for (let m = 0; m < 8; m++) { apply(m); fmt(m); const p = penalty(); if (p < bestP) { bestP = p; best = m; } apply(m); }
+  apply(best); fmt(best);
+  return M;
+}
+function qrSVG(text) {
+  const M = qrMatrix(text); if (!M) return '';
+  const n = M.length, q = 4; let d = '';
+  for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) if (M[y][x]) d += `M${x + q} ${y + q}h1v1h-1z`;
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${n + 2 * q} ${n + 2 * q}" shape-rendering="crispEdges" style="width:100%;max-width:340px;background:#fff;border-radius:8px"><rect width="100%" height="100%" fill="#fff"/><path d="${d}" fill="#000"/></svg>`;
+}
+
+/* ---------- live link between two phones on the same Wi-Fi (experimental) ---------- */
+// The phones pair by scanning a code on each other's screen, then talk directly over the local network.
+// Nothing goes through the internet. While linked, every change on shared books is merged on the other phone.
+let link = null;
+async function squeeze(str) { const cs = new CompressionStream('deflate-raw'), w = cs.writable.getWriter(); w.write(te.encode(str)); w.close(); return b64(await new Response(cs.readable).arrayBuffer()); }
+async function unsqueeze(b) { const ds = new DecompressionStream('deflate-raw'), w = ds.writable.getWriter(); w.write(unb64(b)); w.close(); return td.decode(await new Response(ds.readable).arrayBuffer()); }
+const trimSDP = sdp => sdp.split(/\r?\n/).filter(l => l && !(/^a=candidate:/.test(l) && (/ tcp /i.test(l) || /:[0-9a-f]*:/i.test(l.split(' ')[4] || '')))).join('\r\n') + '\r\n';
+const packDesc = async d => 'SPL1:' + await squeeze(JSON.stringify({ t: d.type, s: trimSDP(d.sdp) }));
+async function unpackDesc(code) { if (!String(code).startsWith('SPL1:')) throw fail("That isn't a StockPile link code."); const o = JSON.parse(await unsqueeze(String(code).slice(5))); if (!/^(offer|answer)$/.test(o.t) || typeof o.s !== 'string') throw fail("That isn't a StockPile link code."); return { type: o.t, sdp: o.s }; }
+// A short fingerprint of the books' content, the same on both phones when they hold the same thing.
+function canonSig(p) {
+  const norm = v => Array.isArray(v) ? v.map(norm) : v && typeof v === 'object' ? Object.fromEntries(Object.keys(v).sort().map(k => [k, norm(v[k])])) : v, byId = (a, k) => [...(a || [])].sort((x, y) => x[k] < y[k] ? -1 : x[k] > y[k] ? 1 : 0);
+  const q = { ...p }; for (const c of SYNC_COLS) q[c] = byId(p[c], 'id'); q.contacts = byId(p.contacts, 'key'); q.debts = q.debts.map(d => ({ ...d, payments: byId(d.payments, 'id') }));
+  const s = JSON.stringify(norm(q)); let h = 5381, h2 = 52711;
+  for (let i = 0; i < s.length; i++) { const c = s.charCodeAt(i); h = ((h * 33) ^ c) >>> 0; h2 = (Math.imul(h2, 31) + c) >>> 0; }
+  return h.toString(36) + '.' + h2.toString(36) + '.' + s.length.toString(36);
+}
+const LINK_CHUNK = 60000;
+function linkFrames(str) {   // long messages are cut into pieces the connection can carry
+  if (str.length <= LINK_CHUNK) return [str];
+  const id = uid(), n = Math.ceil(str.length / LINK_CHUNK), out = [];
+  for (let i = 0; i < n; i++) out.push(`~${id}:${i}:${n}:` + str.slice(i * LINK_CHUNK, (i + 1) * LINK_CHUNK));
+  return out;
+}
+function linkJoin(frame) {   // returns the whole message once every piece has arrived, otherwise null
+  if (frame[0] !== '~') return frame;
+  const m = frame.match(/^~([a-z0-9]+):(\d+):(\d+):/); if (!m) return null;
+  const b = link.buf[m[1]] || (link.buf[m[1]] = { n: +m[3], got: 0, parts: [] });
+  if (b.parts[+m[2]] === undefined) { b.parts[+m[2]] = frame.slice(m[0].length); b.got++; }
+  if (b.got < b.n) return null;
+  delete link.buf[m[1]]; return b.parts.join('');
+}
+const linkRaw = obj => { if (link && link.dc && link.dc.readyState === 'open') linkFrames(JSON.stringify(obj)).forEach(f => link.dc.send(f)); };
+function linkNudge() { if (link && link.open && !link.merging) { link.echo = 0; clearTimeout(link.sendT); link.sendT = setTimeout(() => linkSendNow().catch(() => {}), 400); } }
+async function linkSendNow() {
+  if (!link || !link.open || !link.key || !S.share || S.share.id !== link.id || loadFailed || !dataReady) return;
+  const payload = sharePayload(), sig = canonSig(payload);
+  if (sig === link.peerSig || sig === link.sentSig) return;   // the other phone already has exactly this
+  link.sentSig = sig;
+  linkRaw({ t: 'd', sig, data: await enc(link.key, JSON.stringify(payload)) });
+}
+async function linkOnMessage(frame) {
+  const text = linkJoin(String(frame)); if (text === null || !link) return;
+  let msg; try { msg = JSON.parse(text); } catch (e) { return; }
+  if (msg.t === 'h') {   // hello: which books, and the salt for this session's key
+    if (!S.share || msg.id !== S.share.id) { linkRaw({ t: 'x', why: 'books' }); linkClose('The other phone is sharing different books. Open the same shared books on both, then link again.'); return; }
+    link.id = msg.id; link.key = await shareKey(S.share.pass, unb64(msg.salt)); link.open = true; linkStatus();
+    linkRaw({ t: 'r' }); await linkSendNow(); return;
+  }
+  if (msg.t === 'r') { link.open = true; linkStatus(); await linkSendNow(); return; }
+  if (msg.t === 'x') { linkClose(msg.why === 'books' ? 'The other phone is sharing different books. Open the same shared books on both, then link again.' : 'The sharing passwords on the two phones do not match.'); return; }
+  if (msg.t !== 'd' || !link.key) return;
+  if (!S.share || S.share.id !== link.id || loadFailed || !dataReady) return;   // different books open right now: leave it for the next update
+  let payload; try { payload = JSON.parse(await dec(link.key, msg.data)); } catch (e) { linkRaw({ t: 'x', why: 'pass' }); linkClose('The sharing passwords on the two phones do not match.'); return; }
+  link.merging = true;
+  try { link.peerSig = msg.sig; const n = mergeInto(payload); S.lastSync = today(); link.count = (link.count || 0) + n; save(); } finally { link.merging = false; }
+  if (canonSig(sharePayload()) !== msg.sig && (link.echo = (link.echo || 0) + 1) <= 4) await linkSendNow();   // send back anything they are missing
+  render(); linkStatus();
+}
+function linkStatus() { const el = $('#linkState'); if (el && link) el.textContent = link.open ? `🔗 Linked. ${link.count || 0} ${link.count === 1 ? 'entry' : 'entries'} received so far. Keep both apps open.` : 'Waiting for the other phone…'; }
+function linkClose(why) {
+  const l = link; link = null; if (!l) return;
+  clearTimeout(l.sendT); try { if (l.dc) l.dc.close(); } catch (e) {} try { if (l.pc) l.pc.close(); } catch (e) {} try { if (l.wake) l.wake.release(); } catch (e) {}
+  render(); if (why) alert(why);
+}
+function linkWire(dc) {
+  link.dc = dc;
+  dc.onmessage = e => linkOnMessage(e.data).catch(() => {});
+  dc.onclose = () => { if (link && link.dc === dc) linkClose('The link to the other phone ended. Your entries are safe. Link again, or use Send update, to carry on.'); };
+  dc.onopen = async () => {
+    try { if (navigator.wakeLock) link.wake = await navigator.wakeLock.request('screen'); } catch (e) {}
+    if (link.role === 'host') { const salt = rnd(16); link.id = S.share.id; link.key = await shareKey(S.share.pass, salt); linkRaw({ t: 'h', id: link.id, salt: b64(salt) }); }
+    closeForm(); render(); linkSheet();
+  };
+}
+const gathered = pc => new Promise(res => { if (pc.iceGatheringState === 'complete') return res(); const t = setTimeout(res, 3000); pc.onicegatheringstatechange = () => { if (pc.iceGatheringState === 'complete') { clearTimeout(t); res(); } }; });
+async function linkBegin(role) {
+  if (!S.share) return;
+  if (typeof RTCPeerConnection === 'undefined' || !('BarcodeDetector' in window) || typeof CompressionStream === 'undefined') { alert("This phone's browser can't make a live link. Use Send update and Merge an update."); return; }
+  try {
+    // Asking for the camera first lets the browser share this phone's local network address, which the link needs.
+    const st = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false }); st.getTracks().forEach(t => t.stop());
+  } catch (e) { alert('StockPile needs the camera to scan the other phone’s code. Allow camera access, then try again.'); return; }
+  if (link) linkClose();
+  const pc = new RTCPeerConnection({ iceServers: [] });
+  link = { pc, role, open: false, buf: {}, echo: 0, count: 0, id: S.share.id };
+  pc.oniceconnectionstatechange = () => { if (link && link.pc === pc && /failed|closed/.test(pc.iceConnectionState)) linkClose('The two phones could not reach each other. Check they are on the same Wi-Fi, then try again.'); };
+  if (role === 'host') {
+    linkWire(pc.createDataChannel('stockpile'));
+    await pc.setLocalDescription(await pc.createOffer()); await gathered(pc);
+    link.code = await packDesc(pc.localDescription); linkSheet();
+  } else {
+    pc.ondatachannel = e => linkWire(e.channel);
+    startScan('link', null, async code => {
+      try {
+        await pc.setRemoteDescription(await unpackDesc(code));
+        await pc.setLocalDescription(await pc.createAnswer()); await gathered(pc);
+        link.code = await packDesc(pc.localDescription); linkSheet();
+      } catch (e) { linkClose((e && e.userMsg) || 'That code could not be used. Start the link again on both phones.'); }
+    });
+  }
+}
+function linkScanAnswer() {
+  startScan('link', null, async code => {
+    try { await link.pc.setRemoteDescription(await unpackDesc(code)); linkSheet(); } catch (e) { linkClose((e && e.userMsg) || 'That code could not be used. Start the link again on both phones.'); }
+  });
+}
+function linkSheet() {
+  const m = $('#modal'), qr = link && link.code && !link.open ? qrSVG(link.code) : '';
+  m.innerHTML = `<div class="sheet"><h2>Live link</h2>
+    ${!link ? `<p class="mute">Links two phones on the <b>same Wi-Fi</b> so shared books update each other as you work, with no internet. Both phones need “${esc(profName())}” open.</p>
+        <p class="mute">This is new and experimental. If it won't connect, Send update and Merge an update always work.</p>
+        <div style="display:grid;gap:10px;margin:14px 0"><button class="btn" onclick="linkBegin('host')">1️⃣ Start on this phone</button><button class="btn sec" onclick="linkBegin('guest')">2️⃣ Join from this phone (scan the first phone)</button></div>`
+      : link.open ? `<div class="note ok" id="linkState"></div><p class="mute">Changes on either phone now appear on the other within a second or two. The link ends if either app is closed or the phone goes to sleep; your entries stay safe either way.</p>`
+      : `<div class="note" id="linkState">Waiting for the other phone…</div>
+        ${qr ? `<p class="mute">${link.role === 'host' ? 'On the other phone, tap “Join from this phone” and scan this:' : 'Now, on the first phone, tap “Scan their code” and scan this:'}</p><div style="text-align:center">${qr}</div>` : (link.code ? '<p class="mute">The link code is too long to show on this network. Use Send update and Merge an update.</p>' : '<p class="mute">Getting ready…</p>')}
+        ${link.role === 'host' && link.code ? '<p style="margin-top:12px"><button class="btn" onclick="linkScanAnswer()">📷 Scan their code</button></p>' : ''}`}
+    <div class="row end" style="margin-top:14px">${link ? '<button class="btn out" onclick="closeForm();linkClose()">End link</button>' : ''}<button class="btn sec" onclick="closeForm()">Close</button></div></div>`;
+  m.hidden = false; m.onclick = null; linkStatus();
+}
+
 /* ---------- debts ---------- */
 const paid = d => sum(d.payments || [], p => p.amount);
 const bal = d => round(d.amount - paid(d));
@@ -1572,6 +1784,7 @@ function showLock() {
 function unlocked() { $('#lock').hidden = true; $('#pinIn').value = ''; $('#pinMsg').textContent = ''; render(); }
 async function lockNow() {
   if (!SEC && !LEGACY) return;
+  linkClose();
   save(); await saveQ;
   if (SEC) { DK = null; KR = new Map(); KEYS = {}; staff = null; staffMode = false; S = fresh(); P = defaultP(); thumbCache.clear(); }
   resetView(); showLock(); render();
@@ -2019,7 +2232,7 @@ const V = {
     const lines = cart.map(c => ({ c, it: S.items.find(i => i.id === c.id) })).filter(x => x.it);
     const { disc, T: total } = cartTotals();
     const todays = S.tx.filter(t => t.date === today() && t.cogs !== undefined).reverse();
-    return `<h2>Sell</h2>
+    return `<div class="row between"><h2>Sell</h2>${S.share ? `<button class="btn sm ${link && link.open ? 'in' : 'sec'}" onclick="linkSheet()">${link && link.open ? '🔗 Linked' : '🔗 Link tills'}</button>` : ''}</div>
     ${posMsg ? `<div class="note ok">${esc(posMsg)}${lastSale && saleInfo(lastSale) ? ` <button class="btn sm" style="margin-left:6px" onclick="receipt('${lastSale}')">🧾 Receipt</button>` : ''}</div>` : ''}
     <div class="card">
       <div class="row" style="align-items:flex-end">
@@ -2174,6 +2387,7 @@ const V = {
     <div class="card" style="margin-bottom:12px"><b>Share with another phone</b>
       ${S.share ? `<p class="mute">“${esc(profName())}” is shared ✓${myName() ? ' · you are “' + esc(myName()) + '”' : ''}. Last sent or merged: ${S.lastSync ? niceDate(S.lastSync) : 'never'}.</p>
         <div class="row"><button class="btn" onclick="sendShare()">📤 Send update</button><button class="btn" onclick="pickShare('merge')">📥 Merge an update</button><button class="btn sec" onclick="stopShare()">Stop sharing</button></div>
+        <p><button class="btn ${link && link.open ? 'in' : 'sec'}" onclick="linkSheet()">${link && link.open ? '🔗 Linked now' : '🔗 Live link (same Wi-Fi)'}</button></p>
         <p class="mute">Send your update to the other phone, and merge theirs when it arrives. Entries from both phones are combined, and stock counts add up from both. Receipt photos stay on the phone that took them.</p>`
       : `<p class="mute">Keep the same books on two phones, for a household budget or a second till. No internet or account needed: you pass a locked file between the phones and the app merges it.</p>
         <div class="row"><button class="btn" onclick="startShare()">Share “${esc(profName())}”</button><button class="btn sec" onclick="pickShare('join')">Join shared books</button></div>`}</div>
@@ -2197,7 +2411,7 @@ function render() {
   if (staffMode && !staffTabs().includes(tab)) tab = 'sell';
   document.body.classList.toggle('dark', isDark()); document.body.classList.toggle('staff', staffMode);
   document.querySelectorAll('#nav button').forEach(b => { const t = b.dataset.t; b.hidden = staffMode ? !staffTabs().includes(t) : pers ? (t === 'sell' || t === 'stock') : t === 'receipts'; b.classList.toggle('on', t === tab); });
-  $('#hdr').innerHTML = `<span>📦 StockPile${BETA ? ' <span class="beta">TEST COPY</span>' : ''}</span>` + (staffMode ? `<button onclick="lockNow()">🔒 ${esc(staff ? staff.who : 'Staff')} · Lock</button>` : `<select id="profSel" aria-label="Switch books" onchange="switchProfile(this.value)">${P.list.map(p => `<option value="${p.id}" ${p.id === P.current ? 'selected' : ''}>${isPriv(p.id) ? '🔒 ' : ''}${p.share ? '⇄ ' : ''}${esc(p.name)}${p.kind === 'personal' ? ' (personal)' : ''}</option>`).join('')}</select>`);
+  $('#hdr').innerHTML = `<span>📦 StockPile${BETA ? ' <span class="beta">TEST COPY</span>' : ''}${link && link.open ? ' 🔗' : ''}</span>` + (staffMode ? `<button onclick="lockNow()">🔒 ${esc(staff ? staff.who : 'Staff')} · Lock</button>` : `<select id="profSel" aria-label="Switch books" onchange="switchProfile(this.value)">${P.list.map(p => `<option value="${p.id}" ${p.id === P.current ? 'selected' : ''}>${isPriv(p.id) ? '🔒 ' : ''}${p.share ? '⇄ ' : ''}${esc(p.name)}${p.kind === 'personal' ? ' (personal)' : ''}</option>`).join('')}</select>`);
   document.body.classList.toggle('setup', firstRun);
   $('#view').innerHTML = firstRun ? setupCard() : needKey() ? privCard() : V[tab]();
   loadThumbs();

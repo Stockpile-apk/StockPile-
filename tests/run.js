@@ -556,6 +556,44 @@ applyBackup(JSON.parse(bkS)); ok(S.tx.length===beforeR && S.share && !S.gone.lat
 ok(clean(copyOf(S)).items[0].q && clean(copyOf(S)).share.pass==='household' && Object.keys(clean(copyOf(S)).gone).length>0,'sharing details survive save and reload');
 ok(Object.keys(clean({gone:{'<img src=x>':5,ok1:9},items:[{id:'i',name:'n',q:{'<x>':{n:1,v:1},good:{n:'2',v:'3'}}}]}).gone).join()==='ok1' && JSON.stringify(clean({items:[{id:'i',name:'n',q:{'<x>':{n:1,v:1},good:{n:'2',v:'3'}}}]}).items[0].q)==='{"good":{"n":2,"v":3}}','sharing data from a file is cleaned like everything else');
 allTabs(); tab='home'; moneyFilter='month'; showNums=false;
+
+// ================= version 3.2.0: live link over local Wi-Fi =================
+// pairing codes
+const sdpS='v=0\\r\\no=- 46117327 2 IN IP4 127.0.0.1\\r\\ns=-\\r\\nt=0 0\\r\\na=group:BUNDLE 0\\r\\nm=application 9 UDP/DTLS/SCTP webrtc-datachannel\\r\\nc=IN IP4 0.0.0.0\\r\\na=candidate:1 1 udp 2113937151 192.168.1.23 54321 typ host generation 0\\r\\na=candidate:2 1 tcp 1518280447 192.168.1.23 9 typ host tcptype active\\r\\na=candidate:3 1 udp 2113939711 fe80::1c2:33ff:fe44:5566 54322 typ host\\r\\na=ice-ufrag:abcd\\r\\na=ice-pwd:0123456789abcdefghijklmn\\r\\na=fingerprint:sha-256 AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99\\r\\na=setup:actpass\\r\\na=mid:0\\r\\na=sctp-port:5000\\r\\n';
+ok((await unsqueeze(await squeeze('héllo ✓ '.repeat(50))))==='héllo ✓ '.repeat(50),'pairing data survives being squeezed and unsqueezed');
+const tsdp=trimSDP(sdpS); ok(/192\\.168\\.1\\.23 54321/.test(tsdp) && !/ tcp /.test(tsdp) && !/fe80/.test(tsdp) && /a=fingerprint/.test(tsdp) && tsdp.endsWith('\\r\\n'),'the pairing code keeps the local Wi-Fi address and drops what the link does not need');
+const pcode2=await packDesc({type:'offer',sdp:sdpS}), back=await unpackDesc(pcode2);
+ok(pcode2.startsWith('SPL1:') && pcode2.length<700 && back.type==='offer' && back.sdp===tsdp,'a pairing code round-trips and is short enough to scan');
+ok(await fails(unpackDesc('https://example.com')) && await fails(unpackDesc('SPL1:'+await squeeze('{"t":"evil","s":1}'))),'anything that is not a pairing code is refused');
+const qm=qrMatrix(pcode2); ok(qm && qm.length===qm[0].length && qm.length<=89 && qm[0][0] && qm[0][6] && !qm[0][7] && qm[qm.length-1][0] && /^<svg/.test(qrSVG(pcode2)),'the pairing code is drawn as a QR code');
+ok(qrMatrix('x'.repeat(40)).length===29 && qrMatrix('x'.repeat(800))===null && qrSVG('x'.repeat(800))==='','QR size grows with the content and stops at a scannable limit');
+require('fs').writeFileSync(require('os').tmpdir()+'/qr-final.json',JSON.stringify([pcode2,'SPL1:'+'Zz9+/'.repeat(120)].map(s=>[s,qrMatrix(s)])));
+// long messages are cut up and rejoined
+link={buf:{}}; const longMsg='M'.repeat(150000)+'end', fr=linkFrames(longMsg); let joined=null; for(const f of [fr[2],fr[0],fr[1]]) joined=linkJoin(f)??joined;
+ok(fr.length===3 && joined===longMsg && linkFrames('short').length===1 && linkJoin('short')==='short','long updates are split for the link and rejoined in any order'); link=null;
+// two phones over a pretend link
+await saveQ; saveGen++; KR=new Map(); KEYS={}; staff=null; staffMode=false; SEC=null;DK=null;LEGACY=null;S=fresh();P=defaultP();Object.keys(store).forEach(k=>delete store[k]);
+DEV='tilla'; S=fresh(); S.items.push({id:'w',name:'Widget',num:1,qty:20,cost:5,price:10,low:0}); baseSnap=null; save(); S.share={id:'shL',pass:'tillpass'}; save();
+PH.A={S,baseSnap,DEV}; curPh='A'; PH.B={S:Object.assign(clean(copyOf(sharePayload())),{share:{id:'shL',pass:'tillpass'}}),baseSnap:null,DEV:'tillb'}; usePh('B'); prepSync(); takeSnap(); save();
+usePh('A'); ok(canonSig(sharePayload())===canonSig(PH.B.S && (usePh('B'),sharePayload())),'two phones holding the same books get the same fingerprint');
+const LK=await shareKey('tillpass',new Uint8Array(16)), QA=[], QB=[];
+const LA={open:true,id:'shL',key:LK,dc:{readyState:'open',send:m=>QB.push(m)},buf:{},echo:0,count:0}, LB={open:true,id:'shL',key:LK,dc:{readyState:'open',send:m=>QA.push(m)},buf:{},echo:0,count:0};
+const pump=async()=>{ let r=0; while((QA.length||QB.length)&&r<30){ r++; if(QB.length){ usePh('B'); link=LB; for(const m of QB.splice(0)) await linkOnMessage(m); } if(QA.length){ usePh('A'); link=LA; for(const m of QA.splice(0)) await linkOnMessage(m); } } return r; };
+usePh('A'); link=LA; recordSale([{it:S.items[0],qty:3,price:10}],{pay:'full',acct:'cash'}); save(); await linkSendNow();
+ok(QB.length===1 && !/Widget/.test(QB[0]),'a sale on one till is sent to the other, encrypted');
+let rounds=await pump(); ok(same() && PH.A.S.items[0].qty===17 && PH.B.S.items[0].qty===17 && rounds<=2 && !QA.length && !QB.length,'the other till shows the sale and the stock drop, and the exchange settles');
+usePh('B'); link=LB; recordSale([{it:S.items[0],qty:2,price:10}],{pay:'full',acct:'cash'}); save(); await linkSendNow(); usePh('A'); link=LA; recordSale([{it:S.items[0],qty:4,price:10}],{pay:'full',acct:'cash'}); save(); await linkSendNow();
+rounds=await pump(); ok(same() && PH.A.S.items[0].qty===11 && PH.B.S.items[0].qty===11 && PH.A.S.tx.length===3 && rounds<=4,'sales rung up on both tills at the same moment both count');
+usePh('A'); link=LA; await linkSendNow(); ok(!QB.length,'nothing is sent when the other till is already up to date');
+usePh('A'); link=LA; S.tx=S.tx.slice(1); save(); await linkSendNow(); await pump(); ok(same() && PH.B.S.tx.length===2,'a deletion carries over the link');
+// wrong books and wrong password are refused
+usePh('B'); link={...LB,key:null,open:false}; lastAlert=''; await linkOnMessage(JSON.stringify({t:'h',id:'other-books',salt:b64(rnd(16))})); ok(link===null && /different books/.test(lastAlert),'a link to different books is refused');
+const badKey=await shareKey('not-the-pass',new Uint8Array(16)); usePh('A'); link=LA; S.tx.push({id:'zz9',type:'in',amount:1,cat:'Sales',acct:'cash',gst:0,date:today()}); save(); LA.sentSig=''; await linkSendNow();
+usePh('B'); link={...LB,key:badKey}; lastAlert=''; for(const m of QB.splice(0)) await linkOnMessage(m); ok(link===null && /passwords.*do not match/.test(lastAlert) && !S.tx.some(t=>t.id==='zz9'),'a link with a different sharing password is refused and nothing is merged');
+QA.length=0; QB.length=0; link=null;
+usePh('A'); P=defaultP(); tab='sell'; ok(/Link tills/.test(V.sell()) && /Live link/.test(V.more()),'shared books offer the live link on the Sell screen and under More'); link={open:true}; render(); ok(/🔗/.test($('#hdr').innerHTML) && /Linked/.test(V.sell()),'a linked till shows it at the top'); link=null; render();
+linkSheet(); ok(/Start on this phone/.test($('#modal').innerHTML) && /experimental/.test($('#modal').innerHTML),'the link screen explains the two steps'); closeForm();
+allTabs(); tab='home';
 })().catch(e=>{console.log('CRASH',e);process.exitCode=1});
 `;
 const html=fs.readFileSync(process.argv[2]?require('path').resolve(process.argv[2]):require('path').join(__dirname,'..','beta','index.html'),'utf8');
