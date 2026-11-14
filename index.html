@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'none'; manifest-src 'self'; worker-src 'self'; form-action 'none'; base-uri 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob: mediastream:; connect-src 'none'; manifest-src 'self'; worker-src 'self'; form-action 'none'; base-uri 'none'">
 <meta name="theme-color" content="#1d2433">
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="icon-192.png">
@@ -69,6 +69,13 @@ select.f,input.f{padding:8px;border-radius:8px;border:1px solid var(--line);font
 #lock a{color:#9ca3af;font-size:14px;margin-top:22px}
 .reccode{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:19px;font-weight:700;letter-spacing:1px;background:#f3f4f6;border:1px solid var(--line);border-radius:10px;padding:14px;text-align:center;overflow-wrap:anywhere;margin:12px 0;color:#000;user-select:all}
 #printArea{display:none}
+.rc{color:#000;font-size:15px}.rch{font-size:20px;font-weight:800}.rcs{color:#444;font-size:14px;margin-top:2px}
+.rc table{width:100%;border-collapse:collapse;margin:12px 0}.rc th,.rc td{text-align:left;padding:6px 4px;border-bottom:1px solid #ddd;font-size:14px}
+.rc th:nth-child(n+2),.rc td:nth-child(n+2){text-align:right;white-space:nowrap}
+.rct{display:flex;justify-content:space-between;padding:4px;font-size:16px}
+.labs{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
+.lab{border:1px dashed #999;border-radius:4px;padding:6px;text-align:center;break-inside:avoid;page-break-inside:avoid;color:#000;background:#fff}
+.ln{font-size:11px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.lp{font-size:13px;font-weight:700}
 @media print{body.printing>*{display:none!important}body.printing>#printArea{display:block!important;padding:24px;color:#000;background:#fff}}
 </style>
 </head>
@@ -97,7 +104,8 @@ select.f,input.f{padding:8px;border-radius:8px;border:1px solid var(--line);font
 
 <script>
 const KEY0 = 'money_inventory_tracker_v1', PKEY = 'stockpile_profiles';
-const fresh = () => ({ tx: [], items: [], debts: [], lastBackup: null, dirty: 0, auto: true, set: { gst: false, gstRate: 5 } });
+const VERSION = 7;
+const fresh = () => ({ tx: [], items: [], debts: [], lastBackup: null, dirty: 0, auto: true, offRemind: true, lastSent: null, offSnooze: null, set: { gst: false, gstRate: 5 } });
 const defaultP = () => ({ list: [{ id: 'default', name: 'My business' }], current: 'default' });
 const CAN = !!(globalThis.crypto && crypto.subtle);
 let S = fresh(), P = defaultP(), storageOK = true, loadFailed = false;
@@ -172,14 +180,15 @@ function clean(d) {
     }
     return r;
   });
-  o.items = arr(d.items).map(i => ({ id: okId(i.id), name: str(i.name), num: Math.round(num(i.num)), cost: num(i.cost), price: num(i.price), qty: Math.round(num(i.qty)), low: Math.round(num(i.low)) }));
+  o.items = arr(d.items).map(i => ({ id: okId(i.id), name: str(i.name), ...(cleanCode(i.code) ? { code: cleanCode(i.code) } : {}), num: Math.round(num(i.num)), cost: num(i.cost), price: num(i.price), qty: Math.round(num(i.qty)), low: Math.round(num(i.low)) }));
   const usedNums = new Set(); let nx = 1;
   o.items.forEach(i => { if (!(i.num >= 1) || usedNums.has(i.num)) i.num = 0; else usedNums.add(i.num); });
   o.items.forEach(i => { if (!i.num) { while (usedNums.has(nx)) nx++; i.num = nx; usedNums.add(nx); } });
   o.debts = arr(d.debts).map(x => { const r = { id: okId(x.id), name: str(x.name), dir: x.dir === 'owed' ? 'owed' : 'owe', amount: num(x.amount), note: str(x.note), date: okDate(x.date),
-    payments: arr(x.payments).map(p => ({ amount: num(p.amount), date: okDate(p.date) })) }; if (x.sale) r.sale = okId(x.sale); return r; });
+    payments: arr(x.payments).map(p => ({ amount: num(p.amount), date: okDate(p.date) })) }; if (x.sale) r.sale = okId(x.sale); if (isDate(x.due)) r.due = x.due; return r; });
   o.lastBackup = isDate(d.lastBackup) ? d.lastBackup : null;
   o.dirty = Math.max(0, Math.round(num(d.dirty))); o.auto = d.auto !== false;
+  o.offRemind = d.offRemind !== false; o.lastSent = isDate(d.lastSent) ? d.lastSent : null; o.offSnooze = isDate(d.offSnooze) ? d.offSnooze : null;
   const st = d.set && typeof d.set === 'object' ? d.set : {};
   o.set = { gst: !!st.gst, gstRate: num(st.gstRate) || 5 };
   if (typeof st.pin === 'string' && /^[a-z0-9]{1,16}$/.test(st.pin)) o.set.pin = st.pin;
@@ -218,7 +227,7 @@ function form(title, fields, onSave, extra = '') {
     if (onSave(v) !== false) { closeForm(); commit(); render(); }
   };
 }
-function closeForm() { $('#modal').hidden = true; $('#modal').innerHTML = ''; }
+function closeForm() { const scanning = !!scan; stopScan(); $('#modal').hidden = true; $('#modal').innerHTML = ''; if (scanning) render(); }
 function fieldHTML(f) {
   const id = 'f_' + f.k, val = f.v ?? '';
   if (f.t === 'check') return `<label class="chk"><input type="checkbox" id="${id}" ${val ? 'checked' : ''}> ${esc(f.l)}</label>`;
@@ -360,14 +369,15 @@ function recordSale(lines, o) {
     if (owing > 0) t.saleAmt = full;
     S.tx.push(t);
   });
-  if (owing > 0) S.debts.push({ id: uid(), dir: 'owed', name: cust, amount: owing, note: 'Sale: ' + lines.map(l => `${l.qty} × ${l.it.name}`).join(', '), date, payments: [], sale });
-  return { total: T, paid: P, owing };
+  if (owing > 0) S.debts.push({ id: uid(), dir: 'owed', name: cust, amount: owing, note: 'Sale: ' + lines.map(l => `${l.qty} × ${l.it.name}`).join(', '), date, payments: [], sale, ...(isDate(o.due) ? { due: o.due } : {}) });
+  return { total: T, paid: P, owing, sale };
 }
 const saleMsg = (r, cust) => r.owing > 0 ? `✓ Sale recorded: ${cur(r.total)}. Paid now ${cur(r.paid)}; ${cur(r.owing)} owing was added to Debts under ${cust}.` : `✓ Sale recorded: ${cur(r.total)}`;
 const PAYOPTS = [['full', 'Paid in full'], ['part', 'Part payment now'], ['later', 'Pay later (on account)']];
 
 /* ---------- Sell screen (point of sale) ---------- */
-let cart = [], posCust = '', posAcct = 'cash', posGst = true, posMsg = '', posPay = 'full', posPaid = '';
+let cart = [], posCust = '', posAcct = 'cash', posGst = true, posMsg = '', posPay = 'full', posPaid = '', posDue = '', lastSale = '';
+function cartAdd(it, q) { const line = cart.find(c => c.id === it.id); if (line) line.qty += q; else cart.push({ id: it.id, qty: q, price: it.price }); posMsg = ''; lastSale = ''; }
 const nextNum = () => Math.max(0, ...S.items.map(i => i.num || 0)) + 1;
 const itemByNum = n => S.items.find(i => i.num === n);
 function posPreview() {
@@ -380,9 +390,7 @@ function posAdd(id, q) {
   else { it = itemByNum(parseInt($('#posNum').value)); q = Math.round(parseFloat($('#posQty').value)) || 1; }
   if (!it) { $('#posPrev').textContent = 'No item with that number'; return; }
   if (!(q >= 1)) q = 1;
-  const line = cart.find(c => c.id === it.id);
-  if (line) line.qty += q; else cart.push({ id: it.id, qty: q, price: it.price });
-  posMsg = ''; render();
+  cartAdd(it, q); render();
   if (!id) { const el = $('#posNum'); if (el) el.focus(); }
 }
 function posQty(id, d) { const l = cart.find(c => c.id === id); if (!l) return; l.qty += d; if (l.qty < 1) cart = cart.filter(c => c !== l); render(); }
@@ -403,10 +411,222 @@ function posDone() {
   const short = lines.filter(x => x.c.qty > x.it.qty);
   if (short.length && !confirm(`Not enough in stock for: ${short.map(x => `${x.it.name} (have ${x.it.qty})`).join(', ')}.\n\nRecord the sale anyway?`)) return;
   const cust = posCust.trim();
-  const r = recordSale(lines.map(({ c, it }) => ({ it, qty: c.qty, price: c.price })), { cust, acct: posAcct, gstInc: posGst, pay: posPay, paid: posPaid });
+  const r = recordSale(lines.map(({ c, it }) => ({ it, qty: c.qty, price: c.price })), { cust, acct: posAcct, gstInc: posGst, pay: posPay, paid: posPaid, due: posDue });
   if (typeof r === 'string') { alert(r); return; }
-  posMsg = saleMsg(r, cust); cart = []; posCust = ''; posPay = 'full'; posPaid = '';
+  posMsg = saleMsg(r, cust); lastSale = r.sale; cart = []; posCust = ''; posPay = 'full'; posPaid = ''; posDue = '';
   commit(); render();
+}
+
+/* ---------- small helpers ---------- */
+const daysSince = d => Math.floor((new Date(today() + 'T12:00') - new Date(d + 'T12:00')) / 86400000);
+const addDays = n => new Date(Date.now() + n * 86400000).toLocaleDateString('en-CA');
+const overdue = d => !!d.due && d.due < today() && bal(d) > 0;
+function printHTML(html) {
+  $('#printArea').innerHTML = html;
+  document.body.classList.add('printing'); window.print();
+  setTimeout(() => { document.body.classList.remove('printing'); $('#printArea').innerHTML = ''; }, 1500);
+}
+function shareText(title, text) {
+  try { if (navigator.share) { navigator.share({ title, text }).catch(() => {}); return; } } catch (e) {}
+  try { navigator.clipboard.writeText(text).then(() => alert('Copied. Paste it into a message or email.'), () => alert("Sharing isn't available in this browser.")); } catch (e) { alert("Sharing isn't available in this browser."); }
+}
+
+/* ---------- barcodes: make them (EAN-13 labels) and look products up by them ---------- */
+const EAN_L = ['0001101', '0011001', '0010011', '0111101', '0100011', '0110001', '0101111', '0111011', '0110111', '0001011'];
+const EAN_P = ['LLLLLL', 'LLGLGG', 'LLGGLG', 'LLGGGL', 'LGLLGG', 'LGGLLG', 'LGGGLL', 'LGLGLG', 'LGLGGL', 'LGGLGL'];
+const eanCheck = d12 => { let s = 0; for (let i = 0; i < 12; i++) s += (+d12[i]) * (i % 2 ? 3 : 1); return (10 - s % 10) % 10; };
+// StockPile's own barcode for a product: "2" (the in-store range) + the item number + a check digit.
+const itemEAN = n => { const b = '2' + String(n).padStart(11, '0'); return b + eanCheck(b); };
+function eanBits(code) {
+  const R = EAN_L.map(x => x.replace(/./g, c => c === '0' ? '1' : '0')), G = R.map(x => x.split('').reverse().join('')), p = EAN_P[+code[0]];
+  let b = '101';
+  for (let i = 0; i < 6; i++) b += (p[i] === 'L' ? EAN_L : G)[+code[i + 1]];
+  b += '01010';
+  for (let i = 7; i < 13; i++) b += R[+code[i]];
+  return b + '101';
+}
+function eanSVG(code, h = 56) {
+  const bits = eanBits(code), q = 11, w = bits.length + 2 * q; let rects = '', i = 0;
+  while (i < bits.length) { if (bits[i] === '1') { let j = i; while (bits[j] === '1') j++; rects += `<rect x="${q + i}" y="2" width="${j - i}" height="${h}"/>`; i = j; } else i++; }
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h + 16}" style="width:100%;max-width:230px;background:#fff"><rect width="${w}" height="${h + 16}" fill="#fff"/><g fill="#000">${rects}</g><text x="${w / 2}" y="${h + 13}" font-size="10" font-family="monospace" text-anchor="middle" fill="#000">${code}</text></svg>`;
+}
+const cleanCode = v => { v = String(v ?? '').trim().replace(/[^0-9A-Za-z\-]/g, '').slice(0, 40); return /^0\d{12}$/.test(v) ? v.slice(1) : v; };
+function itemByCode(v) {
+  v = cleanCode(v); if (!v) return undefined;
+  const own = S.items.find(i => i.code && i.code === v); if (own) return own;
+  return /^2\d{12}$/.test(v) && +v[12] === eanCheck(v.slice(0, 12)) ? itemByNum(parseInt(v.slice(1, 12), 10)) : undefined;
+}
+function printLabels() {
+  if (!S.items.length) return;
+  const n = Math.min(Math.max(parseInt(prompt('How many labels for each product?', '1')) || 0, 0), 60); if (!n) return;
+  const price = confirm('Show the price on each label?\n\nOK = show prices, Cancel = no prices');
+  const items = [...S.items].sort((a, b) => a.num - b.num);
+  printHTML(`<div class="labs">${items.map(i => Array(n).fill(`<div class="lab"><div class="ln">#${i.num} ${esc(i.name)}</div>${eanSVG(itemEAN(i.num))}${price ? `<div class="lp">${cur(i.price)}</div>` : ''}</div>`).join('')).join('')}</div>`);
+}
+function barcodeSheet(id) {
+  const it = S.items.find(i => i.id === id); if (!it) return;
+  const m = $('#modal');
+  m.innerHTML = `<div class="sheet"><h2>Barcode: ${esc(it.name)}</h2>
+    <div style="text-align:center">${eanSVG(itemEAN(it.num), 70)}</div>
+    <p class="mute">This is StockPile's own barcode for item #${it.num}. Print it as a label and stick it on the product, then scan it on the Sell screen.</p>
+    <div class="row"><button class="btn" onclick="printHTML(document.querySelector('#oneLab').innerHTML)">Print this label</button></div>
+    <div id="oneLab" hidden><div class="labs"><div class="lab"><div class="ln">#${it.num} ${esc(it.name)}</div>${eanSVG(itemEAN(it.num))}</div></div></div>
+    <h3>Product already has a barcode?</h3>
+    <p class="mute">${it.code ? `Its own barcode is saved (<b>${esc(it.code)}</b>). Scanning either barcode finds this product.` : "If the packaging already has a barcode, scan it once and StockPile will recognise it from then on. No label needed."}</p>
+    <div class="row"><button class="btn sec" onclick="startScan('assign','${it.id}')">📷 Scan its own barcode</button>${it.code ? `<button class="btn sec" onclick="clearCode('${it.id}')">Forget it</button>` : ''}</div>
+    <div class="row end" style="margin-top:14px"><button class="btn sec" onclick="closeForm()">Close</button></div></div>`;
+  m.hidden = false; m.onclick = e => { if (e.target === m) closeForm(); };
+}
+function clearCode(id) { const it = S.items.find(i => i.id === id); if (it) { delete it.code; closeForm(); commit(); render(); } }
+
+/* ---------- camera scanner ---------- */
+let scan = null;
+function stopScan() { if (scan) { clearTimeout(scan.timer); try { scan.stream.getTracks().forEach(t => t.stop()); } catch (e) {} scan = null; } }
+async function startScan(mode, target) {
+  if (!('BarcodeDetector' in window) || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { alert("This phone's browser can't scan barcodes from here. Use the item number instead."); return; }
+  stopScan();
+  const m = $('#modal');
+  m.innerHTML = `<div class="sheet"><h2>${mode === 'sell' ? 'Scan to sell' : 'Scan the barcode'}</h2>
+    <video id="scanVid" playsinline muted style="width:100%;max-height:42vh;border-radius:12px;background:#000;object-fit:cover"></video>
+    <div id="scanAsk" style="margin-top:10px"></div>
+    <div id="scanMsg" class="note" style="margin-top:10px">Starting the camera…</div>
+    <div class="row end"><button class="btn" onclick="closeForm()">Done</button></div></div>`;
+  m.hidden = false; m.onclick = null;
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false });
+    const vid = $('#scanVid');
+    if (!vid || $('#modal').hidden) { stream.getTracks().forEach(t => t.stop()); return; }
+    vid.srcObject = stream; await vid.play();
+    let formats = ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'code_39', 'itf'];
+    try { const sup = await BarcodeDetector.getSupportedFormats(); formats = formats.filter(f => sup.includes(f)); } catch (e) {}
+    const det = new BarcodeDetector({ formats });
+    scan = { stream, mode, target, last: '', lastAt: 0, pending: null, timer: 0 };
+    $('#scanMsg').textContent = 'Point the camera at a barcode.';
+    const tick = async () => {
+      if (!scan) return;
+      try { if (!scan.pending) { const r = await det.detect(vid); if (scan && r.length) onScan(r[0].rawValue); } } catch (e) {}
+      if (scan) scan.timer = setTimeout(tick, 250);
+    };
+    tick();
+  } catch (e) { const el = $('#scanMsg'); if (el) el.textContent = "Couldn't open the camera. Allow camera access for StockPile, then try again."; }
+}
+function onScan(v) {
+  if (!scan || scan.pending) return;
+  const now = Date.now(); if (v === scan.last && now - scan.lastAt < 2500) return;
+  scan.last = v; scan.lastAt = now;
+  const msg = $('#scanMsg');
+  if (scan.mode === 'sell') {
+    const it = itemByCode(v);
+    if (!it) { msg.textContent = `No product has the barcode ${cleanCode(v) || 'that was scanned'}. Add it from the Stock tab → Barcode.`; return; }
+    scan.pending = it.id;
+    try { if (navigator.vibrate) navigator.vibrate(60); } catch (e) {}
+    $('#scanAsk').innerHTML = `<div class="card"><div class="t">#${it.num} ${esc(it.name)}</div><div class="mute">${cur(it.price)} each · ${it.qty} in stock</div>
+      <div class="row" style="margin-top:8px;align-items:flex-end"><label class="pf"><span>How many</span><input id="scanQty" class="f" type="number" inputmode="numeric" min="1" value="1" onkeydown="if(event.key==='Enter'){event.preventDefault();scanAdd()}"></label>
+      <button class="btn in" onclick="scanAdd()">Add</button><button class="btn sec" onclick="scanResume('')">Skip</button></div></div>`;
+    msg.textContent = 'Enter how many, then tap Add.';
+    const q = $('#scanQty'); if (q) { q.focus(); if (q.select) q.select(); }
+  } else {
+    const it = S.items.find(i => i.id === scan.target), code = cleanCode(v), other = itemByCode(v);
+    if (!it || !code) return;
+    if (other && other.id !== it.id) { msg.textContent = `That barcode already belongs to ${other.name}.`; return; }
+    it.code = code; closeForm(); commit(); render(); alert(`Barcode saved for ${it.name}. Scanning it on the Sell screen will now find this product.`);
+  }
+}
+function scanAdd() {
+  if (!scan || !scan.pending) return;
+  const it = S.items.find(i => i.id === scan.pending), q = Math.max(1, Math.round(parseFloat($('#scanQty').value)) || 1);
+  if (it) cartAdd(it, q);
+  scanResume(it ? `✓ Added ${q} × ${it.name}` : '');
+}
+function scanResume(m) {
+  if (!scan) return;
+  scan.pending = null; scan.lastAt = Date.now(); $('#scanAsk').innerHTML = '';
+  const n = sum(cart, c => c.qty), T = sum(cart, c => c.qty * c.price);
+  $('#scanMsg').textContent = (m ? m + '. ' : '') + (n ? `This sale so far: ${n} item${n > 1 ? 's' : ''}, ${cur(T)}. Scan the next one, or tap Done.` : 'Point the camera at a barcode.');
+}
+
+/* ---------- receipts and voiding a sale ---------- */
+function saleInfo(id) {
+  const tx = S.tx.filter(t => t.sale === id); if (!id || !tx.length) return null;
+  const debt = S.debts.find(d => d.sale === id);
+  const lines = tx.map(t => { const it = t.itemId && S.items.find(i => i.id === t.itemId), amount = t.saleAmt ?? t.amount, qty = t.qty > 0 ? t.qty : 1; return { name: it ? it.name : String(t.note || 'Item').replace(/^Sold \d+ × /, ''), qty, each: round(amount / qty), amount }; });
+  const total = round(sum(lines, l => l.amount)), owing = debt ? Math.max(bal(debt), 0) : 0;
+  return { id, tx, debt, lines, total, owing, paid: round(total - owing), gst: round(sum(tx, t => t.gst)), date: tx[0].date, cust: tx[0].cust || (debt ? debt.name : ''), no: 'R-' + tx[0].date.replace(/-/g, '') + '-' + id.slice(-4).toUpperCase() };
+}
+function receiptBody(r) {
+  return `<div class="rc"><div class="rch">${esc(profName())}</div><div class="rcs">Receipt ${esc(r.no)} · ${niceDate(r.date)}</div>
+    ${r.cust ? `<div class="rcs">Customer: <b>${esc(r.cust)}</b></div>` : ''}
+    <table><tr><th>Item</th><th>Qty</th><th>Each</th><th>Amount</th></tr>${r.lines.map(l => `<tr><td>${esc(l.name)}</td><td>${l.qty}</td><td>${cur(l.each)}</td><td>${cur(l.amount)}</td></tr>`).join('')}</table>
+    <div class="rct"><span>Total</span><b>${cur(r.total)}</b></div>
+    <div class="rct"><span>Paid</span><span>${cur(r.paid)}</span></div>
+    ${r.owing > 0 ? `<div class="rct"><span>Still owing${r.debt && r.debt.due ? ` (due ${niceDate(r.debt.due)})` : ''}</span><b>${cur(r.owing)}</b></div>` : '<div class="rct"><span>Paid in full</span><span>✓</span></div>'}
+    ${S.set.gst && r.gst ? `<div class="rcs">Includes GST ${cur(r.gst)}</div>` : ''}</div>`;
+}
+function receiptText(r) {
+  return [profName(), `Receipt ${r.no} · ${niceDate(r.date)}`, r.cust ? `Customer: ${r.cust}` : '', '', ...r.lines.map(l => `${l.qty} × ${l.name} @ ${cur(l.each)} = ${cur(l.amount)}`), '', `Total: ${cur(r.total)}`, `Paid: ${cur(r.paid)}`,
+    r.owing > 0 ? `Still owing: ${cur(r.owing)}${r.debt && r.debt.due ? ` (due ${niceDate(r.debt.due)})` : ''}` : 'Paid in full', S.set.gst && r.gst ? `Includes GST ${cur(r.gst)}` : ''].filter((x, i, a) => x !== '' || (i > 0 && a[i - 1] !== '')).join('\n');
+}
+function receipt(id) {
+  const r = saleInfo(id); if (!r) { alert("That sale isn't in your records any more."); return; }
+  const m = $('#modal');
+  m.innerHTML = `<div class="sheet">${receiptBody(r)}
+    <div class="row" style="margin-top:14px"><button class="btn" onclick="printHTML(receiptBody(saleInfo('${id}')))">Print</button><button class="btn" onclick="shareText('Receipt',receiptText(saleInfo('${id}')))">Send</button>
+      <button class="btn out" onclick="voidSale('${id}')">Void sale</button><button class="btn sec" onclick="closeForm()">Close</button></div></div>`;
+  m.hidden = false; m.onclick = e => { if (e.target === m) closeForm(); };
+}
+function voidSale(id) {
+  const r = saleInfo(id); if (!r) return;
+  const later = r.debt ? paid(r.debt) : 0;
+  if (!confirm(`Void this whole sale (${cur(r.total)})?\n\nThe items go back into stock and the sale is removed from your records${r.debt ? ', along with the amount owing in Debts' : ''}.` + (later > 0 ? `\n\nNote: ${cur(later)} in payments already recorded against it will stay in your Money list. Delete those entries yourself if they should go too.` : ''))) return;
+  r.tx.forEach(t => { const it = t.itemId && S.items.find(i => i.id === t.itemId); if (it && t.qty > 0) it.qty += t.qty; });
+  S.tx = S.tx.filter(t => t.sale !== id);
+  if (r.debt) S.debts = S.debts.filter(d => d !== r.debt);
+  if (lastSale === id) { lastSale = ''; posMsg = ''; }
+  closeForm(); commit(); render();
+}
+
+/* ---------- customers ---------- */
+let custCache = [];
+const ckey = s => String(s || '').trim().toLowerCase();
+function customerList() {
+  const m = new Map();
+  const get = n => { const k = ckey(n); if (!k) return null; if (!m.has(k)) m.set(k, { key: k, name: String(n).trim(), sales: 0, owing: 0, ids: new Set() }); return m.get(k); };
+  S.tx.forEach(t => { if (t.type !== 'in' || !t.cust) return; const c = get(t.cust); if (c && t.cogs !== undefined) { c.sales += t.saleAmt ?? t.amount; c.ids.add(t.sale || t.id); } });
+  S.debts.forEach(d => { if (d.dir === 'owed') { const c = get(d.name); if (c) c.owing += Math.max(bal(d), 0); } });
+  return [...m.values()].map(c => ({ ...c, sales: round(c.sales), owing: round(c.owing), count: c.ids.size })).sort((a, b) => b.owing - a.owing || b.sales - a.sales || a.name.localeCompare(b.name));
+}
+function customersSheet() {
+  custCache = customerList();
+  const m = $('#modal');
+  m.innerHTML = `<div class="sheet"><h2>Customers</h2>
+    ${custCache.length ? `<div class="list">${custCache.map((c, i) => `<div class="it"><div class="main" onclick="customerSheet(${i})"><div class="t">${esc(c.name)}</div>
+      <div class="mute">${c.count} sale${c.count === 1 ? '' : 's'} · bought ${cur(c.sales)}</div></div><div class="amt ${c.owing > 0 ? 'pos' : 'mute'}">${c.owing > 0 ? 'owes ' + cur(c.owing) : 'paid up'}</div></div>`).join('')}</div>`
+      : '<div class="card empty">No customers yet. Add a customer name when you make a sale.</div>'}
+    <div class="row end" style="margin-top:14px"><button class="btn sec" onclick="closeForm()">Close</button></div></div>`;
+  m.hidden = false; m.onclick = e => { if (e.target === m) closeForm(); };
+}
+function customerData(c) {
+  const debts = S.debts.filter(d => d.dir === 'owed' && ckey(d.name) === c.key);
+  const buys = S.tx.filter(t => t.type === 'in' && ckey(t.cust) === c.key).sort((a, b) => b.date.localeCompare(a.date));
+  return { debts, open: debts.filter(d => bal(d) > 0), buys };
+}
+function statementText(c) {
+  const d = customerData(c);
+  return [profName(), `Statement for ${c.name} · ${niceDate(today())}`, '', `Total bought: ${cur(c.sales)}`, `Still owing: ${cur(c.owing)}`,
+    ...(d.open.length ? ['', 'Owing:', ...d.open.map(x => `- ${cur(bal(x))}${x.due ? ` due ${niceDate(x.due)}` : ''}${x.note ? ` (${x.note})` : ''}`)] : []),
+    ...(d.buys.length ? ['', 'Recent activity:', ...d.buys.slice(0, 15).map(t => `- ${niceDate(t.date)}: ${t.note || t.cat} ${cur(t.saleAmt ?? t.amount)}`)] : [])].join('\n');
+}
+function customerSheet(i) {
+  const c = custCache[i]; if (!c) return;
+  const d = customerData(c), m = $('#modal');
+  m.innerHTML = `<div class="sheet"><h2>${esc(c.name)}</h2>
+    <div class="grid"><div class="card"><div class="lbl">Total bought</div><div class="big">${cur(c.sales)}</div></div><div class="card"><div class="lbl">Still owing</div><div class="big ${c.owing > 0 ? 'neg' : ''}">${cur(c.owing)}</div></div></div>
+    ${d.open.length ? `<h3>Owing</h3><div class="list">${d.open.map(x => `<div class="it"><div class="main"><div class="t">${cur(bal(x))}${overdue(x) ? ' <span class="neg">overdue</span>' : ''}</div>
+      <div class="mute">${niceDate(x.date)}${x.due ? ' · due ' + niceDate(x.due) : ''}${x.note ? ' · ' + esc(x.note) : ''}</div></div><button class="btn sm" onclick="closeForm();payDebt('${x.id}')">Add payment</button></div>`).join('')}</div>` : ''}
+    <h3>History</h3><div class="list">${d.buys.length ? d.buys.slice(0, 30).map(t => `<div class="it"><div class="main"><div class="t">${esc(t.note || t.cat || 'Payment')}</div><div class="mute">${niceDate(t.date)}</div></div>
+      <div class="amt">${cur(t.saleAmt ?? t.amount)}</div>${t.sale ? `<button class="x" title="Receipt" onclick="receipt('${t.sale}')">🧾</button>` : ''}</div>`).join('') : '<div class="empty">Nothing recorded yet.</div>'}</div>
+    <div class="row" style="margin-top:14px"><button class="btn" onclick="shareText('Statement',statementText(custCache[${i}]))">Send statement</button><button class="btn sec" onclick="customersSheet()">Back</button><button class="btn sec" onclick="closeForm()">Close</button></div></div>`;
+  m.hidden = false; m.onclick = e => { if (e.target === m) closeForm(); };
 }
 
 /* ---------- debts ---------- */
@@ -419,9 +639,10 @@ function editDebt(id) {
     { k: 'name', l: 'Who', v: d.name, req: 1, ph: 'Person or company' },
     { k: 'amount', l: 'Total amount ($)', t: 'money', v: d.amount, req: 1, pos: 1, ph: '0.00' },
     { k: 'note', l: 'Note (optional)', v: d.note, ph: 'What it was for' },
-    { k: 'date', l: 'Date', t: 'date', v: d.date }
+    { k: 'date', l: 'Date', t: 'date', v: d.date },
+    { k: 'due', l: 'Due date (optional)', t: 'date', v: d.due || '' }
   ], v => {
-    const data = { dir: v.dir, name: v.name, amount: round(v.amount), note: v.note, date: v.date || today() };
+    const data = { dir: v.dir, name: v.name, amount: round(v.amount), note: v.note, date: v.date || today(), due: isDate(v.due) ? v.due : undefined };
     if (id) Object.assign(d, data); else S.debts.push({ id: uid(), payments: [], ...data });
   });
 }
@@ -724,7 +945,7 @@ function profiles() {
   m.hidden = false;
   m.onclick = e => { if (e.target === m) closeForm(); };
 }
-function resetView() { tab = 'home'; moneyFilter = 'month'; moneyView = 'list'; showNums = false; cart = []; posCust = ''; posMsg = ''; posPay = 'full'; posPaid = ''; }
+function resetView() { tab = 'home'; moneyFilter = 'month'; moneyView = 'list'; showNums = false; cart = []; posCust = ''; posMsg = ''; posPay = 'full'; posPaid = ''; posDue = ''; lastSale = ''; }
 async function switchProfile(id) { save(); await saveQ; P.current = id; await loadProfile(); save(); resetView(); closeForm(); render(); window.scrollTo(0, 0); }
 function addProfile() {
   form('Add business', [{ k: 'name', l: 'Business name', req: 1 }], v => {
@@ -773,7 +994,7 @@ async function shareBackup() {
     const f = new File([await backupText()], `${fileBase()}-${today()}.txt`, { type: 'text/plain' });
     if (navigator.canShare && navigator.canShare({ files: [f] })) {
       await navigator.share({ files: [f], title: 'StockPile backup' });
-      S.lastBackup = today(); S.dirty = 0; save(); render(); return;
+      S.lastBackup = today(); S.lastSent = today(); S.offSnooze = null; S.dirty = 0; save(); render(); return;
     }
   } catch (e) { if (e && e.name === 'AbortError') return; }
   await backup();
@@ -841,14 +1062,14 @@ function txRow(t) {
   return `<div class="it"><div class="main" onclick="editTx('${t.id}')"><div class="t">${esc(t.note || t.cat || (t.type === 'in' ? 'Money in' : 'Money out'))}</div>
     <div class="mute">${bits}</div></div>
     <div class="amt ${t.type === 'in' ? 'pos' : 'neg'}">${t.type === 'in' ? '+' : '−'}${fmt(t.amount)}</div>
-    <button class="x" title="Delete" onclick="delTx('${t.id}')">×</button></div>`;
+    ${t.sale ? `<button class="x" title="Receipt" onclick="receipt('${t.sale}')">🧾</button>` : ''}<button class="x" title="Delete" onclick="delTx('${t.id}')">×</button></div>`;
 }
 function groupBy(arr, key) { const o = {}; arr.forEach(t => { const k = key(t) || 'Other'; o[k] = (o[k] || 0) + t.amount; }); return Object.entries(o).sort((a, b) => b[1] - a[1]); }
-function bars(entries, color) {
+function bars(entries, color, f = fmt, open = false) {
   if (!entries.length) return '<div class="empty">Nothing here for this period.</div>';
-  const max = entries[0][1] || 1;
-  return entries.map(([k, v]) => `<div class="br"><div class="row between"><span>${esc(k)}</span><b>${fmt(v)}</b></div>
-    <div class="track"><div class="fill" style="width:${showNums ? Math.max(v / max * 100, 2) : 0}%;background:${color}"></div></div></div>`).join('');
+  const max = Math.max(...entries.map(e => e[1]), 0) || 1;
+  return entries.map(([k, v]) => `<div class="br"><div class="row between"><span>${esc(k)}</span><b>${f(v)}</b></div>
+    <div class="track"><div class="fill" style="width:${showNums || open ? Math.max(v / max * 100, 2) : 0}%;background:${color}"></div></div></div>`).join('');
 }
 const V = {
   home() {
@@ -856,9 +1077,13 @@ const V = {
       + (loadFailed ? '<div class="note">⚠️ The saved data for this business could not be read, so nothing is being saved over it. Load a backup from More → Restore to fix it.</div>' : '');
     const backupNote = S.dirty > 0
       ? `<div class="note">💾 ${S.dirty} change${S.dirty > 1 ? 's' : ''} not backed up yet. <button class="btn sm" style="margin-left:6px" onclick="backup()">Back up now</button></div>` : '';
+    const count = S.tx.length + S.items.length + S.debts.length, since = S.lastSent ? daysSince(S.lastSent) : null;
+    const offNote = S.offRemind !== false && !(S.offSnooze && S.offSnooze > today()) && (since === null ? count >= 5 : since >= 14)
+      ? `<div class="note">📤 ${since === null ? 'No backup has left this phone yet.' : `It's been ${since} days since a backup left this phone.`} If the phone is lost or broken, the backups in Downloads go with it.
+        <div class="row" style="margin-top:8px"><button class="btn sm" onclick="shareBackup()">Send backup</button><button class="btn sm sec" onclick="S.offSnooze=addDays(7);save();render()">Not now</button></div></div>` : '';
     const quick = `<button class="btn in" onclick="addTx('in')">+ Money In</button><button class="btn out" onclick="addTx('out')">− Money Out</button>
       ${S.items.length ? `<button class="btn" onclick="tab='sell';render()">Sell</button>` : ''}`;
-    if (!showNums) return `${warn}${backupNote}
+    if (!showNums) return `${warn}${backupNote}${offNote}
     <div class="card" style="text-align:center;padding:30px 16px;margin-top:10px"><div style="font-size:46px">📦</div>
       <h2 style="margin:8px 0 4px">Welcome back</h2><div class="mute">${new Date().toLocaleDateString('en-CA', { weekday: 'long', month: 'long', day: 'numeric' })}</div></div>
     <div class="row bar" style="justify-content:center">${quick}</div>
@@ -870,9 +1095,9 @@ const V = {
     const stockVal = sum(S.items, i => Math.max(i.qty, 0) * i.cost);
     const iOwe = sum(S.debts.filter(d => d.dir === 'owe'), d => Math.max(bal(d), 0));
     const owedMe = sum(S.debts.filter(d => d.dir === 'owed'), d => Math.max(bal(d), 0));
-    const low = S.items.filter(i => i.low > 0 && i.qty <= i.low);
+    const low = S.items.filter(i => i.low > 0 && i.qty <= i.low), od = S.debts.filter(overdue);
     const mn = new Date().toLocaleDateString('en-CA', { month: 'long' });
-    return `${warn}${backupNote}
+    return `${warn}${backupNote}${offNote}
     <div class="row bar">${quick}<button class="btn sec" onclick="showNums=false;render()">🙈 Hide</button></div>
     <div class="grid">
       <div class="card"><div class="lbl">Cash on hand</div><div class="big ${cash < 0 ? 'neg' : ''}">${fmt(cash)}</div></div>
@@ -887,6 +1112,7 @@ const V = {
       <div class="card"><div class="lbl">Owed to me</div><div class="big ${owedMe ? 'pos' : ''}">${fmt(owedMe)}</div></div>
     </div>
     ${low.length ? `<h3>⚠️ Running low – time to restock</h3><div class="list">${low.map(i => `<div class="it"><div class="main" onclick="tab='stock';render()"><div class="t">${esc(i.name)}</div></div><div class="amt neg">${i.qty} left</div></div>`).join('')}</div>` : ''}
+    ${od.length ? `<h3>⚠️ Overdue</h3><div class="list">${od.map(d => `<div class="it"><div class="main" onclick="tab='debts';render()"><div class="t">${esc(d.name)}</div><div class="mute">${d.dir === 'owe' ? 'I owe them' : 'Owes me'} · was due ${niceDate(d.due)}</div></div><div class="amt neg">${fmt(bal(d))}</div></div>`).join('')}</div>` : ''}
     <h3>Latest entries</h3>
     <div class="list">${S.tx.length ? [...S.tx].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 6).map(txRow).join('') : '<div class="empty">Nothing yet. Tap “+ Money In” or “− Money Out” to start.</div>'}</div>`;
   },
@@ -897,12 +1123,12 @@ const V = {
     const total = sum(lines, x => x.c.qty * x.c.price);
     const todays = S.tx.filter(t => t.date === today() && t.cogs !== undefined).reverse();
     return `<h2>Sell</h2>
-    ${posMsg ? `<div class="note ok">${esc(posMsg)}</div>` : ''}
+    ${posMsg ? `<div class="note ok">${esc(posMsg)}${lastSale && saleInfo(lastSale) ? ` <button class="btn sm" style="margin-left:6px" onclick="receipt('${lastSale}')">🧾 Receipt</button>` : ''}</div>` : ''}
     <div class="card">
       <div class="row" style="align-items:flex-end">
         <label class="pf"><span>Item #</span><input id="posNum" class="f" type="number" inputmode="numeric" min="1" oninput="posPreview()" onkeydown="if(event.key==='Enter'){event.preventDefault();$('#posQty').focus();$('#posQty').select()}"></label>
         <label class="pf"><span>How many</span><input id="posQty" class="f" type="number" inputmode="numeric" min="1" value="1" onkeydown="if(event.key==='Enter'){event.preventDefault();posAdd()}"></label>
-        <button class="btn" onclick="posAdd()">Add</button></div>
+        <button class="btn" onclick="posAdd()">Add</button><button class="btn sec" onclick="startScan('sell')">📷 Scan</button></div>
       <div id="posPrev" class="mute" style="min-height:20px;margin-top:6px"></div>
       <div class="chips">${items.map(i => `<button class="chip ${i.qty <= 0 ? 'out0' : ''}" onclick="posAdd('${i.id}',1)"><b>#${i.num}</b> ${esc(i.name)}</button>`).join('')}</div>
     </div>
@@ -918,12 +1144,13 @@ const V = {
       <div class="row" style="margin-bottom:10px">
         ${posPay === 'part' ? `<input class="f" style="flex:1;min-width:140px" type="number" step="0.01" min="0" inputmode="decimal" value="${esc(posPaid)}" oninput="posPaid=this.value;posOwing()" placeholder="Amount paid now ($)">` : ''}
         ${posPay !== 'later' ? `<select class="f" onchange="posAcct=this.value"><option value="cash" ${posAcct === 'cash' ? 'selected' : ''}>Paid cash</option><option value="bank" ${posAcct === 'bank' ? 'selected' : ''}>Paid to bank</option></select>` : ''}</div>
+      ${posPay !== 'full' ? `<label class="pf" style="margin-bottom:10px"><span>Due date for the amount owing (optional)</span><input class="f" type="date" value="${esc(posDue)}" oninput="posDue=this.value"></label>` : ''}
       ${posPay !== 'full' ? `<div class="note" id="posOwe">${posPay === 'later' ? cur(total) : cur(round(total - Math.min(round(parseFloat(posPaid) || 0), total)))} will be added to Debts → Owed to me.${posCust.trim() ? '' : ' Customer name needed.'}</div>` : ''}
       ${S.set.gst ? `<label class="chk"><input type="checkbox" ${posGst ? 'checked' : ''} onchange="posGst=this.checked"> Prices include GST (${S.set.gstRate}%)</label>` : ''}
       <div class="row"><button class="btn in" style="flex:1" onclick="posDone()">Complete sale · ${cur(total)}</button><button class="btn sec" onclick="posClear()">Clear</button></div>
       <p class="mute">Tip: tap a line to change its price for this sale.</p>`
       : '<div class="card empty">Type an item number and how many, or tap an item above.</div>'}
-    <div class="row between" style="margin-top:22px"><h3 style="margin:0">Today's sales (${todays.length})${showNums ? ' · ' + cur(sum(todays, t => t.saleAmt ?? t.amount)) : ''}</h3>${eye()}</div>
+    <div class="row between" style="margin-top:22px"><h3 style="margin:0">Today's sales (${todays.length})${showNums ? ' · ' + cur(sum(todays, t => t.saleAmt ?? t.amount)) : ''}</h3><div class="row"><button class="btn sec sm" onclick="customersSheet()">👥 Customers</button>${eye()}</div></div>
     <div class="list" style="margin-top:8px">${todays.length ? todays.map(txRow).join('') : '<div class="empty">No sales yet today.</div>'}</div>`;
   },
   money() {
@@ -938,10 +1165,16 @@ const V = {
     let body;
     if (moneyView === 'list') body = `<div class="list">${list.length ? list.map(txRow).join('') : '<div class="empty">No entries for this period.</div>'}</div><p class="mute">Tip: tap an entry to change it.</p>`;
     else {
-      const gc = sum(ins, t => t.gst), gp = sum(outs, t => t.gst);
+      const gc = sum(ins, t => t.gst), gp = sum(outs, t => t.gst), units = {}, prof = {};
+      ins.filter(t => t.cogs !== undefined).forEach(t => {
+        const it = t.itemId && S.items.find(i => i.id === t.itemId), k = it ? it.name : String(t.note || 'Other').replace(/^Sold \d+ × /, '');
+        units[k] = (units[k] || 0) + (t.qty > 0 ? t.qty : 0); prof[k] = (prof[k] || 0) + (t.saleAmt ?? t.amount) - (t.gst || 0) - t.cogs;
+      });
       body = `<h3>Where the money went</h3><div class="card">${bars(groupBy(outs, t => t.cat), 'var(--red)')}</div>
       <h3>Where it came from</h3><div class="card">${bars(groupBy(ins, t => t.cat), 'var(--green)')}</div>
       <h3>Customers</h3><div class="card">${bars(groupBy(ins.filter(t => t.cust), t => t.cust), 'var(--accent)')}</div>
+      <h3>Best sellers</h3><div class="card">${bars(Object.entries(units).filter(e => e[1] > 0).sort((a, b) => b[1] - a[1]), 'var(--accent)', v => v + ' sold', true)}</div>
+      <h3>Profit by product</h3><div class="card">${bars(Object.entries(prof).map(e => [e[0], round(e[1])]).sort((a, b) => b[1] - a[1]), 'var(--green)')}</div>
       ${S.set.gst ? `<h3>GST</h3><div class="grid">
         <div class="card"><div class="lbl">Collected on sales</div><div class="big">${fmt(gc)}</div></div>
         <div class="card"><div class="lbl">Paid on purchases</div><div class="big">${fmt(gp)}</div></div>
@@ -964,7 +1197,7 @@ const V = {
   stock() {
     const items = [...S.items].sort((a, b) => a.name.localeCompare(b.name));
     return `<h2>Stock</h2>
-    <div class="row bar"><button class="btn" onclick="editItem()">+ Add product</button>${eye()}</div>
+    <div class="row bar"><button class="btn" onclick="editItem()">+ Add product</button>${items.length ? '<button class="btn sec" onclick="printLabels()">🏷 Print barcode labels</button>' : ''}${eye()}</div>
     ${items.length ? items.map(i => { const isLow = i.low > 0 && i.qty <= i.low; return `<div class="card prod ${isLow ? 'low' : ''}">
       <div class="top"><div><div class="t" style="font-weight:700;font-size:17px"><span class="mute">#${i.num}</span> ${esc(i.name)}</div>
         ${isLow ? '<div class="neg" style="font-weight:700;font-size:14px">⚠️ Low – time to restock</div>' : ''}
@@ -972,7 +1205,7 @@ const V = {
         ${i.low > 0 ? `<div class="mute">Alert at ${i.low} or fewer</div>` : ''}</div>
         <div><div class="qty ${i.qty <= 0 ? 'neg' : ''}">${i.qty}</div><div class="mute" style="text-align:right">in stock</div></div></div>
       <div class="row" style="margin-top:12px"><button class="btn sm in" onclick="sell('${i.id}')">Sold</button><button class="btn sm" onclick="restock('${i.id}')">Restock</button>
-        <button class="btn sm sec" onclick="editItem('${i.id}')">Edit</button><button class="btn sm sec" onclick="delItem('${i.id}')">Delete</button></div>
+        <button class="btn sm sec" onclick="barcodeSheet('${i.id}')">Barcode</button><button class="btn sm sec" onclick="editItem('${i.id}')">Edit</button><button class="btn sm sec" onclick="delItem('${i.id}')">Delete</button></div>
     </div>`; }).join('') : '<div class="card empty">No products yet. Tap “+ Add product”.</div>'}`;
   },
   debts() {
@@ -980,13 +1213,14 @@ const V = {
     const card = d => `<div class="card prod">
       <div class="top"><div><div class="t" style="font-weight:700;font-size:17px">${esc(d.name)}</div>
         <div class="mute">${d.dir === 'owe' ? 'I owe them' : 'They owe me'} · started ${niceDate(d.date)}${d.note ? ' · ' + esc(d.note) : ''}</div>
+        ${d.due && bal(d) > 0 ? `<div class="${overdue(d) ? 'neg' : 'mute'}" style="font-size:14px${overdue(d) ? ';font-weight:700' : ''}">${overdue(d) ? '⚠️ Overdue since ' : 'Due '}${niceDate(d.due)}</div>` : ''}
         <div class="mute">Original ${fmt(d.amount)} · paid ${fmt(paid(d))}${(d.payments || []).length ? ` in ${d.payments.length} payment${d.payments.length > 1 ? 's' : ''}` : ''}</div></div>
         <div><div class="amt big ${bal(d) > 0 ? (d.dir === 'owe' ? 'neg' : 'pos') : ''}">${bal(d) > 0 ? fmt(bal(d)) : 'Paid ✓'}</div>${bal(d) > 0 ? '<div class="mute" style="text-align:right">left</div>' : ''}</div></div>
       <div class="row" style="margin-top:12px">${bal(d) > 0 ? `<button class="btn sm" onclick="payDebt('${d.id}')">Add payment</button>` : ''}
         <button class="btn sm sec" onclick="editDebt('${d.id}')">Edit</button><button class="btn sm sec" onclick="delDebt('${d.id}')">Delete</button></div></div>`;
     const owe = open.filter(d => d.dir === 'owe'), owed = open.filter(d => d.dir === 'owed');
     return `<h2>Debts</h2>
-    <div class="row bar"><button class="btn" onclick="editDebt()">+ Add a debt</button>${eye()}</div>
+    <div class="row bar"><button class="btn" onclick="editDebt()">+ Add a debt</button><button class="btn sec" onclick="customersSheet()">👥 Customers</button>${eye()}</div>
     <h3>I owe (${fmt(sum(owe, bal))})</h3>${owe.length ? owe.map(card).join('') : '<div class="mute">Nothing owed. 👍</div>'}
     <h3>Owed to me (${fmt(sum(owed, bal))})</h3>${owed.length ? owed.map(card).join('') : '<div class="mute">Nobody owes you right now.</div>'}
     ${closed.length ? `<h3>Paid off</h3>${closed.map(card).join('')}` : ''}`;
@@ -1002,7 +1236,9 @@ const V = {
       <div class="row"><button class="btn" onclick="backup()">💾 Back up now</button><button class="btn" onclick="shareBackup()">📤 Send backup</button><button class="btn sec" onclick="restore()">Restore</button></div>
       <p class="mute">“Send backup” opens your phone's share menu (Quick Share, email, etc.). ${SEC ? 'Backups are locked 🔒: they can only be opened with the PIN that was set when they were made.' : 'Backups are not locked, so only send them to yourself or someone you trust. Set a PIN below to lock them.'}</p>
       ${SEC ? '<p><button class="btn sec sm" onclick="backup(false,true)">Save an unlocked safety copy</button></p>' : ''}
-      <label class="chk"><input type="checkbox" ${S.auto !== false ? 'checked' : ''} onchange="S.auto=this.checked;save()"> Auto backup: save a backup file to Downloads the first time I change something each day</label></div>
+      <label class="chk"><input type="checkbox" ${S.auto !== false ? 'checked' : ''} onchange="S.auto=this.checked;save()"> Auto backup: save a backup file to Downloads the first time I change something each day</label>
+      <label class="chk"><input type="checkbox" ${S.offRemind !== false ? 'checked' : ''} onchange="S.offRemind=this.checked;save()"> Remind me every 2 weeks to send a backup off this phone</label>
+      <p class="mute">Last sent off this phone: ${S.lastSent ? niceDate(S.lastSent) : 'never'} · <a href="#" onclick="event.preventDefault();S.lastSent=today();S.offSnooze=null;save();render()">I copied one off myself</a></p></div>
     <div class="card" style="margin-bottom:12px"><b>PIN lock</b>
       <p class="mute">${SEC ? 'PIN is ON 🔒. Your data and backups are encrypted. StockPile asks for the PIN when opened, and again after a minute away.' : LEGACY ? 'PIN is ON. StockPile asks for it when opened.' : 'Ask for a PIN before anything is shown' + (CAN ? ', and encrypt your data and backups with it.' : '.')}</p>
       <div class="row"><button class="btn" onclick="setPin()">${SEC || LEGACY ? 'Change PIN' : 'Set a PIN'}</button>${SEC || LEGACY ? '<button class="btn sec" onclick="removePin()">Remove PIN</button><button class="btn sec" onclick="lockNow()">🔒 Lock now</button>' : ''}</div>
@@ -1020,7 +1256,8 @@ const V = {
     <div class="card" style="margin-bottom:12px"><b>Open in Excel</b>
       <p class="mute">Download your lists as files that Excel or Google Sheets can open.</p>
       <div class="row"><button class="btn sec" onclick="exportMoney()">Money list (.csv)</button><button class="btn sec" onclick="exportStock()">Stock list (.csv)</button></div></div>
-    <div class="card"><b>Start over</b><p class="mute">Erases everything in the tracker.</p><button class="btn out" onclick="wipe()">Erase all data</button></div>`;
+    <div class="card"><b>Start over</b><p class="mute">Erases everything in the tracker.</p><button class="btn out" onclick="wipe()">Erase all data</button></div>
+    <p class="mute" style="text-align:center;margin-top:18px">StockPile version ${VERSION}</p>`;
   }
 };
 function render() {
