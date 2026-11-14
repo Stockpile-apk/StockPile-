@@ -62,6 +62,7 @@ select.f,input.f{padding:8px;border-radius:8px;border:1px solid var(--line);font
 .chip{border:1px solid var(--line);background:#f9fafb;border-radius:999px;padding:8px 12px;font-size:14px;color:var(--ink);cursor:pointer}
 .chip.out0{opacity:.5}
 .note.ok{background:#ecfdf5;border-color:#a7f3d0;font-weight:600}
+.pk{width:24px;height:24px;flex:none}
 .qb{border:1px solid var(--line);background:#fff;border-radius:8px;width:36px;height:36px;font-size:20px;cursor:pointer}
 .note{background:#fffbeb;border:1px solid #fde68a;border-radius:10px;padding:10px 12px;font-size:14px;margin-bottom:12px}
 #lock{position:fixed;inset:0;background:var(--ink);color:#fff;z-index:50;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:24px;text-align:center}
@@ -104,7 +105,7 @@ select.f,input.f{padding:8px;border-radius:8px;border:1px solid var(--line);font
 
 <script>
 const KEY0 = 'money_inventory_tracker_v1', PKEY = 'stockpile_profiles';
-const VERSION = 8;
+const VERSION = 9;
 const fresh = () => ({ tx: [], items: [], debts: [], lastBackup: null, dirty: 0, auto: true, offRemind: true, lastSent: null, offSnooze: null, set: { gst: false, gstRate: 5 } });
 const defaultP = () => ({ list: [{ id: 'default', name: 'My business' }], current: 'default' });
 const CAN = !!(globalThis.crypto && crypto.subtle);
@@ -200,19 +201,20 @@ function sanitizeP() {
   if (!P.list.some(p => p.id === P.current)) P.current = P.list[0].id;
 }
 
-document.querySelectorAll('#nav button').forEach(b => b.onclick = () => { tab = b.dataset.t; posMsg = ''; render(); window.scrollTo(0, 0); });
+document.querySelectorAll('#nav button').forEach(b => b.onclick = () => { tab = b.dataset.t; posMsg = ''; selMode = false; sel.clear(); render(); window.scrollTo(0, 0); });
 
 /* ---------- generic form popup ---------- */
 function form(title, fields, onSave, extra = '', onDelete = null) {
   fields = fields.filter(Boolean);
   const m = $('#modal');
   m.innerHTML = `<div class="sheet"><div class="row between" style="margin-bottom:8px"><h2 style="margin:0">${esc(title)}</h2><button class="x" id="fX" aria-label="Close" style="font-size:24px">✕</button></div>${extra}${fields.map(fieldHTML).join('')}
-    <div class="row between" style="margin-top:16px"><div>${onDelete ? '<button class="btn out" id="fDel">Delete</button>' : ''}</div>
+    <div class="row between" style="margin-top:16px"><div class="row">${onDelete ? '<button class="btn out" id="fDel">Delete</button>' : ''}<button class="btn sec sm" id="fClear">Clear all</button></div>
       <div class="row"><button class="btn sec" id="fCancel">Cancel</button><button class="btn" id="fSave">Save</button></div></div></div>`;
   m.hidden = false;
   const first = m.querySelector('input:not([type=checkbox]),select'); if (first && fields[0].t !== 'select') setTimeout(() => first.focus(), 50);
   $('#fCancel').onclick = closeForm; $('#fX').onclick = closeForm;
   if (onDelete) $('#fDel').onclick = () => { closeForm(); onDelete(); };
+  $('#fClear').onclick = () => { fields.forEach(f => { if (f.t !== 'select' && f.t !== 'check') { const el = document.getElementById('f_' + f.k); if (el) { el.value = ''; el.classList.remove('bad'); } } }); };
   m.onclick = e => { if (e.target === m) closeForm(); };
   $('#fSave').onclick = () => {
     const v = {};
@@ -292,6 +294,22 @@ function delTx(id) {
   const debt = t.sale && !S.tx.some(x => x.sale === t.sale) && S.debts.find(d => d.sale === t.sale);
   if (debt && confirm(`This sale left ${cur(Math.max(bal(debt), 0))} owing from ${debt.name}. Remove that from Debts too?`)) S.debts = S.debts.filter(d => d !== debt);
   commit(); render();
+}
+
+/* ---------- select several entries and delete them together ---------- */
+let selMode = false, sel = new Set(), listIds = [];
+function togSel(id) { if (sel.has(id)) sel.delete(id); else sel.add(id); render(); }
+function selToggleMode() { selMode = !selMode; sel.clear(); render(); }
+function selAll() { if (listIds.every(id => sel.has(id))) sel.clear(); else listIds.forEach(id => sel.add(id)); render(); }
+function delSelected() {
+  const list = S.tx.filter(t => sel.has(t.id)); if (!list.length) return;
+  if (!confirm(`Delete ${list.length} ${list.length === 1 ? 'entry' : 'entries'}?`)) return;
+  const sold = list.filter(t => t.itemId && t.qty > 0 && S.items.some(i => i.id === t.itemId));
+  if (sold.length && confirm(`${sold.length} of these ${sold.length === 1 ? 'is a sale' : 'are sales'}. Put the sold items back in stock?`)) sold.forEach(t => { S.items.find(i => i.id === t.itemId).qty += t.qty; });
+  S.tx = S.tx.filter(t => !sel.has(t.id));
+  const gone = S.debts.filter(d => d.sale && list.some(t => t.sale === d.sale) && !S.tx.some(t => t.sale === d.sale));
+  if (gone.length && confirm(`${gone.length === 1 ? 'One of the deleted sales still has an amount' : gone.length + ' of the deleted sales still have amounts'} owing in Debts. Remove ${gone.length === 1 ? 'it' : 'them'} from Debts too?`)) S.debts = S.debts.filter(d => !gone.includes(d));
+  sel.clear(); selMode = false; commit(); render();
 }
 
 /* ---------- inventory ---------- */
@@ -951,7 +969,7 @@ function profiles() {
   m.hidden = false;
   m.onclick = e => { if (e.target === m) closeForm(); };
 }
-function resetView() { tab = 'home'; moneyFilter = 'month'; moneyView = 'list'; showNums = false; cart = []; posCust = ''; posMsg = ''; posPay = 'full'; posPaid = ''; posDue = ''; lastSale = ''; }
+function resetView() { selMode = false; sel.clear(); tab = 'home'; moneyFilter = 'month'; moneyView = 'list'; showNums = false; cart = []; posCust = ''; posMsg = ''; posPay = 'full'; posPaid = ''; posDue = ''; lastSale = ''; }
 async function switchProfile(id) { save(); await saveQ; P.current = id; await loadProfile(); save(); resetView(); closeForm(); render(); window.scrollTo(0, 0); }
 function addProfile() {
   form('Add business', [{ k: 'name', l: 'Business name', req: 1 }], v => {
@@ -1060,12 +1078,13 @@ function wipe() {
 
 /* ---------- views ---------- */
 function txRow(t) {
-  if (t.type === 'move') return `<div class="it"><div class="main" onclick="editTx('${t.id}')"><div class="t">${t.from === 'cash' ? 'Moved Cash → Bank' : 'Moved Bank → Cash'}</div>
+  const pick = selMode ? `<input type="checkbox" class="pk" ${sel.has(t.id) ? 'checked' : ''} onclick="event.stopPropagation();togSel('${t.id}')">` : '', tap = selMode ? `togSel('${t.id}')` : `editTx('${t.id}')`;
+  if (t.type === 'move') return `<div class="it">${pick}<div class="main" onclick="${tap}"><div class="t">${t.from === 'cash' ? 'Moved Cash → Bank' : 'Moved Bank → Cash'}</div>
     <div class="mute">${niceDate(t.date)}${t.note ? ' · ' + esc(t.note) : ''}</div></div>
     <div class="amt mute">⇄ ${fmt(t.amount)}</div><button class="x" title="Delete" onclick="delTx('${t.id}')">×</button></div>`;
   const part = t.saleAmt !== undefined && t.saleAmt !== t.amount;
   const bits = [niceDate(t.date), t.note && t.cat ? esc(t.cat) : '', t.cust ? esc(t.cust) : '', part ? `sale ${fmt(t.saleAmt)}, ${t.amount > 0 ? 'part paid' : 'on account'}` : ACCT[acct(t)]].filter(Boolean).join(' · ');
-  return `<div class="it"><div class="main" onclick="editTx('${t.id}')"><div class="t">${esc(t.note || t.cat || (t.type === 'in' ? 'Money in' : 'Money out'))}</div>
+  return `<div class="it">${pick}<div class="main" onclick="${tap}"><div class="t">${esc(t.note || t.cat || (t.type === 'in' ? 'Money in' : 'Money out'))}</div>
     <div class="mute">${bits}</div></div>
     <div class="amt ${t.type === 'in' ? 'pos' : 'neg'}">${t.type === 'in' ? '+' : '−'}${fmt(t.amount)}</div>
     ${t.sale ? `<button class="x" title="Receipt" onclick="receipt('${t.sale}')">🧾</button>` : ''}<button class="x" title="Delete" onclick="delTx('${t.id}')">×</button></div>`;
@@ -1169,7 +1188,9 @@ const V = {
     const i = sum(ins, t => t.amount), o = sum(outs, t => t.amount);
     const label = ym => new Date(ym + '-15').toLocaleDateString('en-CA', { month: 'long', year: 'numeric' });
     let body;
-    if (moneyView === 'list') body = `<div class="list">${list.length ? list.map(txRow).join('') : '<div class="empty">No entries for this period.</div>'}</div><p class="mute">Tip: tap an entry to change it.</p>`;
+    listIds = list.map(t => t.id);
+    if (moneyView === 'list') body = `${selMode ? `<div class="note"><b>${sel.size} selected.</b> Tap entries to tick them.
+        <div class="row" style="margin-top:8px"><button class="btn sm out" onclick="delSelected()">Delete selected</button><button class="btn sm sec" onclick="selAll()">${list.length && list.every(t => sel.has(t.id)) ? 'Untick all' : 'Tick all'}</button><button class="btn sm sec" onclick="selToggleMode()">Done</button></div></div>` : ''}<div class="list">${list.length ? list.map(txRow).join('') : '<div class="empty">No entries for this period.</div>'}</div><p class="mute">Tip: tap an entry to change it.</p>`;
     else {
       const gc = sum(ins, t => t.gst), gp = sum(outs, t => t.gst), units = {}, prof = {};
       ins.filter(t => t.cogs !== undefined).forEach(t => {
@@ -1193,7 +1214,7 @@ const V = {
       <option value="all" ${moneyFilter === 'all' ? 'selected' : ''}>Everything</option>
       ${months.filter(m => m !== thisMonth()).map(m => `<option value="${m}" ${moneyFilter === m ? 'selected' : ''}>${label(m)}</option>`).join('')}
     </select>
-    <button class="btn sec sm" onclick="moneyView=moneyView==='list'?'break':'list';render()">${moneyView === 'list' ? '📊 Breakdown' : '📋 Entries'}</button>${eye()}</div>
+    ${moneyView === 'list' && !selMode && list.length ? '<button class="btn sec sm" onclick="selToggleMode()">☑ Select</button>' : ''}<button class="btn sec sm" onclick="selMode=false;sel.clear();moneyView=moneyView==='list'?'break':'list';render()">${moneyView === 'list' ? '📊 Breakdown' : '📋 Entries'}</button>${eye()}</div>
     <div class="grid bar">
       <div class="card"><div class="lbl">In</div><div class="big pos">${fmt(i)}</div></div>
       <div class="card"><div class="lbl">Out</div><div class="big neg">${fmt(o)}</div></div>

@@ -194,6 +194,19 @@ addTx('out'); ok(!/id="fDel"/.test($('#modal').innerHTML) && /id="fX"/.test($('#
 editTx('e1'); ok(/id="fDel"/.test($('#modal').innerHTML),'editing an entry offers Delete'); $('#fDel').onclick(); ok(S.tx.length===0,'Delete inside the form removes the entry');
 editItem('i1'); ok(/id="fDel"/.test($('#modal').innerHTML),'editing a product offers Delete'); $('#fDel').onclick(); ok(S.items.length===0,'Delete inside the form removes the product');
 editDebt('d1'); $('#fDel').onclick(); ok(S.debts.length===0,'Delete inside the form removes the debt');
+
+// version 9: clear a whole form; select several entries and delete together
+addTx('in'); ok(/id="fClear"/.test($('#modal').innerHTML) && typeof $('#fClear').onclick==='function','forms have a Clear all button'); closeForm();
+S=clean({tx:[],debts:[],items:[{id:'a',name:'Widget',cost:5,price:10,qty:20,num:1}]});
+recordSale([{it:S.items[0],qty:2,price:10}],{cust:'Hal',pay:'later'}); recordSale([{it:S.items[0],qty:3,price:10}],{pay:'full'});
+S.tx.push({id:'g1',type:'out',amount:7,cat:'Gas',acct:'cash',date:today()},{id:'g2',type:'out',amount:9,cat:'Food',acct:'cash',date:today()});
+tab='money'; moneyView='list'; moneyFilter='all'; selToggleMode(); let mv2=V.money();
+ok(selMode && /class="pk"/.test(mv2) && /0 selected/.test(mv2),'Select mode shows tick boxes on entries');
+togSel('g1'); togSel(S.tx[0].id); ok(sel.size===2 && /2 selected/.test(V.money()),'tapping entries ticks them');
+selAll(); ok(sel.size===4,'Tick all selects everything shown'); selAll(); ok(sel.size===0,'Untick all clears the ticks');
+togSel('g1'); togSel(S.tx[0].id); togSel(S.tx[1].id); delSelected();
+ok(S.tx.length===1 && S.tx[0].id==='g2' && S.items[0].qty===20 && S.debts.length===0 && !selMode,'Delete selected removes them together, restocks sales and clears their debt');
+ok(!/class="pk"/.test(V.money()),'tick boxes go away afterwards'); allTabs(); tab='home'; moneyFilter='month';
 })().catch(e=>{console.log('CRASH',e);process.exitCode=1});
 `;
 const html=fs.readFileSync(require('path').join(__dirname,'..','index.html'),'utf8');
