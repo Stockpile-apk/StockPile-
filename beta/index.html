@@ -22,6 +22,7 @@ main{max-width:900px;margin:0 auto;padding:16px 14px 60px}
 h2{font-size:20px;margin:6px 0 12px}
 h3{font-size:16px;margin:22px 0 8px;color:var(--mute);font-weight:600}
 .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+.card[hidden]{display:none}
 .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px}
 .lbl{font-size:13px;color:var(--mute)}
 .big{font-size:23px;font-weight:700;margin-top:4px}
@@ -73,6 +74,7 @@ select.f,input.f{padding:8px;border-radius:8px;border:1px solid var(--line);font
 #printArea{display:none}
 .beta{background:#f59e0b;color:#1d2433;border-radius:6px;padding:2px 6px;font-size:11px;margin-left:6px;vertical-align:middle}
 nav button[hidden]{display:none}
+body.setup nav,body.setup header select{display:none}
 .th{width:48px;height:48px;border-radius:8px;object-fit:cover;background:#e5e7eb;flex:none;cursor:pointer}
 .strip{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:8px 0}
 .cats{display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:8px}
@@ -126,7 +128,7 @@ body.dark .sheet .rc{color:var(--ink)}body.dark .sheet .rcs{color:var(--mute)}bo
 // The test copy (served from /beta/) keeps its data under separate names, so it can never touch the real app's data.
 const BETA = /\/beta\//.test((typeof location !== 'undefined' && location.pathname) || '');
 const KEY0 = (BETA ? 'beta_' : '') + 'money_inventory_tracker_v1', PKEY = (BETA ? 'beta_' : '') + 'stockpile_profiles';
-const VERSION = '0.9.0';
+const VERSION = '0.9.1';
 const okDark = v => v === true || v === false ? v : undefined;
 const fresh = () => ({ tx: [], items: [], debts: [], lastBackup: null, dirty: 0, auto: true, offRemind: true, lastSent: null, offSnooze: null, contacts: [], adj: [], rec: [], budgets: {}, staff: [], set: { gst: false, gstRate: 5 } });
 const defaultP = () => ({ list: [{ id: 'default', name: 'My business' }], current: 'default' });
@@ -142,12 +144,14 @@ const fileBase = () => 'stockpile-' + (profName().toLowerCase().replace(/[^a-z0-
 // Every set of books has its own key. Ordinary books keep theirs inside the master-encrypted header (KEYS),
 // so the owner's PIN opens them. Books with a private PIN keep theirs wrapped by that PIN only (SEC.priv).
 // A staff PIN wraps the key of one business only (SEC.staff), so staff can never decrypt any other books.
+let firstRun = false;
 let KR = new Map(), KEYS = {}, staff = null, staffMode = false, saveGen = 0, dataReady = true;
 const isPriv = pid => !!(SEC && SEC.priv && SEC.priv[pid]);
 const needKey = () => !!SEC && !!DK && !staffMode && isPriv(P.current) && !KR.has(P.current);
 function newKey(pid) { const raw = rnd(32); KEYS[pid] = b64(raw); KR.set(pid, importDK(raw)); }
 const rawOf = async pid => KEYS[pid] || b64(await crypto.subtle.exportKey('raw', await KR.get(pid)));
-const headerBody = () => JSON.stringify({ list: P.list, current: P.current, dark: P.dark, keys: KEYS });
+const headerBody = () => JSON.stringify({ list: P.list, current: P.current, dark: P.dark, biz: P.biz, keys: KEYS });
+const bizOn = () => P.biz !== false;
 const can = perm => !staffMode || !!(staff && staff.perms && staff.perms[perm]);
 async function loadProfile() {
   S = fresh(); loadFailed = false; dataReady = false;   // until the books are actually loaded, nothing may be saved over them
@@ -170,7 +174,7 @@ function save() {
   if (loadFailed) return;
   const pid = P.current, sText = JSON.stringify(S);
   if (!SEC) {
-    try { localStorage.setItem(keyFor(pid), sText); localStorage.setItem(PKEY, JSON.stringify({ list: P.list, current: P.current, dark: P.dark, pin: LEGACY })); } catch (e) { storageOK = false; }
+    try { localStorage.setItem(keyFor(pid), sText); localStorage.setItem(PKEY, JSON.stringify({ list: P.list, current: P.current, dark: P.dark, biz: P.biz, pin: LEGACY })); } catch (e) { storageOK = false; }
     return;
   }
   const pk = dataReady ? KR.get(pid) : null, mk = DK, sec = SEC, body = mk && !staffMode ? headerBody() : null, gen = saveGen;
@@ -900,7 +904,7 @@ function yearSummary(y) {
 }
 function yearRows(s) {
   return [['StockPile year summary', profName(), s.y], [], ['Money in (received)', s.moneyIn], ...s.inBy.map(e => ['  ' + e[0], round(e[1])]), [], ['Money out (paid)', s.moneyOut], ...s.outBy.map(e => ['  ' + e[0], round(e[1])]), [],
-    ['Sales value (after returns)', s.salesValue], ['Cost of the goods sold', s.cogs], ['Profit on sales', s.gross], ['Stock written off (at cost)', s.writeOff],
+    ...(isPersonal() ? [['Left over', round(s.moneyIn - s.moneyOut)]] : [['Sales value (after returns)', s.salesValue], ['Cost of the goods sold', s.cogs], ['Profit on sales', s.gross], ['Stock written off (at cost)', s.writeOff]]),
     ...(S.set.gst ? [[], ['GST collected', s.gstIn], ['GST paid on purchases', s.gstOut], ['GST difference', round(s.gstIn - s.gstOut)]] : [])];
 }
 function yearSheet(y) {
@@ -912,7 +916,7 @@ function yearSheet(y) {
     <div id="yearBody" class="rc" style="margin-top:10px"><div class="rcs">${esc(profName())} · ${y}</div>
       <h3>Money in</h3>${row('Total received', s.moneyIn, 1)}${s.inBy.map(e => row(e[0], e[1])).join('')}
       <h3>Money out</h3>${row('Total paid', s.moneyOut, 1)}${s.outBy.map(e => row(e[0], e[1])).join('')}
-      <h3>Sales</h3>${row('Sales value (after returns)', s.salesValue)}${row('Cost of the goods sold', s.cogs)}${row('Profit on sales', s.gross, 1)}${row('Stock written off (at cost)', s.writeOff)}
+      ${isPersonal() ? row('Left over', round(s.moneyIn - s.moneyOut), 1) : `<h3>Sales</h3>${row('Sales value (after returns)', s.salesValue)}${row('Cost of the goods sold', s.cogs)}${row('Profit on sales', s.gross, 1)}${row('Stock written off (at cost)', s.writeOff)}`}
       ${S.set.gst ? `<h3>GST</h3>${row('Collected', s.gstIn)}${row('Paid on purchases', s.gstOut)}${row('Difference', round(s.gstIn - s.gstOut), 1)}` : ''}</div>
     <p class="mute">A working summary from your entries, not a tax return. Money in and out are counted when received or paid.</p>
     <div class="row"><button class="btn" onclick="download('stockpile-year-${y}.csv', csv(yearRows(yearSummary('${y}'))), 'text/csv')">Download (.csv)</button><button class="btn sec" onclick="printHTML(document.querySelector('#yearBody').outerHTML)">Print</button><button class="btn sec" onclick="closeForm()">Close</button></div></div>`;
@@ -1257,6 +1261,20 @@ const privCard = () => `<div class="card" style="text-align:center;padding:28px 
   <div class="row" style="justify-content:center;margin-top:16px"><button class="btn" onclick="privUnlockForm()">Enter PIN</button></div>
   <p class="mute" style="margin-top:14px">To open different books, use the drop-down at the top right.</p></div>`;
 
+/* ---------- first open: what is this for? ---------- */
+function chooseUse(kind) {
+  const home = { id: kind === 'both' ? uid() : 'default', name: 'My money', kind: 'personal' };
+  P = { list: kind === 'personal' ? [home] : kind === 'both' ? [{ id: 'default', name: 'My business' }, home] : [{ id: 'default', name: 'My business' }], current: 'default', biz: kind !== 'personal' };
+  S = fresh(); firstRun = false; resetView(); save(); render();
+}
+const setupCard = () => `<div class="card" style="text-align:center;padding:26px 16px;margin-top:10px"><div style="font-size:46px">📦</div>
+  <h2 style="margin:8px 0 4px">Welcome to StockPile</h2><div class="mute">Everything you enter stays on this phone. What would you like to keep track of?</div></div>
+  <div style="display:grid;gap:10px;margin-top:14px">
+    <button class="cat" style="flex-direction:row;justify-content:flex-start;gap:14px;padding:16px;font-size:16px;text-align:left" onclick="chooseUse('personal')"><span style="font-size:30px">🏠</span><div><b>My own money</b><div class="mute">Spending, bills, budgets and receipts</div></div></button>
+    <button class="cat" style="flex-direction:row;justify-content:flex-start;gap:14px;padding:16px;font-size:16px;text-align:left" onclick="chooseUse('business')"><span style="font-size:30px">🧾</span><div><b>A business</b><div class="mute">Sales, stock, customers and what’s owed</div></div></button>
+    <button class="cat" style="flex-direction:row;justify-content:flex-start;gap:14px;padding:16px;font-size:16px;text-align:left" onclick="chooseUse('both')"><span style="font-size:30px">🏠🧾</span><div><b>Both</b><div class="mute">Kept completely separate from each other</div></div></button>
+  </div><p class="mute" style="text-align:center;margin-top:16px">You can change this later under More.</p>`;
+
 /* ---------- debts ---------- */
 const paid = d => sum(d.payments || [], p => p.amount);
 const bal = d => round(d.amount - paid(d));
@@ -1349,7 +1367,7 @@ async function removeEnc(pin) {
 async function openWith(raw) {
   const key = await importDK(raw), stored = JSON.parse(localStorage.getItem(PKEY)), body = JSON.parse(await dec(key, stored.body));
   DK = key; staff = null; staffMode = false;
-  P = Object.assign(defaultP(), { list: body.list, current: body.current, dark: okDark(body.dark) }); sanitizeP();
+  P = Object.assign(defaultP(), { list: body.list, current: body.current, dark: okDark(body.dark), biz: body.biz !== false }); sanitizeP();
   KEYS = {}; KR = new Map();
   const ks = body.keys && typeof body.keys === 'object' ? body.keys : {}; let fresh1 = false;
   for (const p of P.list) {
@@ -1627,11 +1645,11 @@ function resetView() { selMode = false; sel.clear(); tab = 'home'; moneyFilter =
 async function switchProfile(id) { if (staffMode) return; save(); await saveQ; P.current = id; await loadProfile(); save(); resetView(); closeForm(); render(); window.scrollTo(0, 0); }
 function addProfile() {
   form('Add another set of books', [
-    { k: 'kind', l: 'What is it for?', t: 'select', v: 'business', o: [['business', 'A business'], ['personal', 'Personal or household money']] },
-    { k: 'name', l: 'Name', req: 1, ph: 'e.g. Home, or the business name' }
+    bizOn() ? { k: 'kind', l: 'What is it for?', t: 'select', v: 'business', o: [['business', 'A business'], ['personal', 'Personal or household money']] } : null,
+    { k: 'name', l: 'Name', req: 1, ph: bizOn() ? 'e.g. Home, or the business name' : 'e.g. Savings, Holiday fund, Joint account' }
   ], v => {
-    save(); const id = uid(); P.list.push({ id, name: v.name, ...(v.kind === 'personal' ? { kind: 'personal' } : {}) }); P.current = id; S = fresh(); resetView(); if (SEC) newKey(id);
-  }, '<div class="mute">Starts empty, with its own entries and backups. A personal one swaps the Sell and Stock tabs for spending categories, budgets and receipt photos.</div>');
+    save(); const id = uid(); P.list.push({ id, name: v.name, ...(v.kind === 'personal' || !bizOn() ? { kind: 'personal' } : {}) }); P.current = id; S = fresh(); resetView(); if (SEC) newKey(id);
+  }, `<div class="mute">Starts empty, with its own entries and backups.${bizOn() ? ' A personal one swaps the Sell and Stock tabs for spending categories, budgets and receipt photos.' : ''}</div>`);
 }
 function renameProfile(id) {
   const p = P.list.find(x => x.id === id); if (!p) return;
@@ -1945,7 +1963,9 @@ const V = {
     return `<h2>Backup &amp; settings</h2>
     <div class="card" style="margin-bottom:12px"><b>Your books</b>
       <p class="mute">Now showing: <b>${esc(profName())}</b>. Switch between them with the drop-down at the top right. Add business or personal books here.</p>
-      <button class="btn" onclick="profiles()">Add, rename or delete books</button></div>
+      <button class="btn" onclick="profiles()">Add, rename or delete books</button>
+      <label class="chk"><input type="checkbox" ${bizOn() ? 'checked' : ''} onchange="P.biz=this.checked;save();render()"> Show business features (selling, stock, customers, staff)</label>
+      ${!bizOn() && P.list.some(p => p.kind !== 'personal') ? '<p class="mute">You still have business books in your list. They keep working; this only stops new ones being offered.</p>' : ''}</div>
     <div class="card" style="margin-bottom:12px"><b>Back up “${esc(profName())}”</b>
       <p class="mute">Everything is saved inside this browser on this phone only. Nothing goes on the internet unless you share a backup yourself.</p>
       <p class="mute">Last backup: ${S.lastBackup ? niceDate(S.lastBackup) : 'never'}${S.dirty > 0 ? ` · ${S.dirty} change${S.dirty > 1 ? 's' : ''} since` : ''}</p>
@@ -1975,17 +1995,20 @@ const V = {
       ${(S.rec || []).length ? `<div class="list" style="margin-bottom:10px">${S.rec.map(r => `<div class="it"><div class="main" onclick="recurForm('${r.id}')"><div class="t">${esc(r.name)}</div><div class="mute">Day ${r.day} of each month · ${ACCT[r.acct]}</div></div><div class="amt">${fmt(r.amount)}</div></div>`).join('')}</div>` : ''}
       <button class="btn" onclick="recurForm()">+ Add recurring expense</button></div>
     <div class="card" style="margin-bottom:12px"><b>Year summary</b>
-      <p class="mute">Income, expenses and profit for a year, to print or download at tax time.</p>
+      <p class="mute">${isPersonal() ? 'Money in and out for a year, by category, to print or download.' : 'Income, expenses and profit for a year, to print or download at tax time.'}</p>
       <button class="btn" onclick="yearSheet()">Open year summary</button></div>
     <div class="card" style="margin-bottom:12px"><b>Appearance</b>
       <label class="chk"><input type="checkbox" ${isDark() ? 'checked' : ''} onchange="P.dark=this.checked;save();render()"> Dark mode</label></div>
-    <div class="card" style="margin-bottom:12px"><b>GST</b>
+    ${isPersonal() ? `<div class="card" style="margin-bottom:12px"><b>Budgets</b>
+      <p class="mute">Monthly limits for your spending categories. Progress shows on Home.</p>
+      <button class="btn" onclick="budgetsForm()">Set budgets</button></div>` : ''}
+    <div class="card" style="margin-bottom:12px" ${isPersonal() ? 'hidden' : ''}><b>GST</b>
       <label class="chk"><input type="checkbox" ${S.set.gst ? 'checked' : ''} onchange="S.set.gst=this.checked;save();render()"> Track GST</label>
       ${S.set.gst ? `<div class="row"><span class="mute">Rate %</span><input class="f" type="number" step="0.1" min="0" style="width:90px" value="${S.set.gstRate}" onchange="S.set.gstRate=parseFloat(this.value)||5;save()"></div>
       <p class="mute">Entries get an “Amount includes GST” tick box. Totals show under Ledger → Breakdown.</p>` : '<p class="mute">Off. Turn it on if you ever need it.</p>'}</div>
     <div class="card" style="margin-bottom:12px"><b>Open in Excel</b>
       <p class="mute">Download your lists as files that Excel or Google Sheets can open.</p>
-      <div class="row"><button class="btn sec" onclick="exportMoney()">Ledger (.csv)</button><button class="btn sec" onclick="exportStock()">Stock list (.csv)</button></div></div>
+      <div class="row"><button class="btn sec" onclick="exportMoney()">Ledger (.csv)</button>${isPersonal() ? '' : '<button class="btn sec" onclick="exportStock()">Stock list (.csv)</button>'}</div></div>
     <div class="card"><b>Start over</b><p class="mute">Erases everything in the tracker.</p><button class="btn out" onclick="wipe()">Erase all data</button></div>
     <p class="mute" style="text-align:center;margin-top:18px">StockPile version ${VERSION}</p>`;
   }
@@ -1997,7 +2020,8 @@ function render() {
   document.body.classList.toggle('dark', isDark()); document.body.classList.toggle('staff', staffMode);
   document.querySelectorAll('#nav button').forEach(b => { const t = b.dataset.t; b.hidden = staffMode ? !staffTabs().includes(t) : pers ? (t === 'sell' || t === 'stock') : t === 'receipts'; b.classList.toggle('on', t === tab); });
   $('#hdr').innerHTML = `<span>📦 StockPile${BETA ? ' <span class="beta">TEST COPY</span>' : ''}</span>` + (staffMode ? `<button onclick="lockNow()">🔒 ${esc(staff ? staff.who : 'Staff')} · Lock</button>` : `<select id="profSel" aria-label="Switch books" onchange="switchProfile(this.value)">${P.list.map(p => `<option value="${p.id}" ${p.id === P.current ? 'selected' : ''}>${isPriv(p.id) ? '🔒 ' : ''}${esc(p.name)}${p.kind === 'personal' ? ' (personal)' : ''}</option>`).join('')}</select>`);
-  $('#view').innerHTML = needKey() ? privCard() : V[tab]();
+  document.body.classList.toggle('setup', firstRun);
+  $('#view').innerHTML = firstRun ? setupCard() : needKey() ? privCard() : V[tab]();
   loadThumbs();
 }
 async function init() {
@@ -2005,9 +2029,10 @@ async function init() {
   try { raw = JSON.parse(localStorage.getItem(PKEY) || 'null'); } catch (e) { storageOK = false; }
   if (raw && raw.sec && raw.body) { SEC = raw.sec; render(); showLock(); return; }
   if (raw && typeof raw === 'object') {
-    P = Object.assign(defaultP(), { list: raw.list, current: raw.current, dark: okDark(raw.dark) });
+    P = Object.assign(defaultP(), { list: raw.list, current: raw.current, dark: okDark(raw.dark), biz: raw.biz !== false });
     if (typeof raw.pin === 'string' && /^[a-z0-9]{1,16}$/.test(raw.pin)) LEGACY = raw.pin;
   }
+  if (!raw) { let any = false; try { any = !!localStorage.getItem(KEY0); } catch (e) {} firstRun = !any; }
   sanitizeP(); await loadProfile(); render();
   if (LEGACY) showLock();
 }

@@ -17,7 +17,7 @@ const test=`
 ;(async()=>{
 const ok=(c,m)=>{ if(!c){ console.log('FAIL: '+m); process.exitCode=1; } else console.log('ok   '+m); };
 const allTabs=()=>{ for(const sn of [false,true]) for(const mv of ['list','break']){showNums=sn;moneyView=mv;for(const k in V){const h=V[k]();if(/undefined|NaN|\\[object/.test(h))throw new Error(k+' bad output');}} showNums=false; };
-await ready;
+await ready; firstRun=false;
 S.items.push({id:'a',name:'SecretWidget',cost:5,price:12,qty:3,low:5});
 S.tx.push({id:'t1',type:'in',amount:105,cat:'Sales',cust:'Bob',acct:'bank',gst:5,date:today(),cogs:40});
 save(); P.list[0].name='Hidden Biz';
@@ -470,6 +470,23 @@ ok(DK && S.tx[0].id==='o1' && SEC.v===2 && !SEC.staff && JSON.parse(store[KEY0])
 ok(memPhotos.get('oph').enc===2 && new Uint8Array((await photoLoad('oph')).buf).join()==='7,7,7','older photos are upgraded too');
 await switchProfile('p9'); ok(S.tx[0].id==='o2','every set of books survives the upgrade'); await lockNow(); $('#pinIn').value='old-pin'; await tryUnlock(); ok(S.tx[0].id==='o2' && isPersonal(),'and reopens normally afterwards');
 await removeEnc('old-pin'); allTabs(); tab='home';
+
+// ================= version 0.9.1: first open asks what the app is for =================
+await saveQ; saveGen++; KR=new Map(); KEYS={}; staff=null; staffMode=false; SEC=null;DK=null;LEGACY=null;S=fresh();P=defaultP();Object.keys(store).forEach(k=>delete store[k]);memPhotos.clear();
+await init(); ok(firstRun===true && /What would you like to keep track of/.test($('#view').innerHTML) && !/Welcome back/.test($('#view').innerHTML),'a brand-new install opens on the “what is this for” question');
+chooseUse('personal'); ok(!firstRun && isPersonal() && profName()==='My money' && P.list.length===1 && !bizOn() && JSON.parse(store[PKEY]).biz===false,'choosing personal sets up personal books only');
+tab='home'; showNums=false; render(); const pv1=$('#view').innerHTML+$('#hdr').innerHTML; ok(/Quick add/.test(pv1) && !/business|Sell|Stock/i.test(pv1.replace(/StockPile/g,'')),'nothing on the personal Home mentions business');
+const pm=V.more(); ok(!/Stock list|Manage staff/.test(pm) && /<b>GST<\\/b>/.test(pm) && /hidden><b>GST/.test(pm) && /<b>Budgets<\\/b>/.test(pm) && /Money in and out for a year/.test(pm),'personal More shows budgets, and no GST, stock or staff');
+addProfile(); ok(!/What is it for/.test($('#modal').innerHTML),'adding more books offers personal only'); F('name','Holiday fund'); SAVE(); ok(P.list.length===2 && P.list[1].kind==='personal' && isPersonal(),'extra personal books can be added');
+yearSheet(); ok(/Left over/.test($('#modal').innerHTML) && !/Profit on sales|Cost of the goods/.test($('#modal').innerHTML) && csv(yearRows(yearSummary(today().slice(0,4)))).includes('Left over'),'personal year summary has no sales or profit lines'); closeForm();
+P.biz=true; save(); addProfile(); ok(/What is it for/.test($('#modal').innerHTML) && /Show business features/.test(V.more()),'business features can be switched on later'); closeForm();
+await init(); ok(!firstRun && isPersonal() && P.list.length===2 && bizOn(),'the question is only asked once, and choices are remembered');
+await saveQ; saveGen++; SEC=null;DK=null;S=fresh();P=defaultP();Object.keys(store).forEach(k=>delete store[k]); await init(); chooseUse('both');
+ok(P.list.length===2 && !isPersonal() && P.list[1].kind==='personal' && bizOn() && profName()==='My business','choosing both sets up business and personal books');
+await saveQ; saveGen++; S=fresh();P=defaultP();Object.keys(store).forEach(k=>delete store[k]); await init(); chooseUse('business'); ok(P.list.length===1 && !isPersonal() && bizOn(),'choosing business sets up business books');
+await saveQ; saveGen++; S=fresh();P=defaultP();Object.keys(store).forEach(k=>delete store[k]); await init(); chooseUse('personal'); await enableEnc('first-pin'); await lockNow(); $('#pinIn').value='first-pin'; await tryUnlock();
+ok(isPersonal() && !bizOn() && !firstRun,'the personal-only choice survives a PIN and a lock'); await removeEnc('first-pin');
+store[KEY0]=JSON.stringify({tx:[],items:[],debts:[]}); delete store[PKEY]; await init(); ok(!firstRun,'someone who already has data is never asked'); allTabs(); tab='home';
 })().catch(e=>{console.log('CRASH',e);process.exitCode=1});
 `;
 const html=fs.readFileSync(process.argv[2]?require('path').resolve(process.argv[2]):require('path').join(__dirname,'..','beta','index.html'),'utf8');
