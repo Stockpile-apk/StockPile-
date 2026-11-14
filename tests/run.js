@@ -377,6 +377,14 @@ P.current='default'; S=fresh(); S.tx.push({id:'bz',type:'out',amount:5,cat:'Supp
 ok(!isPersonal() && /📎 Receipts/.test(V.money()) && /Customers/.test(V.debts()),'business books get a Receipts button and keep Customers'); moneyFilter='month';
 showNums=false; ok(/Welcome back/.test(V.home()) && !/Quick add/.test(V.home()),'business Home is unchanged');
 allTabs(); V.receipts(); tab='home';
+
+// version 11.2: switch books from a drop-down at the top
+SEC=null;DK=null;LEGACY=null;S=fresh();P=defaultP();Object.keys(store).forEach(k=>delete store[k]);
+P.list.push({id:'h2',name:'Home & <Family>',kind:'personal'}); S.tx.push({id:'biz1',type:'in',amount:5,cat:'Sales',acct:'cash',gst:0,date:today()}); save(); render();
+let hd=$('#hdr').innerHTML; ok(/<select id="profSel"/.test(hd) && /<option value="default" selected>My business<\\/option>/.test(hd) && /<option value="h2" >Home &amp; &lt;Family&gt; \\(personal\\)<\\/option>/.test(hd) && !/profiles\\(\\)/.test(hd),'the top bar is a drop-down listing every set of books');
+await switchProfile('h2'); ok(P.current==='h2' && isPersonal() && S.tx.length===0 && /<option value="h2" selected>/.test($('#hdr').innerHTML),'picking one from the drop-down switches to it');
+await switchProfile('default'); ok(S.tx.length===1 && /Add, rename or delete books/.test(V.more()),'adding and managing books lives under More');
+staffMode=true; render(); ok(!/<select/.test($('#hdr').innerHTML) && /Lock/.test($('#hdr').innerHTML),'staff mode shows Lock in place of the drop-down'); staffMode=false; tab='home'; render();
 })().catch(e=>{console.log('CRASH',e);process.exitCode=1});
 `;
 const html=fs.readFileSync(process.argv[2]?require('path').resolve(process.argv[2]):require('path').join(__dirname,'..','beta','index.html'),'utf8');

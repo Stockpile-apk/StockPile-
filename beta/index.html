@@ -13,6 +13,7 @@
 *{box-sizing:border-box}
 body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--ink);font-size:16px}
 header{background:var(--ink);color:#fff;padding:10px 16px;font-weight:700;font-size:18px;display:flex;justify-content:space-between;align-items:center;gap:10px}
+header select{background:#1d2433;color:#fff;border:1px solid #6b7280;border-radius:999px;padding:7px 10px;font-size:14px;max-width:58%;text-overflow:ellipsis}
 header button{background:none;border:1px solid #6b7280;color:#fff;border-radius:999px;padding:6px 12px;font-size:14px;max-width:55%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer}
 nav{display:flex;background:#fff;border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5}
 nav button{flex:1;padding:14px 1px;border:0;background:none;font-size:14px;color:var(--mute);border-bottom:3px solid transparent;cursor:pointer}
@@ -126,7 +127,7 @@ body.dark .sheet .rc{color:var(--ink)}body.dark .sheet .rcs{color:var(--mute)}bo
 // The test copy (served from /beta/) keeps its data under separate names, so it can never touch the real app's data.
 const BETA = /\/beta\//.test((typeof location !== 'undefined' && location.pathname) || '');
 const KEY0 = (BETA ? 'beta_' : '') + 'money_inventory_tracker_v1', PKEY = (BETA ? 'beta_' : '') + 'stockpile_profiles';
-const VERSION = '11.1';
+const VERSION = '11.2';
 const okDark = v => v === true || v === false ? v : undefined;
 const fresh = () => ({ tx: [], items: [], debts: [], lastBackup: null, dirty: 0, auto: true, offRemind: true, lastSent: null, offSnooze: null, contacts: [], adj: [], rec: [], budgets: {}, set: { gst: false, gstRate: 5 } });
 const defaultP = () => ({ list: [{ id: 'default', name: 'My business' }], current: 'default' });
@@ -1471,7 +1472,7 @@ $('#bioGo').onclick = bioUnlock;
 /* ---------- profiles (businesses) ---------- */
 function profiles() {
   const m = $('#modal');
-  m.innerHTML = `<div class="sheet"><h2>Your books</h2><div class="mute">Each one keeps its own entries. Tap a name to switch.</div>
+  m.innerHTML = `<div class="sheet"><h2>Your books</h2><div class="mute">Each one keeps its own entries. Add, rename or delete them here.</div>
     <div class="list" style="margin:12px 0">${P.list.map(p => `<div class="it"><div class="main" onclick="switchProfile('${p.id}')"><div class="t">${esc(p.name)}${p.kind === 'personal' ? ' <span class="mute">(personal)</span>' : ''}${p.id === P.current ? ' ✓' : ''}</div></div>
       <button class="btn sm sec" onclick="renameProfile('${p.id}')">Rename</button>${P.list.length > 1 ? `<button class="x" title="Delete" onclick="delProfile('${p.id}')">×</button>` : ''}</div>`).join('')}</div>
     <div class="row end"><button class="btn sec" onclick="closeForm()">Close</button><button class="btn" onclick="addProfile()">+ Add another</button></div></div>`;
@@ -1786,8 +1787,8 @@ const V = {
   more() {
     return `<h2>Backup &amp; settings</h2>
     <div class="card" style="margin-bottom:12px"><b>Your books</b>
-      <p class="mute">Now showing: <b>${esc(profName())}</b>. Keep separate books for each business.</p>
-      <button class="btn" onclick="profiles()">Switch, or add business or personal books</button></div>
+      <p class="mute">Now showing: <b>${esc(profName())}</b>. Switch between them with the drop-down at the top right. Add business or personal books here.</p>
+      <button class="btn" onclick="profiles()">Add, rename or delete books</button></div>
     <div class="card" style="margin-bottom:12px"><b>Back up “${esc(profName())}”</b>
       <p class="mute">Everything is saved inside this browser on this phone only. Nothing goes on the internet unless you share a backup yourself.</p>
       <p class="mute">Last backup: ${S.lastBackup ? niceDate(S.lastBackup) : 'never'}${S.dirty > 0 ? ` · ${S.dirty} change${S.dirty > 1 ? 's' : ''} since` : ''}</p>
@@ -1836,7 +1837,7 @@ function render() {
   if (staffMode) tab = 'sell';
   document.body.classList.toggle('dark', isDark()); document.body.classList.toggle('staff', staffMode);
   document.querySelectorAll('#nav button').forEach(b => { const t = b.dataset.t; b.hidden = pers ? (t === 'sell' || t === 'stock') : t === 'receipts'; b.classList.toggle('on', t === tab); });
-  $('#hdr').innerHTML = `<span>📦 StockPile${BETA ? ' <span class="beta">TEST COPY</span>' : ''}</span>` + (staffMode ? '<button onclick="lockNow()">🔒 Lock</button>' : `<button onclick="profiles()">${esc(profName())} ▾</button>`);
+  $('#hdr').innerHTML = `<span>📦 StockPile${BETA ? ' <span class="beta">TEST COPY</span>' : ''}</span>` + (staffMode ? '<button onclick="lockNow()">🔒 Lock</button>' : `<select id="profSel" aria-label="Switch books" onchange="switchProfile(this.value)">${P.list.map(p => `<option value="${p.id}" ${p.id === P.current ? 'selected' : ''}>${esc(p.name)}${p.kind === 'personal' ? ' (personal)' : ''}</option>`).join('')}</select>`);
   $('#view').innerHTML = V[tab]();
   loadThumbs();
 }
