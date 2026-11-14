@@ -207,6 +207,23 @@ selAll(); ok(sel.size===4,'Tick all selects everything shown'); selAll(); ok(sel
 togSel('g1'); togSel(S.tx[0].id); togSel(S.tx[1].id); delSelected();
 ok(S.tx.length===1 && S.tx[0].id==='g2' && S.items[0].qty===20 && S.debts.length===0 && !selMode,'Delete selected removes them together, restocks sales and clears their debt');
 ok(!/class="pk"/.test(V.money()),'tick boxes go away afterwards'); allTabs(); tab='home'; moneyFilter='month';
+
+// version 10.1: customer contacts, reminders and promotions sent from the phone's own apps
+showNums=false; ok(V.home().includes('StockPile version '+VERSION),'version shows at the bottom of Home (welcome view)'); showNums=true; ok(V.home().includes('StockPile version '+VERSION),'version shows at the bottom of Home (summary view)');
+S=clean({tx:[],debts:[{id:'d9',name:'Dana',dir:'owed',amount:50,date:today(),due:'2026-12-01'}],items:[],contacts:[{name:' Dana ',phone:'(604) 555-0123',email:'dana@example.com',promo:1},{name:'Eli',phone:'<b>',email:'not-an-email',promo:0},{name:'',phone:'1'}]});
+ok(S.contacts.length===2 && S.contacts[0].key==='dana' && S.contacts[0].phone==='6045550123' && S.contacts[1].phone==='' && S.contacts[1].email==='','contacts are cleaned on load');
+ok(contactOf('DANA ').email==='dana@example.com' && customerList().some(c=>c.name==='Eli'),'contacts are found by name and listed as customers');
+const rt2=reminderText('Dana',50,'2026-12-01'); ok(/Hi Dana, a friendly reminder from My business: \\$50\\.00 is still owing, due Dec/.test(rt2),'reminder wording is right');
+ok(smsLink('6045550123','Hi & bye')==='sms:6045550123?body=Hi%20%26%20bye' && mailLink('a@b.co','Sub ject','Bo dy')==='mailto:a@b.co?subject=Sub%20ject&body=Bo%20dy' && mailLink('','S','B',['x@y.z','q@r.s']).endsWith('&bcc=x@y.z,q@r.s'),'text and email links are built correctly');
+location.href=''; remind('d9'); ok(/Send to Dana/.test($('#modal').innerHTML) && /💬 Text/.test($('#modal').innerHTML) && /✉️ Email/.test($('#modal').innerHTML),'Remind shows the message with Text and Email choices');
+sendNow('sms'); ok(location.href.startsWith('sms:6045550123?body=Hi%20Dana'),'Text opens the phone’s texting app with the reminder filled in');
+remind('d9'); sendNow('mail'); ok(location.href.startsWith('mailto:dana@example.com?subject=Reminder%20from%20My%20business'),'Email opens the email app with the reminder filled in');
+ok(promoText(' 10% off ')==='10% off - My business. Reply STOP to opt out.','promotions name the business and include an opt-out');
+promoSheet(); ok(/Dana/.test($('#modal').innerHTML) && !/>Eli</.test($('#modal').innerHTML),'promotion list only shows customers who agreed');
+$('#promoMsg').value='Sale today'; promoSend(custCache.findIndex(c=>c.name==='Dana'),'sms'); ok(decodeURIComponent(location.href).endsWith('Sale today - My business. Reply STOP to opt out.'),'promotion text is sent with the opt-out line');
+location.href=''; promoSend(custCache.findIndex(c=>c.name==='Eli'),'sms'); ok(location.href==='','customers who have not agreed cannot be sent a promotion');
+customersSheet(); customerSheet(custCache.findIndex(c=>c.name==='Dana')); ok(/6045550123/.test($('#modal').innerHTML) && /Send reminder/.test($('#modal').innerHTML) && !/undefined|NaN/.test($('#modal').innerHTML),'customer page shows contact details and a reminder button');
+ok(/🔔 Remind/.test(V.debts()),'Owing tab has a Remind button on money owed to me'); closeForm(); allTabs(); tab='home';
 })().catch(e=>{console.log('CRASH',e);process.exitCode=1});
 `;
 const html=fs.readFileSync(require('path').join(__dirname,'..','index.html'),'utf8');

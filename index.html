@@ -105,8 +105,8 @@ select.f,input.f{padding:8px;border-radius:8px;border:1px solid var(--line);font
 
 <script>
 const KEY0 = 'money_inventory_tracker_v1', PKEY = 'stockpile_profiles';
-const VERSION = 10;
-const fresh = () => ({ tx: [], items: [], debts: [], lastBackup: null, dirty: 0, auto: true, offRemind: true, lastSent: null, offSnooze: null, set: { gst: false, gstRate: 5 } });
+const VERSION = '10.1';
+const fresh = () => ({ tx: [], items: [], debts: [], lastBackup: null, dirty: 0, auto: true, offRemind: true, lastSent: null, offSnooze: null, contacts: [], set: { gst: false, gstRate: 5 } });
 const defaultP = () => ({ list: [{ id: 'default', name: 'My business' }], current: 'default' });
 const CAN = !!(globalThis.crypto && crypto.subtle);
 let S = fresh(), P = defaultP(), storageOK = true, loadFailed = false;
@@ -189,6 +189,7 @@ function clean(d) {
     payments: arr(x.payments).map(p => ({ amount: num(p.amount), date: okDate(p.date) })) }; if (x.sale) r.sale = okId(x.sale); if (isDate(x.due)) r.due = x.due; return r; });
   o.lastBackup = isDate(d.lastBackup) ? d.lastBackup : null;
   o.dirty = Math.max(0, Math.round(num(d.dirty))); o.auto = d.auto !== false;
+  o.contacts = arr(d.contacts).map(c => ({ key: ckey(str(c.name)), name: str(c.name).trim(), phone: cleanPhone(c.phone), email: EMAIL_OK.test(str(c.email).trim()) ? str(c.email).trim().slice(0, 120) : '', promo: !!c.promo })).filter(c => c.key);
   o.offRemind = d.offRemind !== false; o.lastSent = isDate(d.lastSent) ? d.lastSent : null; o.offSnooze = isDate(d.offSnooze) ? d.offSnooze : null;
   const st = d.set && typeof d.set === 'object' ? d.set : {};
   o.set = { gst: !!st.gst, gstRate: num(st.gstRate) || 5 };
@@ -613,6 +614,7 @@ function customerList() {
   const get = n => { const k = ckey(n); if (!k) return null; if (!m.has(k)) m.set(k, { key: k, name: String(n).trim(), sales: 0, owing: 0, ids: new Set() }); return m.get(k); };
   S.tx.forEach(t => { if (t.type !== 'in' || !t.cust) return; const c = get(t.cust); if (c && t.cogs !== undefined) { c.sales += t.saleAmt ?? t.amount; c.ids.add(t.sale || t.id); } });
   S.debts.forEach(d => { if (d.dir === 'owed') { const c = get(d.name); if (c) c.owing += Math.max(bal(d), 0); } });
+  (S.contacts || []).forEach(k => get(k.name));
   return [...m.values()].map(c => ({ ...c, sales: round(c.sales), owing: round(c.owing), count: c.ids.size })).sort((a, b) => b.owing - a.owing || b.sales - a.sales || a.name.localeCompare(b.name));
 }
 function customersSheet() {
@@ -621,8 +623,8 @@ function customersSheet() {
   m.innerHTML = `<div class="sheet"><h2>Customers</h2>
     ${custCache.length ? `<div class="list">${custCache.map((c, i) => `<div class="it"><div class="main" onclick="customerSheet(${i})"><div class="t">${esc(c.name)}</div>
       <div class="mute">${c.count} sale${c.count === 1 ? '' : 's'} · bought ${cur(c.sales)}</div></div><div class="amt ${c.owing > 0 ? 'pos' : 'mute'}">${c.owing > 0 ? 'owes ' + cur(c.owing) : 'paid up'}</div></div>`).join('')}</div>`
-      : '<div class="card empty">No customers yet. Add a customer name when you make a sale.</div>'}
-    <div class="row end" style="margin-top:14px"><button class="btn sec" onclick="closeForm()">Close</button></div></div>`;
+      : '<div class="card empty">No customers yet. Add a customer name when you make a sale, or add one here.</div>'}
+    <div class="row" style="margin-top:14px"><button class="btn" onclick="contactForm('', customersSheet)">+ Add customer</button><button class="btn sec" onclick="promoSheet()">📣 Send a promotion</button><button class="btn sec" onclick="closeForm()">Close</button></div></div>`;
   m.hidden = false; m.onclick = e => { if (e.target === m) closeForm(); };
 }
 function customerData(c) {
@@ -638,15 +640,86 @@ function statementText(c) {
 }
 function customerSheet(i) {
   const c = custCache[i]; if (!c) return;
-  const d = customerData(c), m = $('#modal');
+  const d = customerData(c), m = $('#modal'), k = contactOf(c.name);
   m.innerHTML = `<div class="sheet"><h2>${esc(c.name)}</h2>
+    <p class="mute">${k && (k.phone || k.email) ? [k.phone, k.email].filter(Boolean).map(esc).join(' · ') + (k.promo ? ' · promotions OK' : '') : 'No phone or email saved yet.'}
+      <button class="btn sm sec" style="margin-left:6px" onclick="contactForm(custCache[${i}].name, customersSheet)">Edit contact</button></p>
     <div class="grid"><div class="card"><div class="lbl">Total bought</div><div class="big">${cur(c.sales)}</div></div><div class="card"><div class="lbl">Still owing</div><div class="big ${c.owing > 0 ? 'neg' : ''}">${cur(c.owing)}</div></div></div>
     ${d.open.length ? `<h3>Owing</h3><div class="list">${d.open.map(x => `<div class="it"><div class="main"><div class="t">${cur(bal(x))}${overdue(x) ? ' <span class="neg">overdue</span>' : ''}</div>
       <div class="mute">${niceDate(x.date)}${x.due ? ' · due ' + niceDate(x.due) : ''}${x.note ? ' · ' + esc(x.note) : ''}</div></div><button class="btn sm" onclick="closeForm();payDebt('${x.id}')">Add payment</button></div>`).join('')}</div>` : ''}
     <h3>History</h3><div class="list">${d.buys.length ? d.buys.slice(0, 30).map(t => `<div class="it"><div class="main"><div class="t">${esc(t.note || t.cat || 'Payment')}</div><div class="mute">${niceDate(t.date)}</div></div>
       <div class="amt">${cur(t.saleAmt ?? t.amount)}</div>${t.sale ? `<button class="x" title="Receipt" onclick="receipt('${t.sale}')">🧾</button>` : ''}</div>`).join('') : '<div class="empty">Nothing recorded yet.</div>'}</div>
-    <div class="row" style="margin-top:14px"><button class="btn" onclick="shareText('Statement',statementText(custCache[${i}]))">Send statement</button><button class="btn sec" onclick="customersSheet()">Back</button><button class="btn sec" onclick="closeForm()">Close</button></div></div>`;
+    <div class="row" style="margin-top:14px">${c.owing > 0 ? `<button class="btn" onclick="remindCustomer(${i})">🔔 Send reminder</button>` : ''}<button class="btn sec" onclick="shareText('Statement',statementText(custCache[${i}]))">Send statement</button><button class="btn sec" onclick="customersSheet()">Back</button><button class="btn sec" onclick="closeForm()">Close</button></div></div>`;
   m.hidden = false; m.onclick = e => { if (e.target === m) closeForm(); };
+}
+
+/* ---------- customer contacts and messages (sent from this phone's own texting and email apps) ---------- */
+const EMAIL_OK = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const cleanPhone = p => String(p ?? '').replace(/[^0-9+]/g, '').slice(0, 20);
+const contactOf = name => (S.contacts || []).find(c => c.key === ckey(name));
+function contactForm(name, back) {
+  const c = contactOf(name) || { phone: '', email: '', promo: false };
+  form(name ? 'Contact: ' + name : 'Add customer', [
+    name ? null : { k: 'name', l: 'Customer name', req: 1 },
+    { k: 'phone', l: 'Mobile number (for texts)', v: c.phone, ph: 'e.g. 604 555 0123' },
+    { k: 'email', l: 'Email', v: c.email },
+    { k: 'promo', l: 'They agreed to get promotions from me', t: 'check', v: c.promo }
+  ], v => {
+    const nm = String(name || v.name).trim(), key = ckey(nm), email = String(v.email).trim().slice(0, 120);
+    if (!key) return false;
+    if (email && !EMAIL_OK.test(email)) { alert("That email doesn't look right."); return false; }
+    S.contacts = (S.contacts || []).filter(x => x.key !== key);
+    S.contacts.push({ key, name: nm, phone: cleanPhone(v.phone), email, promo: !!v.promo });
+    if (back) setTimeout(back, 60);
+  }, '<div class="mute">Only tick the promotions box if they have said yes. Canada’s anti-spam rules need consent for promotional messages.</div>');
+}
+const smsLink = (phone, body) => 'sms:' + phone + '?body=' + encodeURIComponent(body);
+const mailLink = (to, subject, body, bcc) => 'mailto:' + (to || '') + '?subject=' + encodeURIComponent(subject) + '&body=' + encodeURIComponent(body) + (bcc && bcc.length ? '&bcc=' + bcc.join(',') : '');
+const reminderText = (name, amount, due) => `Hi ${name}, a friendly reminder from ${profName()}: ${cur(amount)} is still owing${due ? `, due ${niceDate(due)}` : ''}. Thank you!`;
+const promoText = msg => `${String(msg).trim()} - ${profName()}. Reply STOP to opt out.`;
+let pendMsg = null;
+function sendVia(name, subject, body, retry) {
+  const c = contactOf(name);
+  if (!c || (!c.phone && !c.email)) { alert(`Add a mobile number or email for ${name} first.`); contactForm(name, retry); return; }
+  pendMsg = { c, subject, body };
+  const m = $('#modal');
+  m.innerHTML = `<div class="sheet"><h2>Send to ${esc(c.name)}</h2><div class="note">${esc(body)}</div>
+    <p class="mute">This opens your own texting or email app with the message filled in. You can change the wording there before you send it.</p>
+    <div class="row">${c.phone ? '<button class="btn" onclick="sendNow(\'sms\')">💬 Text</button>' : ''}${c.email ? '<button class="btn" onclick="sendNow(\'mail\')">✉️ Email</button>' : ''}<button class="btn sec" onclick="closeForm()">Cancel</button></div></div>`;
+  m.hidden = false; m.onclick = e => { if (e.target === m) closeForm(); };
+}
+function sendNow(how) {
+  const p = pendMsg; if (!p) return; closeForm();
+  location.href = how === 'sms' ? smsLink(p.c.phone, p.body) : mailLink(p.c.email, p.subject, p.body);
+}
+function remind(debtId) {
+  const d = S.debts.find(x => x.id === debtId); if (!d || bal(d) <= 0) return;
+  sendVia(d.name, `Reminder from ${profName()}`, reminderText(d.name, bal(d), d.due), () => remind(debtId));
+}
+function remindCustomer(i) {
+  const c = custCache[i]; if (!c || !(c.owing > 0)) return;
+  sendVia(c.name, `Reminder from ${profName()}`, reminderText(c.name, c.owing), () => { custCache = customerList(); const j = custCache.findIndex(x => x.key === c.key); if (j >= 0) remindCustomer(j); });
+}
+function promoSheet() {
+  custCache = customerList();
+  const yes = custCache.map((c, i) => ({ c, i, k: contactOf(c.name) })).filter(x => x.k && x.k.promo && (x.k.phone || x.k.email));
+  const m = $('#modal');
+  m.innerHTML = `<div class="sheet"><h2>Send a promotion</h2>
+    <label class="fl"><span>Your message</span><input id="promoMsg" type="text" placeholder="e.g. 10% off everything this weekend"></label>
+    <p class="mute">Your business name and “Reply STOP to opt out” are added to the end. Only customers you ticked as agreeing to promotions are listed.</p>
+    ${yes.length ? `<div class="list">${yes.map(x => `<div class="it"><div class="main"><div class="t">${esc(x.c.name)}</div></div>
+      ${x.k.phone ? `<button class="btn sm" onclick="promoSend(${x.i},'sms')">Text</button>` : ''}${x.k.email ? `<button class="btn sm sec" onclick="promoSend(${x.i},'mail')">Email</button>` : ''}</div>`).join('')}</div>
+      ${yes.some(x => x.k.email) ? '<p><button class="btn sec" onclick="promoSend(-1,\'all\')">✉️ Email everyone at once</button></p>' : ''}`
+      : '<div class="card empty">Nobody is ticked for promotions yet. Open a customer, tap Edit contact, and tick the box once they have agreed.</div>'}
+    <div class="row end" style="margin-top:14px"><button class="btn sec" onclick="customersSheet()">Back</button><button class="btn sec" onclick="closeForm()">Close</button></div></div>`;
+  m.hidden = false; m.onclick = null;
+}
+function promoSend(i, how) {
+  const msg = $('#promoMsg').value.trim(); if (!msg) { alert('Type your message first.'); return; }
+  const body = promoText(msg), subject = `News from ${profName()}`;
+  if (how === 'all') { const list = custCache.map(c => contactOf(c.name)).filter(k => k && k.promo && k.email).map(k => k.email); if (list.length) location.href = mailLink('', subject, body, list); return; }
+  const k = custCache[i] && contactOf(custCache[i].name); if (!k || !k.promo) return;
+  location.href = how === 'sms' ? smsLink(k.phone, body) : mailLink(k.email, subject, body);
 }
 
 /* ---------- debts ---------- */
@@ -1112,7 +1185,8 @@ const V = {
     <div class="card" style="text-align:center;padding:30px 16px;margin-top:10px"><div style="font-size:46px">📦</div>
       <h2 style="margin:8px 0 4px">Welcome back</h2><div class="mute">${new Date().toLocaleDateString('en-CA', { weekday: 'long', month: 'long', day: 'numeric' })}</div></div>
     <div class="row bar" style="justify-content:center">${quick}</div>
-    <div style="text-align:center;margin-top:18px"><button class="btn sec" onclick="showNums=true;render()">👁 Show my summary</button></div>`;
+    <div style="text-align:center;margin-top:18px"><button class="btn sec" onclick="showNums=true;render()">👁 Show my summary</button></div>
+    <p class="mute" style="text-align:center;margin-top:24px;font-size:12px">StockPile version ${VERSION}</p>`;
     const m = thisMonth(), mt = S.tx.filter(t => t.date.startsWith(m));
     const cash = acctBal('cash'), bank = acctBal('bank');
     const mIn = sum(mt.filter(t => t.type === 'in'), t => t.amount), mOut = sum(mt.filter(t => t.type === 'out'), t => t.amount);
@@ -1139,7 +1213,8 @@ const V = {
     ${low.length ? `<h3>⚠️ Running low – time to restock</h3><div class="list">${low.map(i => `<div class="it"><div class="main" onclick="tab='stock';render()"><div class="t">${esc(i.name)}</div></div><div class="amt neg">${i.qty} left</div></div>`).join('')}</div>` : ''}
     ${od.length ? `<h3>⚠️ Overdue</h3><div class="list">${od.map(d => `<div class="it"><div class="main" onclick="tab='debts';render()"><div class="t">${esc(d.name)}</div><div class="mute">${d.dir === 'owe' ? 'I owe them' : 'Owes me'} · was due ${niceDate(d.due)}</div></div><div class="amt neg">${fmt(bal(d))}</div></div>`).join('')}</div>` : ''}
     <h3>Latest entries</h3>
-    <div class="list">${S.tx.length ? [...S.tx].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 6).map(txRow).join('') : '<div class="empty">Nothing yet. Tap “+ Money In” or “− Money Out” to start.</div>'}</div>`;
+    <div class="list">${S.tx.length ? [...S.tx].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 6).map(txRow).join('') : '<div class="empty">Nothing yet. Tap “+ Money In” or “− Money Out” to start.</div>'}</div>
+    <p class="mute" style="text-align:center;margin-top:24px;font-size:12px">StockPile version ${VERSION}</p>`;
   },
   sell() {
     if (!S.items.length) return `<h2>Sell</h2><div class="card empty">Add your products on the Stock tab first. Each one gets an item number to type in here.</div>`;
@@ -1243,7 +1318,7 @@ const V = {
         ${d.due && bal(d) > 0 ? `<div class="${overdue(d) ? 'neg' : 'mute'}" style="font-size:14px${overdue(d) ? ';font-weight:700' : ''}">${overdue(d) ? '⚠️ Overdue since ' : 'Due '}${niceDate(d.due)}</div>` : ''}
         <div class="mute">Original ${fmt(d.amount)} · paid ${fmt(paid(d))}${(d.payments || []).length ? ` in ${d.payments.length} payment${d.payments.length > 1 ? 's' : ''}` : ''}</div></div>
         <div><div class="amt big ${bal(d) > 0 ? (d.dir === 'owe' ? 'neg' : 'pos') : ''}">${bal(d) > 0 ? fmt(bal(d)) : 'Paid ✓'}</div>${bal(d) > 0 ? '<div class="mute" style="text-align:right">left</div>' : ''}</div></div>
-      <div class="row" style="margin-top:12px">${bal(d) > 0 ? `<button class="btn sm" onclick="payDebt('${d.id}')">Add payment</button>` : ''}
+      <div class="row" style="margin-top:12px">${bal(d) > 0 ? `<button class="btn sm" onclick="payDebt('${d.id}')">Add payment</button>` : ''}${bal(d) > 0 && d.dir === 'owed' ? `<button class="btn sm sec" onclick="remind('${d.id}')">🔔 Remind</button>` : ''}
         <button class="btn sm sec" onclick="editDebt('${d.id}')">Edit</button><button class="btn sm sec" onclick="delDebt('${d.id}')">Delete</button></div></div>`;
     const owe = open.filter(d => d.dir === 'owe'), owed = open.filter(d => d.dir === 'owed');
     return `<h2>Owing</h2>
