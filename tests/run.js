@@ -144,7 +144,7 @@ const rc=clean(JSON.parse(JSON.stringify(S))); ok(rc.tx[0].saleAmt===40 && rc.de
 cart=[{id:'a',qty:1,price:10}]; posPay='part'; posPaid='4'; posCust='Gus'; tab='sell'; ok(/6\.00 will be added to Debts/.test(V.sell()),'sell screen shows the amount that will be owing'); allTabs(); cart=[]; posPay='full'; tab='home';
 
 // ---- version 7 features ----
-ok(VERSION===7 && /version 7/.test(V.more()),'version number shows under More');
+ok(VERSION>=7 && V.more().includes('version '+VERSION),'version number shows under More');
 // barcodes
 ok(eanCheck('400638133393')===1 && itemEAN(12)==='2000000000121'.slice(0,12)+eanCheck('200000000012') && itemEAN(12).length===13,'barcode check digit is right');
 ok(eanBits(itemEAN(12)).length===95 && /^<svg/.test(eanSVG(itemEAN(12))),'barcode drawing has the right number of bars');
@@ -187,6 +187,13 @@ S.offSnooze=addDays(7); ok(!/left this phone/.test(V.home()),'"Not now" hides th
 S.lastSent=today(); ok(!/left this phone/.test(V.home()),'no reminder right after sending a backup');
 const rv=clean(JSON.parse(JSON.stringify(S))); ok(rv.lastSent===today() && rv.offRemind===true && rv.items[0].code==='628915012347','new settings survive save and reload');
 allTabs(); tab='home'; moneyView='list'; moneyFilter='month';
+
+// version 8: delete and close from inside pop-up forms
+S=clean({tx:[{id:'e1',type:'out',amount:5,cat:'Gas',date:today()}],debts:[{id:'d1',name:'Joe',dir:'owe',amount:10,date:today()}],items:[{id:'i1',name:'W',num:1,qty:1,cost:1,price:2}]});
+addTx('out'); ok(!/id="fDel"/.test($('#modal').innerHTML) && /id="fX"/.test($('#modal').innerHTML),'new-entry form has a close button and no Delete');
+editTx('e1'); ok(/id="fDel"/.test($('#modal').innerHTML),'editing an entry offers Delete'); $('#fDel').onclick(); ok(S.tx.length===0,'Delete inside the form removes the entry');
+editItem('i1'); ok(/id="fDel"/.test($('#modal').innerHTML),'editing a product offers Delete'); $('#fDel').onclick(); ok(S.items.length===0,'Delete inside the form removes the product');
+editDebt('d1'); $('#fDel').onclick(); ok(S.debts.length===0,'Delete inside the form removes the debt');
 })().catch(e=>{console.log('CRASH',e);process.exitCode=1});
 `;
 const html=fs.readFileSync(require('path').join(__dirname,'..','index.html'),'utf8');

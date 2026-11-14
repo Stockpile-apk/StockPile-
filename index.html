@@ -104,7 +104,7 @@ select.f,input.f{padding:8px;border-radius:8px;border:1px solid var(--line);font
 
 <script>
 const KEY0 = 'money_inventory_tracker_v1', PKEY = 'stockpile_profiles';
-const VERSION = 7;
+const VERSION = 8;
 const fresh = () => ({ tx: [], items: [], debts: [], lastBackup: null, dirty: 0, auto: true, offRemind: true, lastSent: null, offSnooze: null, set: { gst: false, gstRate: 5 } });
 const defaultP = () => ({ list: [{ id: 'default', name: 'My business' }], current: 'default' });
 const CAN = !!(globalThis.crypto && crypto.subtle);
@@ -203,14 +203,16 @@ function sanitizeP() {
 document.querySelectorAll('#nav button').forEach(b => b.onclick = () => { tab = b.dataset.t; posMsg = ''; render(); window.scrollTo(0, 0); });
 
 /* ---------- generic form popup ---------- */
-function form(title, fields, onSave, extra = '') {
+function form(title, fields, onSave, extra = '', onDelete = null) {
   fields = fields.filter(Boolean);
   const m = $('#modal');
-  m.innerHTML = `<div class="sheet"><h2>${esc(title)}</h2>${extra}${fields.map(fieldHTML).join('')}
-    <div class="row end" style="margin-top:16px"><button class="btn sec" id="fCancel">Cancel</button><button class="btn" id="fSave">Save</button></div></div>`;
+  m.innerHTML = `<div class="sheet"><div class="row between" style="margin-bottom:8px"><h2 style="margin:0">${esc(title)}</h2><button class="x" id="fX" aria-label="Close" style="font-size:24px">✕</button></div>${extra}${fields.map(fieldHTML).join('')}
+    <div class="row between" style="margin-top:16px"><div>${onDelete ? '<button class="btn out" id="fDel">Delete</button>' : ''}</div>
+      <div class="row"><button class="btn sec" id="fCancel">Cancel</button><button class="btn" id="fSave">Save</button></div></div></div>`;
   m.hidden = false;
   const first = m.querySelector('input:not([type=checkbox]),select'); if (first && fields[0].t !== 'select') setTimeout(() => first.focus(), 50);
-  $('#fCancel').onclick = closeForm;
+  $('#fCancel').onclick = closeForm; $('#fX').onclick = closeForm;
+  if (onDelete) $('#fDel').onclick = () => { closeForm(); onDelete(); };
   m.onclick = e => { if (e.target === m) closeForm(); };
   $('#fSave').onclick = () => {
     const v = {};
@@ -266,7 +268,7 @@ function addTx(type, t) {
     const data = { amount: round(v.amount), cat: v.cat, note: v.note, acct: v.acct, date: v.date || today(), gst: gstOf(round(v.amount), v.gstInc) };
     if (isIn) data.cust = v.cust;
     if (isEdit) Object.assign(t, data); else S.tx.push({ id: uid(), type, ...data });
-  });
+  }, '', isEdit ? () => delTx(t.id) : null);
 }
 function addMove(t) {
   const isEdit = !!t;
@@ -279,7 +281,7 @@ function addMove(t) {
   ], v => {
     const data = { from: v.from, amount: round(v.amount), note: v.note, date: v.date || today() };
     if (isEdit) Object.assign(t, data); else S.tx.push({ id: uid(), type: 'move', ...data });
-  }, '<div class="mute">For deposits and withdrawals. It shifts money between Cash and Bank without counting as income or spending.</div>');
+  }, '<div class="mute">For deposits and withdrawals. It shifts money between Cash and Bank without counting as income or spending.</div>', isEdit ? () => delTx(t.id) : null);
 }
 function editTx(id) { const t = S.tx.find(x => x.id === id); if (t) t.type === 'move' ? addMove(t) : addTx(t.type, t); }
 function delTx(id) {
@@ -307,7 +309,7 @@ function editItem(id) {
     if (S.items.some(x => x.num === n && x.id !== id)) { alert('Another product already uses item number ' + n + '.'); return false; }
     const data = { name: v.name, num: n, cost: round(v.cost), price: round(v.price), qty: Math.round(v.qty), low: Math.round(v.low) };
     if (id) Object.assign(it, data); else S.items.push({ id: uid(), ...data });
-  });
+  }, '', id ? () => delItem(id) : null);
 }
 function delItem(id) {
   const it = S.items.find(x => x.id === id);
@@ -644,7 +646,7 @@ function editDebt(id) {
   ], v => {
     const data = { dir: v.dir, name: v.name, amount: round(v.amount), note: v.note, date: v.date || today(), due: isDate(v.due) ? v.due : undefined };
     if (id) Object.assign(d, data); else S.debts.push({ id: uid(), payments: [], ...data });
-  });
+  }, '', id ? () => delDebt(id) : null);
 }
 function payDebt(id) {
   const d = S.debts.find(x => x.id === id); if (!d) return;
@@ -748,6 +750,10 @@ async function tryUnlock() {
 }
 $('#pinGo').onclick = tryUnlock;
 $('#pinIn').onkeydown = e => { if (e.key === 'Enter') tryUnlock(); };
+document.addEventListener('focusin', e => {
+  const el = e.target;
+  if (el && el.tagName === 'INPUT' && ['text', 'number', 'password', ''].includes(el.type || '') && el.value) { try { el.select(); } catch (err) {} }
+});
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) hiddenAt = Date.now();
   else if ((SEC || LEGACY) && hiddenAt && Date.now() - hiddenAt > 60000 && $('#lock').hidden) lockNow();
