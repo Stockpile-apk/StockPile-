@@ -15,7 +15,7 @@ body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;b
 header{background:var(--ink);color:#fff;padding:10px 16px;font-weight:700;font-size:18px;display:flex;justify-content:space-between;align-items:center;gap:10px}
 header button{background:none;border:1px solid #6b7280;color:#fff;border-radius:999px;padding:6px 12px;font-size:14px;max-width:55%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer}
 nav{display:flex;background:#fff;border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5}
-nav button{flex:1;padding:14px 2px;border:0;background:none;font-size:15px;color:var(--mute);border-bottom:3px solid transparent;cursor:pointer}
+nav button{flex:1;padding:14px 1px;border:0;background:none;font-size:14px;color:var(--mute);border-bottom:3px solid transparent;cursor:pointer}
 nav button.on{color:var(--ink);border-color:var(--accent);font-weight:700}
 main{max-width:900px;margin:0 auto;padding:16px 14px 60px}
 h2{font-size:20px;margin:6px 0 12px}
@@ -56,6 +56,13 @@ select.f,input.f{padding:8px;border-radius:8px;border:1px solid var(--line);font
 .fl input.bad{border-color:var(--red);background:#fef2f2}
 .chk{display:flex;gap:10px;align-items:center;margin:14px 0;font-size:15px}
 .chk input{width:22px;height:22px;flex:none}
+.pf{display:flex;flex-direction:column;font-size:13px;color:var(--mute);flex:1;min-width:80px}
+.pf input{width:100%;font-size:20px;padding:10px;margin-top:3px}
+.chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
+.chip{border:1px solid var(--line);background:#f9fafb;border-radius:999px;padding:8px 12px;font-size:14px;color:var(--ink);cursor:pointer}
+.chip.out0{opacity:.5}
+.note.ok{background:#ecfdf5;border-color:#a7f3d0;font-weight:600}
+.qb{border:1px solid var(--line);background:#fff;border-radius:8px;width:36px;height:36px;font-size:20px;cursor:pointer}
 .note{background:#fffbeb;border:1px solid #fde68a;border-radius:10px;padding:10px 12px;font-size:14px;margin-bottom:12px}
 #lock{position:fixed;inset:0;background:var(--ink);color:#fff;z-index:50;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:24px;text-align:center}
 #lock input{font-size:24px;text-align:center;letter-spacing:4px;padding:12px;border-radius:12px;border:0;width:200px;margin:18px 0 12px}
@@ -69,6 +76,7 @@ select.f,input.f{padding:8px;border-radius:8px;border:1px solid var(--line);font
 <header id="hdr"></header>
 <nav id="nav">
   <button data-t="home">Home</button>
+  <button data-t="sell">Sell</button>
   <button data-t="money">Money</button>
   <button data-t="stock">Stock</button>
   <button data-t="debts">Debts</button>
@@ -158,12 +166,18 @@ function clean(d) {
       if (t.cust) r.cust = str(t.cust);
       if (t.cogs !== undefined) r.cogs = num(t.cogs);
       if (t.itemId) r.itemId = okId(t.itemId);
+      if (t.qty !== undefined) r.qty = Math.round(num(t.qty));
+      if (t.sale) r.sale = okId(t.sale);
+      if (t.saleAmt !== undefined) r.saleAmt = num(t.saleAmt);
     }
     return r;
   });
-  o.items = arr(d.items).map(i => ({ id: okId(i.id), name: str(i.name), cost: num(i.cost), price: num(i.price), qty: Math.round(num(i.qty)), low: Math.round(num(i.low)) }));
-  o.debts = arr(d.debts).map(x => ({ id: okId(x.id), name: str(x.name), dir: x.dir === 'owed' ? 'owed' : 'owe', amount: num(x.amount), note: str(x.note), date: okDate(x.date),
-    payments: arr(x.payments).map(p => ({ amount: num(p.amount), date: okDate(p.date) })) }));
+  o.items = arr(d.items).map(i => ({ id: okId(i.id), name: str(i.name), num: Math.round(num(i.num)), cost: num(i.cost), price: num(i.price), qty: Math.round(num(i.qty)), low: Math.round(num(i.low)) }));
+  const usedNums = new Set(); let nx = 1;
+  o.items.forEach(i => { if (!(i.num >= 1) || usedNums.has(i.num)) i.num = 0; else usedNums.add(i.num); });
+  o.items.forEach(i => { if (!i.num) { while (usedNums.has(nx)) nx++; i.num = nx; usedNums.add(nx); } });
+  o.debts = arr(d.debts).map(x => { const r = { id: okId(x.id), name: str(x.name), dir: x.dir === 'owed' ? 'owed' : 'owe', amount: num(x.amount), note: str(x.note), date: okDate(x.date),
+    payments: arr(x.payments).map(p => ({ amount: num(p.amount), date: okDate(p.date) })) }; if (x.sale) r.sale = okId(x.sale); return r; });
   o.lastBackup = isDate(d.lastBackup) ? d.lastBackup : null;
   o.dirty = Math.max(0, Math.round(num(d.dirty))); o.auto = d.auto !== false;
   const st = d.set && typeof d.set === 'object' ? d.set : {};
@@ -177,7 +191,7 @@ function sanitizeP() {
   if (!P.list.some(p => p.id === P.current)) P.current = P.list[0].id;
 }
 
-document.querySelectorAll('#nav button').forEach(b => b.onclick = () => { tab = b.dataset.t; render(); window.scrollTo(0, 0); });
+document.querySelectorAll('#nav button').forEach(b => b.onclick = () => { tab = b.dataset.t; posMsg = ''; render(); window.scrollTo(0, 0); });
 
 /* ---------- generic form popup ---------- */
 function form(title, fields, onSave, extra = '') {
@@ -259,19 +273,30 @@ function addMove(t) {
   }, '<div class="mute">For deposits and withdrawals. It shifts money between Cash and Bank without counting as income or spending.</div>');
 }
 function editTx(id) { const t = S.tx.find(x => x.id === id); if (t) t.type === 'move' ? addMove(t) : addTx(t.type, t); }
-function delTx(id) { if (confirm('Delete this entry?')) { S.tx = S.tx.filter(x => x.id !== id); commit(); render(); } }
+function delTx(id) {
+  const t = S.tx.find(x => x.id === id); if (!t || !confirm('Delete this entry?')) return;
+  const it = t.itemId && t.qty > 0 && S.items.find(i => i.id === t.itemId);
+  if (it && confirm(`Put ${t.qty} × ${it.name} back in stock?`)) it.qty += t.qty;
+  S.tx = S.tx.filter(x => x.id !== id);
+  const debt = t.sale && !S.tx.some(x => x.sale === t.sale) && S.debts.find(d => d.sale === t.sale);
+  if (debt && confirm(`This sale left ${cur(Math.max(bal(debt), 0))} owing from ${debt.name}. Remove that from Debts too?`)) S.debts = S.debts.filter(d => d !== debt);
+  commit(); render();
+}
 
 /* ---------- inventory ---------- */
 function editItem(id) {
-  const it = S.items.find(x => x.id === id) || { name: '', cost: '', price: '', qty: '', low: '' };
+  const it = S.items.find(x => x.id === id) || { name: '', cost: '', price: '', qty: '', low: '', num: nextNum() };
   form(id ? 'Edit product' : 'Add product', [
     { k: 'name', l: 'Product name', v: it.name, req: 1 },
+    { k: 'num', l: 'Item number (what you type on the Sell screen)', t: 'number', v: it.num, req: 1, pos: 1 },
     { k: 'cost', l: 'What it costs you (each)', t: 'money', v: it.cost, ph: '0.00' },
     { k: 'price', l: 'What you sell it for (each)', t: 'money', v: it.price, ph: '0.00' },
     { k: 'qty', l: id ? 'How many you have now' : 'How many you have now (starting count)', t: 'number', v: it.qty, ph: '0' },
     { k: 'low', l: 'Warn me when stock gets down to (optional)', t: 'number', v: it.low, ph: 'e.g. 5' }
   ], v => {
-    const data = { name: v.name, cost: round(v.cost), price: round(v.price), qty: Math.round(v.qty), low: Math.round(v.low) };
+    const n = Math.round(v.num);
+    if (S.items.some(x => x.num === n && x.id !== id)) { alert('Another product already uses item number ' + n + '.'); return false; }
+    const data = { name: v.name, num: n, cost: round(v.cost), price: round(v.price), qty: Math.round(v.qty), low: Math.round(v.low) };
     if (id) Object.assign(it, data); else S.items.push({ id: uid(), ...data });
   });
 }
@@ -285,14 +310,17 @@ function sell(id) {
     { k: 'qty', l: 'How many sold', t: 'number', v: 1, req: 1, pos: 1 },
     { k: 'price', l: 'Price each ($)', t: 'money', v: it.price, req: 1 },
     { k: 'cust', l: 'Customer (optional)', v: '', list: customers() },
+    { k: 'pay', l: 'Payment', t: 'select', v: 'full', o: PAYOPTS },
+    { k: 'paidNow', l: 'Amount paid now (only for part payment)', t: 'money', v: '', ph: '0.00' },
     acctField('cash', 'Paid by'),
     gstField(true),
     { k: 'date', l: 'Date', t: 'date', v: today() }
   ], v => {
-    const q = Math.round(v.qty), amount = round(q * v.price);
+    const q = Math.round(v.qty);
     if (q > it.qty && !confirm(`You only have ${it.qty} in stock. Record the sale anyway?`)) return false;
-    it.qty -= q;
-    S.tx.push({ id: uid(), type: 'in', amount, cat: 'Sales', note: `Sold ${q} × ${it.name}`, cust: v.cust, acct: v.acct, gst: gstOf(amount, v.gstInc), date: v.date || today(), cogs: round(q * (it.cost || 0)), itemId: it.id });
+    const r = recordSale([{ it, qty: q, price: v.price }], { cust: v.cust, acct: v.acct, gstInc: v.gstInc, date: v.date, pay: v.pay, paid: v.paidNow });
+    if (typeof r === 'string') { alert(r); return false; }
+    if (r.owing > 0) setTimeout(() => alert(saleMsg(r, v.cust.trim())), 50);
   }, `<div class="mute">In stock: ${it.qty}. This adds the money to “Money In” and takes them off your stock count.</div>`);
 }
 function restock(id) {
@@ -310,6 +338,75 @@ function restock(id) {
     if (v.cost) it.cost = round(v.cost);
     if (v.rec && v.cost) S.tx.push({ id: uid(), type: 'out', amount, cat: 'Inventory', note: `Restocked ${q} × ${it.name}`, acct: v.acct, gst: gstOf(amount, v.gstInc), date: v.date || today() });
   });
+}
+
+/* ---------- recording a sale (full, part or pay-later) ---------- */
+// lines: [{it, qty, price}]. Returns {total, paid, owing}, or a message string if something is missing.
+// Only money actually received counts as Money In now; anything owing becomes a "They owe me" debt.
+function recordSale(lines, o) {
+  const T = round(sum(lines, l => round(l.qty * l.price)));
+  let P = o.pay === 'later' ? 0 : o.pay === 'part' ? round(parseFloat(o.paid) || 0) : T;
+  if (o.pay === 'part' && !(P > 0)) return 'Enter how much was paid now, or choose Pay later.';
+  if (P > T) P = T;
+  const owing = round(T - P), cust = String(o.cust || '').trim();
+  if (owing > 0 && !cust) return 'Add the customer name, so the amount owing goes under their name in Debts.';
+  const sale = uid(), date = o.date || today(); let left = P;
+  lines.forEach((l, i) => {
+    const full = round(l.qty * l.price);
+    const cash = owing > 0 ? (i === lines.length - 1 ? left : Math.min(left, round(P * full / T))) : full;
+    left = round(left - cash);
+    l.it.qty -= l.qty;
+    const t = { id: uid(), type: 'in', amount: round(cash), cat: 'Sales', note: `Sold ${l.qty} × ${l.it.name}`, cust, acct: o.acct === 'bank' ? 'bank' : 'cash', gst: gstOf(full, o.gstInc), date, cogs: round(l.qty * (l.it.cost || 0)), itemId: l.it.id, qty: l.qty, sale };
+    if (owing > 0) t.saleAmt = full;
+    S.tx.push(t);
+  });
+  if (owing > 0) S.debts.push({ id: uid(), dir: 'owed', name: cust, amount: owing, note: 'Sale: ' + lines.map(l => `${l.qty} × ${l.it.name}`).join(', '), date, payments: [], sale });
+  return { total: T, paid: P, owing };
+}
+const saleMsg = (r, cust) => r.owing > 0 ? `✓ Sale recorded: ${cur(r.total)}. Paid now ${cur(r.paid)}; ${cur(r.owing)} owing was added to Debts under ${cust}.` : `✓ Sale recorded: ${cur(r.total)}`;
+const PAYOPTS = [['full', 'Paid in full'], ['part', 'Part payment now'], ['later', 'Pay later (on account)']];
+
+/* ---------- Sell screen (point of sale) ---------- */
+let cart = [], posCust = '', posAcct = 'cash', posGst = true, posMsg = '', posPay = 'full', posPaid = '';
+const nextNum = () => Math.max(0, ...S.items.map(i => i.num || 0)) + 1;
+const itemByNum = n => S.items.find(i => i.num === n);
+function posPreview() {
+  const v = $('#posNum').value, it = itemByNum(parseInt(v));
+  $('#posPrev').textContent = !v ? '' : it ? `${it.name} · ${cur(it.price)} each · ${it.qty} in stock` : 'No item with that number';
+}
+function posAdd(id, q) {
+  let it;
+  if (id) it = S.items.find(i => i.id === id);
+  else { it = itemByNum(parseInt($('#posNum').value)); q = Math.round(parseFloat($('#posQty').value)) || 1; }
+  if (!it) { $('#posPrev').textContent = 'No item with that number'; return; }
+  if (!(q >= 1)) q = 1;
+  const line = cart.find(c => c.id === it.id);
+  if (line) line.qty += q; else cart.push({ id: it.id, qty: q, price: it.price });
+  posMsg = ''; render();
+  if (!id) { const el = $('#posNum'); if (el) el.focus(); }
+}
+function posQty(id, d) { const l = cart.find(c => c.id === id); if (!l) return; l.qty += d; if (l.qty < 1) cart = cart.filter(c => c !== l); render(); }
+function posPrice(id) {
+  const l = cart.find(c => c.id === id); if (!l) return;
+  const v = prompt('Price each for this sale ($)', l.price); if (v === null) return;
+  const n = parseFloat(v); if (Number.isFinite(n) && n >= 0) { l.price = round(n); render(); }
+}
+function posOwing() {
+  const el = $('#posOwe'); if (!el) return;
+  const T = round(sum(cart, c => round(c.qty * c.price))), P = Math.min(round(parseFloat(posPaid) || 0), T);
+  el.textContent = posPay === 'later' ? `${cur(T)} will be added to Debts → Owed to me.` : posPay === 'part' ? `${cur(round(T - P))} will be added to Debts → Owed to me.` : '';
+}
+function posClear() { if (cart.length && confirm('Clear this sale?')) { cart = []; render(); } }
+function posDone() {
+  const lines = cart.map(c => ({ c, it: S.items.find(i => i.id === c.id) })).filter(x => x.it);
+  if (!lines.length) return;
+  const short = lines.filter(x => x.c.qty > x.it.qty);
+  if (short.length && !confirm(`Not enough in stock for: ${short.map(x => `${x.it.name} (have ${x.it.qty})`).join(', ')}.\n\nRecord the sale anyway?`)) return;
+  const cust = posCust.trim();
+  const r = recordSale(lines.map(({ c, it }) => ({ it, qty: c.qty, price: c.price })), { cust, acct: posAcct, gstInc: posGst, pay: posPay, paid: posPaid });
+  if (typeof r === 'string') { alert(r); return; }
+  posMsg = saleMsg(r, cust); cart = []; posCust = ''; posPay = 'full'; posPaid = '';
+  commit(); render();
 }
 
 /* ---------- debts ---------- */
@@ -627,7 +724,7 @@ function profiles() {
   m.hidden = false;
   m.onclick = e => { if (e.target === m) closeForm(); };
 }
-function resetView() { tab = 'home'; moneyFilter = 'month'; moneyView = 'list'; showNums = false; }
+function resetView() { tab = 'home'; moneyFilter = 'month'; moneyView = 'list'; showNums = false; cart = []; posCust = ''; posMsg = ''; posPay = 'full'; posPaid = ''; }
 async function switchProfile(id) { save(); await saveQ; P.current = id; await loadProfile(); save(); resetView(); closeForm(); render(); window.scrollTo(0, 0); }
 function addProfile() {
   form('Add business', [{ k: 'name', l: 'Business name', req: 1 }], v => {
@@ -727,7 +824,7 @@ function exportMoney() {
   download(`stockpile-money-${today()}.csv`, csv(rows), 'text/csv');
 }
 function exportStock() {
-  const rows = [['Product', 'In stock', 'Cost each', 'Price each', 'Stock value (cost)']].concat(S.items.map(i => [i.name, i.qty, i.cost, i.price, round(i.qty * i.cost)]));
+  const rows = [['Item #', 'Product', 'In stock', 'Cost each', 'Price each', 'Stock value (cost)']].concat([...S.items].sort((a, b) => a.num - b.num).map(i => [i.num, i.name, i.qty, i.cost, i.price, round(i.qty * i.cost)]));
   download(`stockpile-stock-${today()}.csv`, csv(rows), 'text/csv');
 }
 function wipe() {
@@ -739,7 +836,8 @@ function txRow(t) {
   if (t.type === 'move') return `<div class="it"><div class="main" onclick="editTx('${t.id}')"><div class="t">${t.from === 'cash' ? 'Moved Cash → Bank' : 'Moved Bank → Cash'}</div>
     <div class="mute">${niceDate(t.date)}${t.note ? ' · ' + esc(t.note) : ''}</div></div>
     <div class="amt mute">⇄ ${fmt(t.amount)}</div><button class="x" title="Delete" onclick="delTx('${t.id}')">×</button></div>`;
-  const bits = [niceDate(t.date), t.note && t.cat ? esc(t.cat) : '', t.cust ? esc(t.cust) : '', ACCT[acct(t)]].filter(Boolean).join(' · ');
+  const part = t.saleAmt !== undefined && t.saleAmt !== t.amount;
+  const bits = [niceDate(t.date), t.note && t.cat ? esc(t.cat) : '', t.cust ? esc(t.cust) : '', part ? `sale ${fmt(t.saleAmt)}, ${t.amount > 0 ? 'part paid' : 'on account'}` : ACCT[acct(t)]].filter(Boolean).join(' · ');
   return `<div class="it"><div class="main" onclick="editTx('${t.id}')"><div class="t">${esc(t.note || t.cat || (t.type === 'in' ? 'Money in' : 'Money out'))}</div>
     <div class="mute">${bits}</div></div>
     <div class="amt ${t.type === 'in' ? 'pos' : 'neg'}">${t.type === 'in' ? '+' : '−'}${fmt(t.amount)}</div>
@@ -759,7 +857,7 @@ const V = {
     const backupNote = S.dirty > 0
       ? `<div class="note">💾 ${S.dirty} change${S.dirty > 1 ? 's' : ''} not backed up yet. <button class="btn sm" style="margin-left:6px" onclick="backup()">Back up now</button></div>` : '';
     const quick = `<button class="btn in" onclick="addTx('in')">+ Money In</button><button class="btn out" onclick="addTx('out')">− Money Out</button>
-      ${S.items.length ? `<button class="btn" onclick="tab='stock';render()">Sale / Stock</button>` : ''}`;
+      ${S.items.length ? `<button class="btn" onclick="tab='sell';render()">Sell</button>` : ''}`;
     if (!showNums) return `${warn}${backupNote}
     <div class="card" style="text-align:center;padding:30px 16px;margin-top:10px"><div style="font-size:46px">📦</div>
       <h2 style="margin:8px 0 4px">Welcome back</h2><div class="mute">${new Date().toLocaleDateString('en-CA', { weekday: 'long', month: 'long', day: 'numeric' })}</div></div>
@@ -768,7 +866,7 @@ const V = {
     const m = thisMonth(), mt = S.tx.filter(t => t.date.startsWith(m));
     const cash = acctBal('cash'), bank = acctBal('bank');
     const mIn = sum(mt.filter(t => t.type === 'in'), t => t.amount), mOut = sum(mt.filter(t => t.type === 'out'), t => t.amount);
-    const saleProfit = sum(mt.filter(t => t.cogs !== undefined), t => t.amount - (t.gst || 0) - t.cogs);
+    const saleProfit = sum(mt.filter(t => t.cogs !== undefined), t => (t.saleAmt ?? t.amount) - (t.gst || 0) - t.cogs);
     const stockVal = sum(S.items, i => Math.max(i.qty, 0) * i.cost);
     const iOwe = sum(S.debts.filter(d => d.dir === 'owe'), d => Math.max(bal(d), 0));
     const owedMe = sum(S.debts.filter(d => d.dir === 'owed'), d => Math.max(bal(d), 0));
@@ -791,6 +889,42 @@ const V = {
     ${low.length ? `<h3>⚠️ Running low – time to restock</h3><div class="list">${low.map(i => `<div class="it"><div class="main" onclick="tab='stock';render()"><div class="t">${esc(i.name)}</div></div><div class="amt neg">${i.qty} left</div></div>`).join('')}</div>` : ''}
     <h3>Latest entries</h3>
     <div class="list">${S.tx.length ? [...S.tx].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 6).map(txRow).join('') : '<div class="empty">Nothing yet. Tap “+ Money In” or “− Money Out” to start.</div>'}</div>`;
+  },
+  sell() {
+    if (!S.items.length) return `<h2>Sell</h2><div class="card empty">Add your products on the Stock tab first. Each one gets an item number to type in here.</div>`;
+    const items = [...S.items].sort((a, b) => a.num - b.num);
+    const lines = cart.map(c => ({ c, it: S.items.find(i => i.id === c.id) })).filter(x => x.it);
+    const total = sum(lines, x => x.c.qty * x.c.price);
+    const todays = S.tx.filter(t => t.date === today() && t.cogs !== undefined).reverse();
+    return `<h2>Sell</h2>
+    ${posMsg ? `<div class="note ok">${esc(posMsg)}</div>` : ''}
+    <div class="card">
+      <div class="row" style="align-items:flex-end">
+        <label class="pf"><span>Item #</span><input id="posNum" class="f" type="number" inputmode="numeric" min="1" oninput="posPreview()" onkeydown="if(event.key==='Enter'){event.preventDefault();$('#posQty').focus();$('#posQty').select()}"></label>
+        <label class="pf"><span>How many</span><input id="posQty" class="f" type="number" inputmode="numeric" min="1" value="1" onkeydown="if(event.key==='Enter'){event.preventDefault();posAdd()}"></label>
+        <button class="btn" onclick="posAdd()">Add</button></div>
+      <div id="posPrev" class="mute" style="min-height:20px;margin-top:6px"></div>
+      <div class="chips">${items.map(i => `<button class="chip ${i.qty <= 0 ? 'out0' : ''}" onclick="posAdd('${i.id}',1)"><b>#${i.num}</b> ${esc(i.name)}</button>`).join('')}</div>
+    </div>
+    <h3>This sale</h3>
+    ${lines.length ? `<div class="list">${lines.map(({ c, it }) => `<div class="it"><div class="main" onclick="posPrice('${it.id}')"><div class="t">#${it.num} ${esc(it.name)}</div>
+        <div class="mute">${c.qty} × ${cur(c.price)}${c.qty > it.qty ? ` · <span class="neg">only ${it.qty} in stock</span>` : ''}</div></div>
+        <div class="amt">${cur(c.qty * c.price)}</div>
+        <button class="qb" onclick="posQty('${it.id}',-1)">−</button><button class="qb" onclick="posQty('${it.id}',1)">+</button></div>`).join('')}
+        <div class="it"><div class="main"><div class="t">Total</div></div><div class="amt big">${cur(total)}</div></div></div>
+      <div class="row bar"><input class="f" style="flex:1;min-width:140px" list="posCustL" value="${esc(posCust)}" oninput="posCust=this.value" placeholder="Customer (optional)">
+        <datalist id="posCustL">${customers().map(x => `<option value="${esc(x)}">`).join('')}</datalist>
+        <select class="f" onchange="posPay=this.value;render()">${PAYOPTS.map(p => `<option value="${p[0]}" ${posPay === p[0] ? 'selected' : ''}>${p[1]}</option>`).join('')}</select></div>
+      <div class="row" style="margin-bottom:10px">
+        ${posPay === 'part' ? `<input class="f" style="flex:1;min-width:140px" type="number" step="0.01" min="0" inputmode="decimal" value="${esc(posPaid)}" oninput="posPaid=this.value;posOwing()" placeholder="Amount paid now ($)">` : ''}
+        ${posPay !== 'later' ? `<select class="f" onchange="posAcct=this.value"><option value="cash" ${posAcct === 'cash' ? 'selected' : ''}>Paid cash</option><option value="bank" ${posAcct === 'bank' ? 'selected' : ''}>Paid to bank</option></select>` : ''}</div>
+      ${posPay !== 'full' ? `<div class="note" id="posOwe">${posPay === 'later' ? cur(total) : cur(round(total - Math.min(round(parseFloat(posPaid) || 0), total)))} will be added to Debts → Owed to me.${posCust.trim() ? '' : ' Customer name needed.'}</div>` : ''}
+      ${S.set.gst ? `<label class="chk"><input type="checkbox" ${posGst ? 'checked' : ''} onchange="posGst=this.checked"> Prices include GST (${S.set.gstRate}%)</label>` : ''}
+      <div class="row"><button class="btn in" style="flex:1" onclick="posDone()">Complete sale · ${cur(total)}</button><button class="btn sec" onclick="posClear()">Clear</button></div>
+      <p class="mute">Tip: tap a line to change its price for this sale.</p>`
+      : '<div class="card empty">Type an item number and how many, or tap an item above.</div>'}
+    <div class="row between" style="margin-top:22px"><h3 style="margin:0">Today's sales (${todays.length})${showNums ? ' · ' + cur(sum(todays, t => t.saleAmt ?? t.amount)) : ''}</h3>${eye()}</div>
+    <div class="list" style="margin-top:8px">${todays.length ? todays.map(txRow).join('') : '<div class="empty">No sales yet today.</div>'}</div>`;
   },
   money() {
     const months = [...new Set(S.tx.map(t => t.date.slice(0, 7)))].sort().reverse();
@@ -832,7 +966,7 @@ const V = {
     return `<h2>Stock</h2>
     <div class="row bar"><button class="btn" onclick="editItem()">+ Add product</button>${eye()}</div>
     ${items.length ? items.map(i => { const isLow = i.low > 0 && i.qty <= i.low; return `<div class="card prod ${isLow ? 'low' : ''}">
-      <div class="top"><div><div class="t" style="font-weight:700;font-size:17px">${esc(i.name)}</div>
+      <div class="top"><div><div class="t" style="font-weight:700;font-size:17px"><span class="mute">#${i.num}</span> ${esc(i.name)}</div>
         ${isLow ? '<div class="neg" style="font-weight:700;font-size:14px">⚠️ Low – time to restock</div>' : ''}
         <div class="mute">Cost ${fmt(i.cost)} · Sells ${fmt(i.price)}${i.price && i.cost ? ` · Profit ${fmt(i.price - i.cost)} each` : ''}</div>
         ${i.low > 0 ? `<div class="mute">Alert at ${i.low} or fewer</div>` : ''}</div>
