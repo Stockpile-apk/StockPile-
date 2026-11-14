@@ -8,7 +8,7 @@ A simple offline tracker for money in and out, stock, and debts. It runs entirel
 - **Offline:** after the first visit it works with no internet.
 - **Lockable:** set a PIN under More to encrypt your data and backups, and save the recovery key it gives you.
 - **Separate books:** keep more than one business, each with its own money, stock and debts.
-- **Sell screen:** ring up sales by item number or by scanning a barcode, with part payments and pay-later sales that go to Debts.
+- **Sell screen:** ring up sales by item number or by scanning a barcode, with part payments and pay-later sales that go to the Owing tab.
 - **Barcodes:** print labels for your products, or scan the barcode already on the packaging.
 - **Receipts and customers:** send or print a receipt, and see what each customer has bought and still owes.
 

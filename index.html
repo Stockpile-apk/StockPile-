@@ -85,9 +85,9 @@ select.f,input.f{padding:8px;border-radius:8px;border:1px solid var(--line);font
 <nav id="nav">
   <button data-t="home">Home</button>
   <button data-t="sell">Sell</button>
-  <button data-t="money">Money</button>
+  <button data-t="money">Ledger</button>
   <button data-t="stock">Stock</button>
-  <button data-t="debts">Debts</button>
+  <button data-t="debts">Owing</button>
   <button data-t="more">More</button>
 </nav>
 <main id="view"></main>
@@ -105,7 +105,7 @@ select.f,input.f{padding:8px;border-radius:8px;border:1px solid var(--line);font
 
 <script>
 const KEY0 = 'money_inventory_tracker_v1', PKEY = 'stockpile_profiles';
-const VERSION = 9;
+const VERSION = 10;
 const fresh = () => ({ tx: [], items: [], debts: [], lastBackup: null, dirty: 0, auto: true, offRemind: true, lastSent: null, offSnooze: null, set: { gst: false, gstRate: 5 } });
 const defaultP = () => ({ list: [{ id: 'default', name: 'My business' }], current: 'default' });
 const CAN = !!(globalThis.crypto && crypto.subtle);
@@ -292,7 +292,7 @@ function delTx(id) {
   if (it && confirm(`Put ${t.qty} × ${it.name} back in stock?`)) it.qty += t.qty;
   S.tx = S.tx.filter(x => x.id !== id);
   const debt = t.sale && !S.tx.some(x => x.sale === t.sale) && S.debts.find(d => d.sale === t.sale);
-  if (debt && confirm(`This sale left ${cur(Math.max(bal(debt), 0))} owing from ${debt.name}. Remove that from Debts too?`)) S.debts = S.debts.filter(d => d !== debt);
+  if (debt && confirm(`This sale left ${cur(Math.max(bal(debt), 0))} owing from ${debt.name}. Remove that from the Owing tab too?`)) S.debts = S.debts.filter(d => d !== debt);
   commit(); render();
 }
 
@@ -308,7 +308,7 @@ function delSelected() {
   if (sold.length && confirm(`${sold.length} of these ${sold.length === 1 ? 'is a sale' : 'are sales'}. Put the sold items back in stock?`)) sold.forEach(t => { S.items.find(i => i.id === t.itemId).qty += t.qty; });
   S.tx = S.tx.filter(t => !sel.has(t.id));
   const gone = S.debts.filter(d => d.sale && list.some(t => t.sale === d.sale) && !S.tx.some(t => t.sale === d.sale));
-  if (gone.length && confirm(`${gone.length === 1 ? 'One of the deleted sales still has an amount' : gone.length + ' of the deleted sales still have amounts'} owing in Debts. Remove ${gone.length === 1 ? 'it' : 'them'} from Debts too?`)) S.debts = S.debts.filter(d => !gone.includes(d));
+  if (gone.length && confirm(`${gone.length === 1 ? 'One of the deleted sales still has an amount' : gone.length + ' of the deleted sales still have amounts'} on the Owing tab. Remove ${gone.length === 1 ? 'it' : 'them'} from there too?`)) S.debts = S.debts.filter(d => !gone.includes(d));
   sel.clear(); selMode = false; commit(); render();
 }
 
@@ -331,7 +331,7 @@ function editItem(id) {
 }
 function delItem(id) {
   const it = S.items.find(x => x.id === id);
-  if (it && confirm(`Delete "${it.name}" from your stock list?\n(Money entries already recorded stay.)`)) { S.items = S.items.filter(x => x.id !== id); commit(); render(); }
+  if (it && confirm(`Delete "${it.name}" from your stock list?\n(Ledger entries already recorded stay.)`)) { S.items = S.items.filter(x => x.id !== id); commit(); render(); }
 }
 function sell(id) {
   const it = S.items.find(x => x.id === id); if (!it) return;
@@ -378,7 +378,7 @@ function recordSale(lines, o) {
   if (o.pay === 'part' && !(P > 0)) return 'Enter how much was paid now, or choose Pay later.';
   if (P > T) P = T;
   const owing = round(T - P), cust = String(o.cust || '').trim();
-  if (owing > 0 && !cust) return 'Add the customer name, so the amount owing goes under their name in Debts.';
+  if (owing > 0 && !cust) return 'Add the customer name, so the amount owing goes under their name on the Owing tab.';
   const sale = uid(), date = o.date || today(); let left = P;
   lines.forEach((l, i) => {
     const full = round(l.qty * l.price);
@@ -392,7 +392,7 @@ function recordSale(lines, o) {
   if (owing > 0) S.debts.push({ id: uid(), dir: 'owed', name: cust, amount: owing, note: 'Sale: ' + lines.map(l => `${l.qty} × ${l.it.name}`).join(', '), date, payments: [], sale, ...(isDate(o.due) ? { due: o.due } : {}) });
   return { total: T, paid: P, owing, sale };
 }
-const saleMsg = (r, cust) => r.owing > 0 ? `✓ Sale recorded: ${cur(r.total)}. Paid now ${cur(r.paid)}; ${cur(r.owing)} owing was added to Debts under ${cust}.` : `✓ Sale recorded: ${cur(r.total)}`;
+const saleMsg = (r, cust) => r.owing > 0 ? `✓ Sale recorded: ${cur(r.total)}. Paid now ${cur(r.paid)}; ${cur(r.owing)} owing was added to the Owing tab under ${cust}.` : `✓ Sale recorded: ${cur(r.total)}`;
 const PAYOPTS = [['full', 'Paid in full'], ['part', 'Part payment now'], ['later', 'Pay later (on account)']];
 
 /* ---------- Sell screen (point of sale) ---------- */
@@ -422,7 +422,7 @@ function posPrice(id) {
 function posOwing() {
   const el = $('#posOwe'); if (!el) return;
   const T = round(sum(cart, c => round(c.qty * c.price))), P = Math.min(round(parseFloat(posPaid) || 0), T);
-  el.textContent = posPay === 'later' ? `${cur(T)} will be added to Debts → Owed to me.` : posPay === 'part' ? `${cur(round(T - P))} will be added to Debts → Owed to me.` : '';
+  el.textContent = posPay === 'later' ? `${cur(T)} will be added to Owing → Owed to me.` : posPay === 'part' ? `${cur(round(T - P))} will be added to Owing → Owed to me.` : '';
 }
 function posClear() { if (cart.length && confirm('Clear this sale?')) { cart = []; render(); } }
 function posDone() {
@@ -597,7 +597,7 @@ function receipt(id) {
 function voidSale(id) {
   const r = saleInfo(id); if (!r) return;
   const later = r.debt ? paid(r.debt) : 0;
-  if (!confirm(`Void this whole sale (${cur(r.total)})?\n\nThe items go back into stock and the sale is removed from your records${r.debt ? ', along with the amount owing in Debts' : ''}.` + (later > 0 ? `\n\nNote: ${cur(later)} in payments already recorded against it will stay in your Money list. Delete those entries yourself if they should go too.` : ''))) return;
+  if (!confirm(`Void this whole sale (${cur(r.total)})?\n\nThe items go back into stock and the sale is removed from your records${r.debt ? ', along with the amount on the Owing tab' : ''}.` + (later > 0 ? `\n\nNote: ${cur(later)} in payments already recorded against it will stay in your Ledger. Delete those entries yourself if they should go too.` : ''))) return;
   r.tx.forEach(t => { const it = t.itemId && S.items.find(i => i.id === t.itemId); if (it && t.qty > 0) it.qty += t.qty; });
   S.tx = S.tx.filter(t => t.sale !== id);
   if (r.debt) S.debts = S.debts.filter(d => d !== r.debt);
@@ -1170,7 +1170,7 @@ const V = {
         ${posPay === 'part' ? `<input class="f" style="flex:1;min-width:140px" type="number" step="0.01" min="0" inputmode="decimal" value="${esc(posPaid)}" oninput="posPaid=this.value;posOwing()" placeholder="Amount paid now ($)">` : ''}
         ${posPay !== 'later' ? `<select class="f" onchange="posAcct=this.value"><option value="cash" ${posAcct === 'cash' ? 'selected' : ''}>Paid cash</option><option value="bank" ${posAcct === 'bank' ? 'selected' : ''}>Paid to bank</option></select>` : ''}</div>
       ${posPay !== 'full' ? `<label class="pf" style="margin-bottom:10px"><span>Due date for the amount owing (optional)</span><input class="f" type="date" value="${esc(posDue)}" oninput="posDue=this.value"></label>` : ''}
-      ${posPay !== 'full' ? `<div class="note" id="posOwe">${posPay === 'later' ? cur(total) : cur(round(total - Math.min(round(parseFloat(posPaid) || 0), total)))} will be added to Debts → Owed to me.${posCust.trim() ? '' : ' Customer name needed.'}</div>` : ''}
+      ${posPay !== 'full' ? `<div class="note" id="posOwe">${posPay === 'later' ? cur(total) : cur(round(total - Math.min(round(parseFloat(posPaid) || 0), total)))} will be added to Owing → Owed to me.${posCust.trim() ? '' : ' Customer name needed.'}</div>` : ''}
       ${S.set.gst ? `<label class="chk"><input type="checkbox" ${posGst ? 'checked' : ''} onchange="posGst=this.checked"> Prices include GST (${S.set.gstRate}%)</label>` : ''}
       <div class="row"><button class="btn in" style="flex:1" onclick="posDone()">Complete sale · ${cur(total)}</button><button class="btn sec" onclick="posClear()">Clear</button></div>
       <p class="mute">Tip: tap a line to change its price for this sale.</p>`
@@ -1207,7 +1207,7 @@ const V = {
         <div class="card"><div class="lbl">Paid on purchases</div><div class="big">${fmt(gp)}</div></div>
         <div class="card"><div class="lbl">${gc - gp >= 0 ? 'Owing' : 'Refund'}</div><div class="big">${fmt(Math.abs(gc - gp))}</div></div></div>` : ''}`;
     }
-    return `<h2>Money in &amp; out</h2>
+    return `<h2>Ledger</h2>
     <div class="row bar"><button class="btn in" onclick="addTx('in')">+ In</button><button class="btn out" onclick="addTx('out')">− Out</button><button class="btn sec" onclick="addMove()">⇄ Move</button></div>
     <div class="row bar"><select class="f" onchange="moneyFilter=this.value;render()">
       <option value="month" ${moneyFilter === 'month' ? 'selected' : ''}>This month</option>
@@ -1246,7 +1246,7 @@ const V = {
       <div class="row" style="margin-top:12px">${bal(d) > 0 ? `<button class="btn sm" onclick="payDebt('${d.id}')">Add payment</button>` : ''}
         <button class="btn sm sec" onclick="editDebt('${d.id}')">Edit</button><button class="btn sm sec" onclick="delDebt('${d.id}')">Delete</button></div></div>`;
     const owe = open.filter(d => d.dir === 'owe'), owed = open.filter(d => d.dir === 'owed');
-    return `<h2>Debts</h2>
+    return `<h2>Owing</h2>
     <div class="row bar"><button class="btn" onclick="editDebt()">+ Add a debt</button><button class="btn sec" onclick="customersSheet()">👥 Customers</button>${eye()}</div>
     <h3>I owe (${fmt(sum(owe, bal))})</h3>${owe.length ? owe.map(card).join('') : '<div class="mute">Nothing owed. 👍</div>'}
     <h3>Owed to me (${fmt(sum(owed, bal))})</h3>${owed.length ? owed.map(card).join('') : '<div class="mute">Nobody owes you right now.</div>'}
@@ -1279,10 +1279,10 @@ const V = {
     <div class="card" style="margin-bottom:12px"><b>GST</b>
       <label class="chk"><input type="checkbox" ${S.set.gst ? 'checked' : ''} onchange="S.set.gst=this.checked;save();render()"> Track GST</label>
       ${S.set.gst ? `<div class="row"><span class="mute">Rate %</span><input class="f" type="number" step="0.1" min="0" style="width:90px" value="${S.set.gstRate}" onchange="S.set.gstRate=parseFloat(this.value)||5;save()"></div>
-      <p class="mute">Entries get an “Amount includes GST” tick box. Totals show under Money → Breakdown.</p>` : '<p class="mute">Off. Turn it on if you ever need it.</p>'}</div>
+      <p class="mute">Entries get an “Amount includes GST” tick box. Totals show under Ledger → Breakdown.</p>` : '<p class="mute">Off. Turn it on if you ever need it.</p>'}</div>
     <div class="card" style="margin-bottom:12px"><b>Open in Excel</b>
       <p class="mute">Download your lists as files that Excel or Google Sheets can open.</p>
-      <div class="row"><button class="btn sec" onclick="exportMoney()">Money list (.csv)</button><button class="btn sec" onclick="exportStock()">Stock list (.csv)</button></div></div>
+      <div class="row"><button class="btn sec" onclick="exportMoney()">Ledger (.csv)</button><button class="btn sec" onclick="exportStock()">Stock list (.csv)</button></div></div>
     <div class="card"><b>Start over</b><p class="mute">Erases everything in the tracker.</p><button class="btn out" onclick="wipe()">Erase all data</button></div>
     <p class="mute" style="text-align:center;margin-top:18px">StockPile version ${VERSION}</p>`;
   }

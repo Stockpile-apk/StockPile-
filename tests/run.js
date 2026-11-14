@@ -125,7 +125,7 @@ ok(S.tx.length===0 && cart.length===2 && /customer name/i.test(lastAlert),'pay l
 posCust='Dana'; posDone();
 ok(S.tx.length===2 && S.tx.every(t=>t.amount===0) && S.tx[0].saleAmt===40 && S.tx[1].saleAmt===10 && S.items[0].qty===16 && S.items[1].qty===18,'pay later: stock drops, no money in yet');
 ok(S.debts.length===1 && S.debts[0].dir==='owed' && S.debts[0].name==='Dana' && S.debts[0].amount===50 && /4 × Widget, 2 × Gadget/.test(S.debts[0].note) && S.debts[0].sale===S.tx[0].sale,'pay later: full amount goes to Debts owed to me');
-ok(acctBal('cash')===0 && acctBal('bank')===0 && /owing was added to Debts under Dana/.test(posMsg),'pay later: balances unchanged');
+ok(acctBal('cash')===0 && acctBal('bank')===0 && /owing was added to the Owing tab under Dana/.test(posMsg),'pay later: balances unchanged');
 cart=[{id:'a',qty:3,price:10},{id:'b',qty:1,price:5}]; posPay='part'; posPaid=''; posCust='Eli'; posDone();
 ok(S.tx.length===2 && /how much was paid/i.test(lastAlert),'part payment needs an amount');
 posPaid='20'; posAcct='bank'; posDone();
@@ -141,7 +141,7 @@ ok(S.debts.length===2 && S.tx[S.tx.length-1].amount===10 && S.tx[S.tx.length-1].
 const rr=recordSale([{it:S.items[0],qty:2,price:10}],{cust:'Flo',pay:'later'}); ok(rr.owing===20 && S.debts.length===3,'Stock-tab Sold form can pay later too');
 const dcount=S.debts.length; delTx(S.tx[S.tx.length-1].id); ok(S.debts.length===dcount-1 && S.items[0].qty===12,'deleting a pay-later sale can restock and remove its debt');
 const rc=clean(JSON.parse(JSON.stringify(S))); ok(rc.tx[0].saleAmt===40 && rc.debts[0].sale===rc.tx[0].sale,'pay-later details survive save and reload');
-cart=[{id:'a',qty:1,price:10}]; posPay='part'; posPaid='4'; posCust='Gus'; tab='sell'; ok(/6\.00 will be added to Debts/.test(V.sell()),'sell screen shows the amount that will be owing'); allTabs(); cart=[]; posPay='full'; tab='home';
+cart=[{id:'a',qty:1,price:10}]; posPay='part'; posPaid='4'; posCust='Gus'; tab='sell'; ok(/6\.00 will be added to Owing/.test(V.sell()),'sell screen shows the amount that will be owing'); allTabs(); cart=[]; posPay='full'; tab='home';
 
 // ---- version 7 features ----
 ok(VERSION>=7 && V.more().includes('version '+VERSION),'version number shows under More');
