@@ -375,6 +375,11 @@ S.learn={}; S.learn[storeKey('Corner Store')]='Snacks'; ok(parseReceipt('Corner 
   const C2=clean({cards:[{id:'credit',name:'RBC Visa',last4:'4417'},{id:'cctd1',name:'TD',last4:'12'},{id:'bad',name:'x'},{id:'cczz',name:''}],tx:[{id:'m9',type:'move',amount:5,from:'bank',to:'cctd1',date:today()}]});
   ok(C2.cards.length===2 && C2.cards[1].last4===undefined && C2.tx[0].to==='cctd1','saved books keep the card list and payments to each card');
   S.cards=[];
+  S.banks=[{id:'bank',name:'TD Chequing',last4:'1234'},{id:'bksav',name:'Savings'}]; S.tx.push({id:'b1',type:'move',amount:100,from:'cash',to:'bksav',note:'',date:today()},{id:'b2',type:'in',amount:7,acct:'bksav',cat:'x',note:'',date:today()});
+  ok(acctName('bank')==='TD Chequing ••1234' && acctBal('bksav')===107 && bankTotal()===acctBal('bank')+107 && moves().some(m=>m[0]==='bank>bksav') && moves().some(m=>m[0]==='bksav>credit') && moveName(S.tx.find(t=>t.id==='b1'))==='Moved Cash → Savings','each bank account has its own name, balance and transfers');
+  ok(parseReceipt('Shell\\nTOTAL 20.00\\nINTERAC ****1234').acct==='bank' && parseReceipt('Shell\\nTOTAL 20.00\\nDEBIT').acct==='bank' && acctField('cash',null,1).o.map(x=>x[0]).join()==='cash,bank,bksav','a receipt picks the bank account by the debit card digits; sales can go to any account');
+  ok(clean({banks:[{id:'bksav',name:'Savings',last4:'9876'},{id:'zz',name:'x'}],tx:[{id:'q',type:'move',amount:1,from:'bksav',to:'cash',date:today()}]}).tx[0].from==='bksav' && clean({banks:[{id:'bksav',name:'Savings',last4:'9876'},{id:'zz',name:'x'}]}).banks.length===1,'saved books keep bank accounts and moves out of them');
+  S.banks=[];
   S.tx=keep; }
 addTx('out',null,R1); ok(/Filled in from the photo/.test($('#modal').innerHTML) && /value="8.48"/.test($('#modal').innerHTML) && /value="2026-11-12"/.test($('#modal').innerHTML),'a read receipt pre-fills the entry and asks you to check it'); closeForm();
 // business books still get receipts

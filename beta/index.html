@@ -129,9 +129,9 @@ body.dark .sheet .rc{color:var(--ink)}body.dark .sheet .rcs{color:var(--mute)}bo
 // The test copy (served from /beta/) keeps its data under separate names, so it can never touch the real app's data.
 const BETA = /\/beta\//.test((typeof location !== 'undefined' && location.pathname) || '');
 const KEY0 = (BETA ? 'beta_' : '') + 'money_inventory_tracker_v1', PKEY = (BETA ? 'beta_' : '') + 'stockpile_profiles';
-const VERSION = '3.5.0';
+const VERSION = '3.6.0';
 const okDark = v => v === true || v === false ? v : undefined;
-const fresh = () => ({ tx: [], items: [], debts: [], lastBackup: null, dirty: 0, auto: true, offRemind: true, lastSent: null, offSnooze: null, contacts: [], adj: [], rec: [], budgets: {}, staff: [], gone: {}, mm: {}, learn: {}, cards: [], set: { gst: false, gstRate: 5 } });
+const fresh = () => ({ tx: [], items: [], debts: [], lastBackup: null, dirty: 0, auto: true, offRemind: true, lastSent: null, offSnooze: null, contacts: [], adj: [], rec: [], budgets: {}, staff: [], gone: {}, mm: {}, learn: {}, cards: [], banks: [], set: { gst: false, gstRate: 5 } });
 const defaultP = () => ({ list: [{ id: 'default', name: 'My business' }], current: 'default' });
 const CAN = !!(globalThis.crypto && crypto.subtle);
 let S = fresh(), P = defaultP(), storageOK = true, loadFailed = false;
@@ -206,26 +206,33 @@ const stamp = () => { const d = new Date(); return today() + '-' + String(d.getH
 const sum = (a, f) => a.reduce((t, x) => t + (f(x) || 0), 0);
 const round = n => Math.round(n * 100) / 100;
 const niceDate = d => { try { return new Date(d + 'T12:00').toLocaleDateString('en-CA', { month: 'short', day: 'numeric', year: 'numeric' }); } catch (e) { return d; } };
-// Accounts: cash, bank (debit) and any number of credit cards. The first card's key is "credit"
-// (older entries used it); more cards are "cc" + an id.
+// Accounts: cash, any number of bank accounts (debit) and credit cards. The first of each keeps the
+// key older entries used ("bank", "credit"); more are "bk"/"cc" + an id.
 const cardList = () => (S.cards || []).length ? S.cards : [{ id: 'credit', name: 'Credit card' }];
+const bankList = () => (S.banks || []).length ? S.banks : [{ id: 'bank', name: 'Debit (bank)' }];
 const isCard = a => a === 'credit' || /^cc[a-z0-9]{1,24}$/i.test(a || '');
+const isBank = a => a === 'bank' || /^bk[a-z0-9]{1,24}$/i.test(a || '');
 const cardName = c => c.name + (c.last4 ? ' ••' + c.last4 : '');
-const acctName = a => a === 'bank' ? 'Debit (bank)' : isCard(a) ? cardName(cardList().find(c => c.id === a) || { name: 'Credit card' }) : 'Cash';
+const acctName = a => isBank(a) ? cardName(bankList().find(c => c.id === a) || { name: 'Debit (bank)' }) : isCard(a) ? cardName(cardList().find(c => c.id === a) || { name: 'Credit card' }) : 'Cash';
+const bankTotal = () => sum(bankList(), b => acctBal(b.id));
+const bankTiles = () => bankList().map(b => { const v = acctBal(b.id); return `<div class="card"><div class="lbl">${(S.banks || []).length ? esc(cardName(b)) : 'In the bank (debit)'}</div><div class="big ${v < 0 ? 'neg' : ''}">${fmt(v)}</div></div>`; }).join('');
 const ACCT = new Proxy({}, { get: (_, a) => acctName(a) });
-const okAcct = a => a === 'bank' || isCard(a) ? a : 'cash';
+const okAcct = a => isBank(a) || isCard(a) ? a : 'cash';
 const acct = t => t.acct || 'cash';
 // A move shifts money between two accounts. Older moves only stored "from" (Cash ↔ Bank).
 const moveTo = t => t.to || (t.from === 'cash' ? 'bank' : 'cash');
-const moves = () => [['cash>bank', 'Cash → Debit (bank deposit)'], ['bank>cash', 'Debit (bank) → Cash (withdrawal)'], ...cardList().flatMap(c => [[`bank>${c.id}`, `Pay ${cardName(c)} from Debit (bank)`], [`cash>${c.id}`, `Pay ${cardName(c)} with Cash`]])];
+const moves = () => { const B = bankList(), n = b => acctName(b.id);
+  return [...B.flatMap(b => [[`cash>${b.id}`, `Cash → ${n(b)} (deposit)`], [`${b.id}>cash`, `${n(b)} → Cash (withdrawal)`]]),
+    ...B.flatMap(a => B.filter(b => b !== a).map(b => [`${a.id}>${b.id}`, `${n(a)} → ${n(b)} (transfer)`])),
+    ...cardList().flatMap(c => [...B.map(b => [`${b.id}>${c.id}`, `Pay ${cardName(c)} from ${n(b)}`]), [`cash>${c.id}`, `Pay ${cardName(c)} with Cash`]])]; };
 const moveName = t => isCard(moveTo(t)) ? `Paid ${acctName(moveTo(t))} from ${acctName(t.from)}` : `Moved ${acctName(t.from)} → ${acctName(moveTo(t))}`;
 // For a credit card the balance is negative while you owe on it.
 const acctBal = a => sum(S.tx, t => t.type === 'move' ? (t.from === a ? -t.amount : moveTo(t) === a ? t.amount : 0) : acct(t) !== a ? 0 : t.type === 'in' ? t.amount : -t.amount);
-const cardUsed = id => S.tx.some(t => t.acct === id || t.to === id) || (S.rec || []).some(r => r.acct === id);
+const cardUsed = id => S.tx.some(t => t.acct === id || t.to === id || t.from === id) || (S.rec || []).some(r => r.acct === id);
 const cardsShown = () => cardList().filter(c => (S.cards || []).length || cardUsed(c.id));
 const usesCredit = () => cardsShown().length > 0;
 const owedOn = id => Math.max(-acctBal(id), 0);
-const cardTiles = () => cardsShown().map(c => `<div class="card" onclick="addMove(null, { from: 'bank', to: '${c.id}' })" style="cursor:pointer"><div class="lbl">${esc(cardName(c))} owed</div><div class="big ${owedOn(c.id) ? 'neg' : ''}">${fmt(owedOn(c.id))}</div><div class="mute">tap to pay it off</div></div>`).join('');
+const cardTiles = () => cardsShown().map(c => `<div class="card" onclick="addMove(null, { from: '${bankList()[0].id}', to: '${c.id}' })" style="cursor:pointer"><div class="lbl">${esc(cardName(c))} owed</div><div class="big ${owedOn(c.id) ? 'neg' : ''}">${fmt(owedOn(c.id))}</div><div class="mute">tap to pay it off</div></div>`).join('');
 const gstOf = (amount, inc) => S.set.gst && inc ? round(amount * S.set.gstRate / (100 + S.set.gstRate)) : 0;
 const eye = () => staffMode ? '' : `<button class="btn sec sm" onclick="showNums=!showNums;render()">${showNums ? '🙈 Hide amounts' : '👁 Show amounts'}</button>`;
 
@@ -246,7 +253,7 @@ function clean(d) {
   o.tx = arr(d.tx).filter(t => ['in', 'out', 'move'].includes(t.type)).map(t => {
     const r = { id: okId(t.id), type: t.type, amount: num(t.amount), note: str(t.note), date: okDate(t.date) };
     if (num(t.m) > 0) r.m = num(t.m);
-    if (t.type === 'move') { r.from = t.from === 'bank' ? 'bank' : 'cash'; if (t.to && okAcct(t.to) === t.to && t.to !== r.from) r.to = t.to; }
+    if (t.type === 'move') { r.from = isBank(t.from) ? t.from : 'cash'; if (t.to && okAcct(t.to) === t.to && t.to !== r.from) r.to = t.to; }
     else {
       r.cat = str(t.cat); r.acct = okAcct(t.acct); r.gst = num(t.gst);
       if (t.place) r.place = str(t.place).slice(0, 80);
@@ -274,6 +281,7 @@ function clean(d) {
   o.contacts = arr(d.contacts).map(c => ({ key: ckey(str(c.name)), name: str(c.name).trim(), phone: cleanPhone(c.phone), email: EMAIL_OK.test(str(c.email).trim()) ? str(c.email).trim().slice(0, 120) : '', promo: !!c.promo, ...(num(c.m) > 0 ? { m: num(c.m) } : {}) })).filter(c => c.key);
   o.adj = arr(d.adj).map(a => ({ id: okId(a.id), date: okDate(a.date), itemId: okId(a.itemId), name: str(a.name), qty: Math.round(num(a.qty)), why: str(a.why), note: str(a.note), value: num(a.value), ...(num(a.m) > 0 ? { m: num(a.m) } : {}) }));
   o.cards = arr(d.cards).filter(c => isCard(c && c.id) && str(c.name).trim()).slice(0, 20).map(c => ({ id: c.id, name: str(c.name).trim().slice(0, 30), ...(/^\d{4}$/.test(c.last4) ? { last4: c.last4 } : {}), ...(num(c.m) > 0 ? { m: num(c.m) } : {}) }));
+  o.banks = arr(d.banks).filter(c => isBank(c && c.id) && str(c.name).trim()).slice(0, 20).map(c => ({ id: c.id, name: str(c.name).trim().slice(0, 30), ...(/^\d{4}$/.test(c.last4) ? { last4: c.last4 } : {}), ...(num(c.m) > 0 ? { m: num(c.m) } : {}) }));
   o.rec = arr(d.rec).map(r => ({ id: okId(r.id), name: str(r.name), amount: num(r.amount), cat: str(r.cat), acct: okAcct(r.acct), day: Math.min(Math.max(Math.round(num(r.day)) || 1, 1), 28), last: /^\d{4}-\d{2}$/.test(r.last) ? r.last : today().slice(0, 7), ...(num(r.m) > 0 ? { m: num(r.m) } : {}) }));
   if (d.budgets && typeof d.budgets === 'object') Object.entries(d.budgets).slice(0, 80).forEach(([k, v]) => { if (num(v) > 0 && str(k)) o.budgets[str(k).slice(0, 60)] = num(v); });
   o.staff = arr(d.staff).map(x => ({ id: okId(x.id), who: str(x.who).slice(0, 40), perms: Object.fromEntries(['stock', 'stockEdit', 'owing', 'sales', 'refunds'].filter(k => x.perms && x.perms[k]).map(k => [k, true])) }));
@@ -345,7 +353,7 @@ function fieldHTML(f) {
   return `<label class="fl"><span>${esc(f.l)}</span><input id="${id}" ${attrs} value="${esc(val)}" placeholder="${esc(f.ph || '')}">${list}</label>`;
 }
 // Credit card is for money you spend; sales are paid to you in cash or into the bank.
-const acctField = (v, l, noCredit) => ({ k: 'acct', l: l || 'Paid with', t: 'select', v: noCredit && isCard(v) ? 'cash' : v || 'cash', o: noCredit ? [['cash', 'Cash'], ['bank', 'Debit / card (to bank)']] : [['cash', 'Cash'], ['bank', 'Debit (bank)'], ...cardList().map(c => [c.id, cardName(c)]), ...(isCard(v) && !cardList().some(c => c.id === v) ? [[v, acctName(v)]] : [])] });
+const acctField = (v, l, noCredit) => ({ k: 'acct', l: l || 'Paid with', t: 'select', v: noCredit && isCard(v) ? 'cash' : v || 'cash', o: noCredit ? [['cash', 'Cash'], ...bankList().map(b => [b.id, (S.banks || []).length ? 'Debit / card → ' + cardName(b) : 'Debit / card (to bank)'])] : [['cash', 'Cash'], ...bankList().map(b => [b.id, cardName(b)]), ...cardList().map(c => [c.id, cardName(c)]), ...((isCard(v) || isBank(v)) && ![...cardList(), ...bankList()].some(c => c.id === v) ? [[v, acctName(v)]] : [])] });
 const gstField = def => S.set.gst ? { k: 'gstInc', l: `Amount includes GST (${S.set.gstRate}%)`, t: 'check', v: def } : null;
 function categories(type) {
   const base = isPersonal() ? (type === 'in' ? PINCOME : PCATS.map(c => c[0])) : type === 'in' ? ['Sales', 'Job payment', 'Other income'] : ['Inventory', 'Supplies', 'Gas', 'Tools', 'Rent', 'Phone', 'Food', 'Other'];
@@ -506,7 +514,7 @@ function recordSale(lines, o) {
     const cash = owing > 0 ? (i === lines.length - 1 ? left : Math.min(left, round(P * full / T))) : full;
     left = round(left - cash);
     l.it.qty -= l.qty;
-    const t = { id: uid(), type: 'in', amount: round(cash), cat: 'Sales', note: `Sold ${l.qty} × ${l.it.name}`, cust, acct: o.acct === 'bank' ? 'bank' : 'cash', gst: gstOf(full, o.gstInc), date, cogs: round(l.qty * (l.it.cost || 0)), itemId: l.it.id, qty: l.qty, sale, ...(staffMode && staff ? { by: staff.who } : {}) };
+    const t = { id: uid(), type: 'in', amount: round(cash), cat: 'Sales', note: `Sold ${l.qty} × ${l.it.name}`, cust, acct: isBank(o.acct) ? o.acct : 'cash', gst: gstOf(full, o.gstInc), date, cogs: round(l.qty * (l.it.cost || 0)), itemId: l.it.id, qty: l.qty, sale, ...(staffMode && staff ? { by: staff.who } : {}) };
     if (owing > 0) t.saleAmt = full;
     if (net[i].d > 0) t.disc = net[i].d;
     S.tx.push(t);
@@ -927,20 +935,23 @@ function applyRecurring() {
   }
   return changed;
 }
-function cardForm(id) {
-  const c = (S.cards || []).find(x => x.id === id) || { name: '', last4: '' };
-  form(id ? 'Edit credit card' : 'Add a credit card', [
-    { k: 'name', l: 'Card name', v: c.name, req: 1, ph: 'e.g. RBC Visa' },
-    { k: 'last4', l: 'Last 4 digits (optional)', v: c.last4 || '', ph: 'e.g. 4417' }
+// Credit cards and bank accounts are set up the same way: a name and, if you like, the last 4 digits.
+const ACCT_KINDS = { card: { col: 'cards', first: 'credit', pre: 'cc', one: 'credit card', ph: 'e.g. RBC Visa', legacy: 'Credit card' }, bank: { col: 'banks', first: 'bank', pre: 'bk', one: 'bank account', ph: 'e.g. TD Chequing', legacy: 'Debit (bank)' } };
+function cardForm(id, kind) {
+  const K = ACCT_KINDS[kind || 'card'], list = S[K.col] || [], c = list.find(x => x.id === id) || { name: '', last4: '' };
+  form(id ? `Edit ${K.one}` : `Add a ${K.one}`, [
+    { k: 'name', l: kind === 'bank' ? 'Account name' : 'Card name', v: c.name, req: 1, ph: K.ph },
+    { k: 'last4', l: kind === 'bank' ? 'Last 4 digits of its debit card (optional)' : 'Last 4 digits (optional)', v: c.last4 || '', ph: 'e.g. 4417' }
   ], v => {
     const l4 = String(v.last4 || '').replace(/\D/g, '');
     if (l4 && l4.length !== 4) { alert('Put just the last 4 digits of the card.'); return false; }
+    if (l4 && [...(S.cards || []), ...(S.banks || [])].some(x => x.last4 === l4 && x.id !== id)) { alert('Another card already has those last 4 digits.'); return false; }
     const data = { name: String(v.name).trim().slice(0, 30), ...(l4 ? { last4: l4 } : {}) };
-    // The first card takes over entries already marked "Credit card".
+    // The first one takes over entries already marked with the old single account.
     if (id) { Object.keys(c).filter(k => k !== 'id' && k !== 'm').forEach(k => delete c[k]); Object.assign(c, data); }
-    else (S.cards = S.cards || []).push({ id: S.cards.length ? 'cc' + uid() : 'credit', ...data });
-  }, id ? '' : `<div class="mute">${(S.cards || []).length ? '' : 'Anything you already put on “Credit card” goes on this first card.'}</div>`,
-    id ? () => { if (cardUsed(id)) { alert('This card has entries in your Ledger, so it can’t be deleted. You can rename it instead.'); return; } if (confirm('Delete this card?')) { S.cards = S.cards.filter(x => x.id !== id); commit(); render(); } } : null);
+    else (S[K.col] = list).push({ id: list.length ? K.pre + uid() : K.first, ...data });
+  }, id || list.length ? '' : `<div class="mute">Anything you already put on “${K.legacy}” goes on this first one.</div>`,
+    id ? () => { if (cardUsed(id)) { alert(`This ${K.one} has entries in your Ledger, so it can’t be deleted. You can rename it instead.`); return; } if (confirm(`Delete this ${K.one}?`)) { S[K.col] = list.filter(x => x.id !== id); commit(); render(); } } : null);
 }
 function recurForm(id) {
   const r = (S.rec || []).find(x => x.id === id) || { name: '', amount: '', cat: '', acct: 'cash', day: 1 };
@@ -1056,13 +1067,13 @@ function personalHome(notes) {
       <h2 style="margin:8px 0 4px">Welcome back</h2><div class="mute">${new Date().toLocaleDateString('en-CA', { weekday: 'long', month: 'long', day: 'numeric' })}</div></div>
     ${quick}${grid}<div style="text-align:center;margin-top:18px"><button class="btn sec" onclick="showNums=true;render()">👁 Show my summary</button></div>${ver}`;
   const mt = S.tx.filter(t => t.date.startsWith(thisMonth())), mIn = sum(mt.filter(t => t.type === 'in'), t => t.amount), outs = mt.filter(t => t.type === 'out'), mOut = sum(outs, t => t.amount);
-  const cash = acctBal('cash'), bank = acctBal('bank'), od = S.debts.filter(overdue), mn = new Date().toLocaleDateString('en-CA', { month: 'long' });
+  const cash = acctBal('cash'), bank = bankTotal(), od = S.debts.filter(overdue), mn = new Date().toLocaleDateString('en-CA', { month: 'long' });
   const iOwe = sum(S.debts.filter(d => d.dir === 'owe'), d => Math.max(bal(d), 0)), owedMe = sum(S.debts.filter(d => d.dir === 'owed'), d => Math.max(bal(d), 0));
   const spent = Object.fromEntries(groupBy(outs, t => t.cat)), B = S.budgets || {}, cats = [...new Set([...Object.keys(spent), ...Object.keys(B)])].sort((a, b) => (spent[b] || 0) - (spent[a] || 0)), top = Math.max(...Object.values(spent), 1);
   return `${notes}<div class="row bar"><button class="btn" onclick="snapNew()">📷 Snap a receipt</button><button class="btn out" onclick="addTx('out')">− Out</button><button class="btn in" onclick="addTx('in')">+ In</button><button class="btn sec" onclick="showNums=false;render()">🙈 Hide</button></div>
     <div class="grid">
       <div class="card"><div class="lbl">Cash on hand</div><div class="big ${cash < 0 ? 'neg' : ''}">${fmt(cash)}</div></div>
-      <div class="card"><div class="lbl">In the bank (debit)</div><div class="big ${bank < 0 ? 'neg' : ''}">${fmt(bank)}</div></div>
+      ${bankTiles()}
       ${cardTiles()}
       <div class="card"><div class="lbl">In – ${mn}</div><div class="big pos">${fmt(mIn)}</div></div>
       <div class="card"><div class="lbl">Out – ${mn}</div><div class="big neg">${fmt(mOut)}</div></div>
@@ -1254,8 +1265,8 @@ function parseReceipt(text) {
   const place = findPlace(lines); if (place) out.place = place;
   const learned = out.note && S.learn ? S.learn[storeKey(out.note)] : '';
   const cat = learned || bookCat(chain ? chain.cat : guessCat(text)); if (cat) out.cat = cat;
-  const pay = findPay(text), l4 = (String(text).match(/(?:[*x#•]{2,}|ending(?: in)?|acct)\s*[:#]?\s*(\d{4})\b/i) || [])[1], byL4 = l4 && (S.cards || []).find(c => c.last4 === l4);
-  if (byL4) out.acct = byL4.id; else if (pay === 'credit') out.acct = cardList()[0].id; else if (pay) out.acct = pay;
+  const pay = findPay(text), l4 = (String(text).match(/(?:[*x#•]{2,}|ending(?: in)?|acct)\s*[:#]?\s*(\d{4})\b/i) || [])[1], byL4 = l4 && [...(S.cards || []), ...(S.banks || [])].find(c => c.last4 === l4);
+  if (byL4) out.acct = byL4.id; else if (pay === 'credit') out.acct = cardList()[0].id; else if (pay === 'bank') out.acct = bankList()[0].id; else if (pay) out.acct = pay;
   const gl = lines.find(l => /\b(g\.?s\.?t|h\.?s\.?t)\b/i.test(l) && !/pst|#|reg|no\.|number/i.test(l) && amts(l).length);
   if (gl) { const g = amts(gl).pop(); if (g > 0 && (out.amount === undefined || g < out.amount)) out.gst = g; }
   if (lines.length) out.lines = lines.slice(0, 60);
@@ -1488,7 +1499,7 @@ const setupCard = () => `<div class="card" style="text-align:center;padding:26px
 const DKEY = (BETA ? 'beta_' : '') + 'stockpile_device', MKEY = (BETA ? 'beta_' : '') + 'stockpile_me';
 let DEV = (() => { try { let d = localStorage.getItem(DKEY); if (!/^[a-z0-9]{6,12}$/.test(d || '')) { d = (Date.now().toString(36) + Math.random().toString(36).slice(2)).slice(-8); localStorage.setItem(DKEY, d); } return d; } catch (e) { return 'd' + Math.random().toString(36).slice(2, 9); } })();
 const myName = () => { try { return (localStorage.getItem(MKEY) || '').slice(0, 30); } catch (e) { return ''; } };
-const SYNC_COLS = ['tx', 'items', 'debts', 'adj', 'rec', 'cards'];
+const SYNC_COLS = ['tx', 'items', 'debts', 'adj', 'rec', 'cards', 'banks'];
 let baseSnap = null;
 const sigOf = (r, col) => JSON.stringify(r, (k, v) => k === 'm' || (col === 'items' && (k === 'q' || k === 'qty')) ? undefined : v);
 const qtyOf = it => Object.values(it.q || {}).reduce((t, e) => t + (e.n || 0), 0);
@@ -1540,7 +1551,7 @@ function mergeInto(R) {
     for (const r of R[col] || []) { const l = m.get(r.id); if (!l) { if (!dead(r.id, r)) { m.set(r.id, r); if (col === 'tx') added++; } } else m.set(r.id, both ? both(l, r) : newer(l, r)); }
     S[col] = [...m.values()].filter(r => !dead(r.id, r));
   };
-  mergeCol('tx'); mergeCol('adj'); mergeCol('rec'); mergeCol('cards');
+  mergeCol('tx'); mergeCol('adj'); mergeCol('rec'); mergeCol('cards'); mergeCol('banks');
   mergeCol('items', (l, r) => {
     const w = { ...newer(l, r) }, q = { ...(l.q || {}) };
     for (const [dev, e] of Object.entries(r.q || {})) if (!q[dev] || (e.v || 0) > (q[dev].v || 0)) q[dev] = e;
@@ -2381,7 +2392,7 @@ const V = {
     <div style="text-align:center;margin-top:18px"><button class="btn sec" onclick="showNums=true;render()">👁 Show my summary</button></div>
     <p class="mute" style="text-align:center;margin-top:24px;font-size:12px">StockPile version ${VERSION}</p>`;
     const m = thisMonth(), mt = S.tx.filter(t => t.date.startsWith(m));
-    const cash = acctBal('cash'), bank = acctBal('bank');
+    const cash = acctBal('cash'), bank = bankTotal();
     const mIn = sum(mt.filter(t => t.type === 'in'), t => t.amount), mOut = sum(mt.filter(t => t.type === 'out'), t => t.amount);
     const saleProfit = sum(mt.filter(t => t.cogs !== undefined), t => (t.saleAmt ?? t.amount) - (t.gst || 0) - t.cogs);
     const stockVal = sum(S.items, i => Math.max(i.qty, 0) * i.cost);
@@ -2393,7 +2404,7 @@ const V = {
     <div class="row bar">${quick}<button class="btn sec" onclick="showNums=false;render()">🙈 Hide</button></div>
     <div class="grid">
       <div class="card"><div class="lbl">Cash on hand</div><div class="big ${cash < 0 ? 'neg' : ''}">${fmt(cash)}</div></div>
-      <div class="card"><div class="lbl">In the bank (debit)</div><div class="big ${bank < 0 ? 'neg' : ''}">${fmt(bank)}</div></div>
+      ${bankTiles()}
       ${cardTiles()}
       <div class="card"><div class="lbl">Total money</div><div class="big ${cash + bank < 0 ? 'neg' : ''}">${fmt(cash + bank)}</div></div>
       <div class="card"><div class="lbl">In – ${mn}</div><div class="big pos">${fmt(mIn)}</div></div>
@@ -2438,7 +2449,7 @@ const V = {
         <select class="f" onchange="posPay=this.value;render()">${PAYOPTS.map(p => `<option value="${p[0]}" ${posPay === p[0] ? 'selected' : ''}>${p[1]}</option>`).join('')}</select></div>
       <div class="row" style="margin-bottom:10px">
         ${posPay === 'part' ? `<input class="f" style="flex:1;min-width:140px" type="number" step="0.01" min="0" inputmode="decimal" value="${esc(posPaid)}" oninput="posPaid=this.value;posOwing()" placeholder="Amount paid now ($)">` : ''}
-        ${posPay !== 'later' ? `<select class="f" onchange="posAcct=this.value"><option value="cash" ${posAcct === 'cash' ? 'selected' : ''}>Paid cash</option><option value="bank" ${posAcct === 'bank' ? 'selected' : ''}>Paid by debit / card</option></select>` : ''}</div>
+        ${posPay !== 'later' ? `<select class="f" onchange="posAcct=this.value"><option value="cash" ${posAcct === 'cash' ? 'selected' : ''}>Paid cash</option>${bankList().map(b => `<option value="${b.id}" ${posAcct === b.id ? 'selected' : ''}>${(S.banks || []).length ? 'Debit / card → ' + esc(cardName(b)) : 'Paid by debit / card'}</option>`).join('')}</select>` : ''}</div>
       ${posPay !== 'full' ? `<label class="pf" style="margin-bottom:10px"><span>Due date for the amount owing (optional)</span><input class="f" type="date" value="${esc(posDue)}" oninput="posDue=this.value"></label>` : ''}
       ${posPay !== 'full' ? `<div class="note" id="posOwe">${posPay === 'later' ? cur(total) : cur(round(total - Math.min(round(parseFloat(posPaid) || 0), total)))} will be added to Owing → Owed to me.${posCust.trim() ? '' : ' Customer name needed.'}</div>` : ''}
       ${S.set.gst ? `<label class="chk"><input type="checkbox" ${posGst ? 'checked' : ''} onchange="posGst=this.checked"> Prices include GST (${S.set.gstRate}%)</label>` : ''}
@@ -2559,6 +2570,10 @@ const V = {
       ${SEC ? (SEC.bio ? '<p class="mute">Fingerprint unlock is ON.</p><button class="btn sec" onclick="disableBio()">Turn off fingerprint</button>'
         : bioOK() ? '<p class="mute">Unlock with your fingerprint instead of typing the PIN.</p><button class="btn" onclick="enableBio()">Turn on fingerprint unlock</button>'
         : '<p class="mute">Fingerprint unlock is available in the installed app version.</p>') : ''}</div>
+    <div class="card" style="margin-bottom:12px"><b>Bank accounts & debit cards</b>
+      <p class="mute">Add each account so money goes to the right one. Put in the debit card's last 4 digits and a snapped receipt picks the account by itself.</p>
+      ${(S.banks || []).length ? `<div class="list" style="margin-bottom:10px">${S.banks.map(c => `<div class="it"><div class="main" onclick="cardForm('${c.id}','bank')"><div class="t">${esc(cardName(c))}</div><div class="mute">Balance ${fmt(acctBal(c.id))}</div></div></div>`).join('')}</div>` : ''}
+      <button class="btn" onclick="cardForm(null,'bank')">+ Add a bank account</button></div>
     <div class="card" style="margin-bottom:12px"><b>Credit cards</b>
       <p class="mute">Add each card so spending goes on the right one. Put in the last 4 digits and a snapped receipt picks the card by itself.</p>
       ${(S.cards || []).length ? `<div class="list" style="margin-bottom:10px">${S.cards.map(c => `<div class="it"><div class="main" onclick="cardForm('${c.id}')"><div class="t">${esc(cardName(c))}</div><div class="mute">Owed ${fmt(owedOn(c.id))}</div></div></div>`).join('')}</div>` : ''}
