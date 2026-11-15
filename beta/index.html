@@ -130,13 +130,14 @@ body.dark .sheet .rc{color:var(--ink)}body.dark .sheet .rcs{color:var(--mute)}bo
 <input type="file" id="pickFile" accept="image/*" hidden>
 <input type="file" id="shareFile" accept=".txt,.json,text/plain,application/json" hidden>
 <input type="file" id="restoreFile" accept=".json,.txt,application/json,text/plain" hidden>
+<input type="file" id="testFile" accept=".json,.txt,application/json,text/plain" hidden>
 <input type="file" id="bankFile" accept=".csv,.txt,text/csv,text/comma-separated-values,text/plain" hidden>
 
 <script>
 // The test copy (served from /beta/) keeps its data under separate names, so it can never touch the real app's data.
 const BETA = /\/beta\//.test((typeof location !== 'undefined' && location.pathname) || '');
 const KEY0 = (BETA ? 'beta_' : '') + 'money_inventory_tracker_v1', PKEY = (BETA ? 'beta_' : '') + 'stockpile_profiles';
-const VERSION = '3.19.0';
+const VERSION = '3.20.0';
 const okDark = v => v === true || v === false ? v : undefined;
 const fresh = () => ({ tx: [], items: [], debts: [], lastBackup: null, dirty: 0, auto: true, offRemind: true, lastSent: null, offSnooze: null, contacts: [], adj: [], rec: [], budgets: {}, staff: [], gone: {}, mm: {}, learn: {}, cards: [], banks: [], house: [], goals: [], open: {}, set: { gst: false, gstRate: 5 } });
 const defaultP = () => ({ list: [{ id: 'default', name: 'My business' }], current: 'default' });
@@ -158,7 +159,12 @@ const isPriv = pid => !!(SEC && SEC.priv && SEC.priv[pid]);
 const needKey = () => !!SEC && !!DK && !staffMode && isPriv(P.current) && !KR.has(P.current);
 function newKey(pid) { const raw = rnd(32); KEYS[pid] = b64(raw); KR.set(pid, importDK(raw)); }
 const rawOf = async pid => KEYS[pid] || b64(await crypto.subtle.exportKey('raw', await KR.get(pid)));
-const headerBody = () => JSON.stringify({ list: P.list, current: P.current, dark: P.dark, biz: P.biz, keys: KEYS });
+const headerBody = () => JSON.stringify({ list: P.list, current: P.current, dark: P.dark, biz: P.biz, lock: P.lock, keys: KEYS });
+// How long the app may be out of sight before it locks: 0 = right away, 60 = a minute (the default), 300 = five minutes.
+const okLock = v => [0, 60, 300].includes(v) ? v : 60, lockMs = () => okLock(P.lock) * 1000;
+// Coming back from the camera, a file picker or the share menu gets at least 5 minutes, or a receipt photo would be lost to the lock screen.
+const shouldLock = (away, picking) => away > (picking ? Math.max(lockMs(), 300000) : lockMs());
+function setLockAfter(v) { P.lock = okLock(+v); save(); render(); }
 const bizOn = () => P.biz !== false;
 const can = perm => !staffMode || !!(staff && staff.perms && staff.perms[perm]);
 async function loadProfile() {
@@ -223,7 +229,7 @@ function save() {
   const pid = P.current;
   if (!SEC) {
     stampChanges();
-    try { const txt = JSON.stringify(S); lastGood = { pid, json: txt }; localStorage.setItem(keyFor(pid), txt); localStorage.setItem(PKEY, JSON.stringify({ list: P.list, current: P.current, dark: P.dark, biz: P.biz, pin: LEGACY })); } catch (e) { storageOK = false; }
+    try { const txt = JSON.stringify(S); lastGood = { pid, json: txt }; localStorage.setItem(keyFor(pid), txt); localStorage.setItem(PKEY, JSON.stringify({ list: P.list, current: P.current, dark: P.dark, biz: P.biz, lock: P.lock, pin: LEGACY })); } catch (e) { storageOK = false; }
     linkNudge(); return;
   }
   const pk = dataReady ? KR.get(pid) : null, mk = DK, sec = SEC, body = mk && !staffMode ? headerBody() : null, gen = saveGen;
@@ -1447,6 +1453,19 @@ function paceChart() {
 
 /* ---------- hidden phone test checklist: tap the version number 5 times ---------- */
 const TKEY = (BETA ? 'beta_' : '') + 'stockpile_tests';
+// Optional: erase StockPile on this phone after so many wrong PINs in a row. Kept outside the locked data so it can be counted on the lock screen.
+const GKEY = (BETA ? 'beta_' : '') + 'stockpile_guard';
+function guardGet() { try { const g = JSON.parse(localStorage.getItem(GKEY) || 'null'); return g && [5, 10, 15].includes(g.max) ? { max: g.max, bad: Math.max(0, Math.round(+g.bad) || 0) } : null; } catch (e) { return null; } }
+function guardPut(g) { try { if (g) localStorage.setItem(GKEY, JSON.stringify(g)); else localStorage.removeItem(GKEY); } catch (e) {} }
+function guardSet(n) { n = +n;
+  if (![5, 10, 15].includes(n)) { guardPut(null); render(); return; }
+  if (!SEC) return;
+  if (!guardGet() && !confirm(`After ${n} wrong PINs in a row, everything in StockPile on this phone will be erased. It cannot be brought back without a backup.\n\nMake sure you have a backup somewhere else, and a recovery key.\n\nTurn this on?`)) { render(); return; }
+  guardPut({ max: n, bad: 0 }); render();
+}
+// A wrong PIN was typed. Returns how many tries are left (0 = everything was just erased, -1 = no limit set).
+function guardMiss() { const g = SEC ? guardGet() : null; if (!g) return -1; g.bad++; if (g.bad >= g.max) { eraseEverything(); return 0; } guardPut(g); return g.max - g.bad; }
+function guardReset() { const g = guardGet(); if (g && g.bad) guardPut({ max: g.max, bad: 0 }); }
 const TESTS = [
   ['Receipts', [['r1', 'Snap a real receipt: amount, date and store come out right'], ['r2', 'First read works after the one-time download; note how many seconds it takes'], ['r3', 'A second receipt reads with the internet off (airplane mode)'], ['r4', 'A card receipt picks the right account from the last 4 digits'], ['r5', 'Split one receipt across two categories']]],
   ['Accounts & budgeting', [['a1', 'Add a bank account and a credit card with real balances'], ['a2', 'Add a payday and a bill; they show up in the Ledger on the right days'], ['a3', 'Add a household person and record their payment'], ['a4', 'Add a savings goal and put money in; it shows as Set aside, not spending'], ['a5', 'Set a budget and go over it; the warning appears'], ['a6', 'Open the monthly report and Print / PDF it'], ['a7', 'Calendar export: the file opens in your phone calendar']]],
@@ -2743,7 +2762,7 @@ async function removeEnc(pin) {
 async function openWith(raw) {
   const key = await importDK(raw), stored = JSON.parse(localStorage.getItem(PKEY)), body = JSON.parse(await dec(key, stored.body));
   DK = key; staff = null; staffMode = false;
-  P = Object.assign(defaultP(), { list: body.list, current: body.current, dark: okDark(body.dark), biz: body.biz !== false }); sanitizeP();
+  P = Object.assign(defaultP(), { list: body.list, current: body.current, dark: okDark(body.dark), biz: body.biz !== false, lock: okLock(body.lock) }); sanitizeP();
   KEYS = {}; KR = new Map();
   const ks = body.keys && typeof body.keys === 'object' ? body.keys : {}; let fresh1 = false;
   for (const p of P.list) {
@@ -2773,7 +2792,7 @@ function showLock() {
   $('#bioGo').hidden = !(SEC && SEC.bio);
   setTimeout(() => $('#pinIn').focus(), 50);
 }
-function unlocked() { $('#lock').hidden = true; $('#pinIn').value = ''; $('#pinMsg').textContent = ''; render(); }
+function unlocked() { guardReset(); $('#lock').hidden = true; $('#pinIn').value = ''; $('#pinMsg').textContent = ''; render(); }
 async function lockNow() {
   if (!SEC && !LEGACY) return;
   linkClose();
@@ -2812,7 +2831,11 @@ async function tryUnlock() {
       if (CAN) { try { await enableEnc(pin); } catch (e) {} }
     }
     unlocked();
-  } catch (e) { $('#pinMsg').textContent = 'Wrong PIN. Try again.'; $('#pinIn').value = ''; }
+  } catch (e) {
+    $('#pinIn').value = ''; const left = guardMiss();
+    if (left === 0) { alert('Too many wrong PINs. StockPile on this phone has been erased, as it was set to do. To get your records back, set it up again and load a backup from More → Restore.'); return; }
+    $('#pinMsg').textContent = 'Wrong PIN. Try again.' + (left > 0 && left <= 3 ? ` ${left} more wrong ${left === 1 ? 'try' : 'tries'} and StockPile on this phone is erased.` : '');
+  }
 }
 $('#pinGo').onclick = tryUnlock;
 $('#pinIn').onkeydown = e => { if (e.key === 'Enter') tryUnlock(); };
@@ -2820,9 +2843,12 @@ document.addEventListener('focusin', e => {
   const el = e.target;
   if (el && el.tagName === 'INPUT' && ['text', 'number', 'password', ''].includes(el.type || '') && el.value) { try { el.select(); } catch (err) {} }
 });
+let awayOK = 0;   // when the app itself last opened the camera, a file picker or the share menu
+document.addEventListener('click', e => { const el = e.target; if (el && el.tagName === 'INPUT' && el.type === 'file') awayOK = Date.now(); }, true);
+try { if (navigator.share) { const sh = navigator.share.bind(navigator); navigator.share = d => { awayOK = Date.now(); return sh(d); }; } } catch (e) {}
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) hiddenAt = Date.now();
-  else if ((SEC || LEGACY) && hiddenAt && Date.now() - hiddenAt > 60000 && $('#lock').hidden) lockNow();
+  else if ((SEC || LEGACY) && hiddenAt && shouldLock(Date.now() - hiddenAt, awayOK && hiddenAt >= awayOK && hiddenAt - awayOK < 4000) && $('#lock').hidden) lockNow();
 });
 // Runs slow/async work from a form: keeps the form open until it finishes.
 function busy(fn) {
@@ -2848,7 +2874,7 @@ function setPin() {
 }
 function removePin() {
   form('Remove PIN', [{ k: 'old', l: 'Current PIN', t: 'pin', req: 1 }], v => busy(async () => {
-    if (SEC) return removeEnc(v.old);
+    if (SEC) { await removeEnc(v.old); guardPut(null); return; }
     if (hashPin(v.old) !== LEGACY) throw fail('That PIN is wrong.');
     LEGACY = null; save();
   }), '<div class="mute">Your data will be stored unlocked again.</div>');
@@ -2908,12 +2934,16 @@ function recoverForm() {
 function eraseAll() {
   if (!confirm('Without the PIN, a recovery key or your security answers, your data cannot be opened, and neither can backups locked with that PIN.\n\nThe only way forward is to erase StockPile on this phone and start fresh.\n\nErase everything?')) return;
   if (!confirm('Last check: erase ALL businesses and data in StockPile on this phone?')) return;
-  try { Object.keys(localStorage).filter(k => k === PKEY || k === TKEY || k.startsWith(KEY0)).forEach(k => localStorage.removeItem(k)); } catch (err) {}
+  eraseEverything();
+  alert('Erased. If you have an unlocked backup, load it from More → Restore.');
+}
+function eraseEverything() {
+  try { Object.keys(localStorage).filter(k => k === PKEY || k === TKEY || k === GKEY || k.startsWith(KEY0)).forEach(k => localStorage.removeItem(k)); } catch (err) {}
+  lastGood = null; closeUndo();
   saveGen++; memPhotos.clear(); thumbCache.clear();
   try { if (typeof indexedDB !== 'undefined') { const old = dbp; dbp = null; Promise.resolve(old).then(d => { if (d) d.close(); indexedDB.deleteDatabase(DBN); }).catch(() => {}); } } catch (err) {}
   SEC = null; DK = null; LEGACY = null; KR = new Map(); KEYS = {}; staff = null; staffMode = false; S = fresh(); P = defaultP(); loadFailed = false; saveQ = Promise.resolve();
   $('#lock').hidden = true; resetView(); render();
-  alert('Erased. If you have an unlocked backup, load it from More → Restore.');
 }
 $('#pinForgot').onclick = e => { e.preventDefault(); if (SEC && CAN && (SEC.rec || SEC.qa)) forgotMenu(); else eraseAll(); };
 
@@ -3085,12 +3115,14 @@ async function shareBackup() { if (staffMode) return;
   await backup();
   alert("This browser won't share straight from here, so the backup was saved to Downloads instead.\n\nTo send it: open My Files → Downloads, press and hold the newest stockpile backup file, then tap Share.");
 }
-async function openBackup(d, pin) {
+async function openBackup(d, pin, noKeys) {
   if (!d || (d.stockpileBackup !== 2 && d.stockpileBackup !== 3)) return d;
   if (!CAN) throw fail("This browser can't open locked backups. Open StockPile in Chrome.");
   const clampIter = n => Math.min(Math.max(parseInt(n) || 0, 1000), 2000000), open = async k => JSON.parse(await dec(k, d.data));
-  for (const k of [DK, ...KR.values()]) { if (k) { try { return await open(await k); } catch (e) {} } }   // keys already open on this phone
-  if (DK && d.pk) { try { return await open(await importDK(unb64(await dec(DK, d.pk)))); } catch (e) {} }
+  if (!noKeys) {   // a backup test skips these, so it proves the PIN alone opens the file
+    for (const k of [DK, ...KR.values()]) { if (k) { try { return await open(await k); } catch (e) {} } }   // keys already open on this phone
+    if (DK && d.pk) { try { return await open(await importDK(unb64(await dec(DK, d.pk)))); } catch (e) {} }
+  }
   if (pin == null) throw new Error('needpin');
   if (d.priv) {   // books with their own PIN
     let raw;
@@ -3112,6 +3144,60 @@ function applyBackup(o) {
   alert('Backup restored.' + (ph.length ? ` Loading ${ph.length} receipt photo${ph.length === 1 ? '' : 's'} too.` : ''));
 }
 function restore() { if (staffMode) return; $('#restoreFile').value = ''; $('#restoreFile').click(); }
+// Test a backup: open the file the way a new phone would (with the PIN only) and say what is inside. Nothing on this phone is changed.
+async function backupCheck(text, pin) {
+  let d; try { d = JSON.parse(text); } catch (e) { throw fail("That file doesn't look like a StockPile backup."); }
+  const locked = !!d && (d.stockpileBackup === 2 || d.stockpileBackup === 3);
+  let o; try { o = locked ? await openBackup(d, pin, true) : d; } catch (e) { throw e && e.message === 'needpin' ? e : fail((e && e.userMsg) || 'That PIN (or recovery key) did not open this backup.'); }
+  if (!o || !Array.isArray(o.tx) || !Array.isArray(o.items) || !Array.isArray(o.debts)) throw fail("That file doesn't look like a StockPile backup.");
+  const c = clean(o);
+  return { locked, tx: c.tx.length, rec: c.rec.length, debts: c.debts.length, items: c.items.length, last: c.tx.map(t => t.date).sort().pop() || '', photos: Array.isArray(o._photos) ? o._photos.length : 0 };
+}
+const backupReport = r => `✓ This backup opens${r.locked ? ' with that PIN' : ''}.\n\nInside: ${r.tx} ${r.tx === 1 ? 'entry' : 'entries'}${r.rec ? `, ${r.rec} bills and paydays` : ''}${r.debts ? `, ${r.debts} on the Owing tab` : ''}${r.items ? `, ${r.items} stock items` : ''}${r.photos ? `, ${r.photos} receipt photos` : ''}.${r.last ? ` Newest entry: ${niceDate(r.last)}.` : ''}\n\n${r.locked ? 'It is locked 🔒: it can only be opened with the PIN (or recovery key) from when it was made.' : '⚠️ It is NOT locked: anyone who gets this file can read it.'}\n\nNothing on this phone was changed.`;
+function testBackup() { if (staffMode) return; $('#testFile').value = ''; $('#testFile').click(); }
+async function testBackupText(text) {
+  try { alert(backupReport(await backupCheck(text))); }
+  catch (e) {
+    if (!e || e.message !== 'needpin') { alert((e && e.userMsg) || "That file doesn't look like a StockPile backup."); return; }
+    form('Test this backup', [{ k: 'pin', l: 'PIN (or recovery key) from when this backup was made', t: 'pin', req: 1 }], v => {
+      const b = $('#fSave'); b.disabled = true; b.textContent = 'Working…';
+      backupCheck(text, v.pin).then(r => { closeForm(); alert(backupReport(r)); }).catch(err => { b.disabled = false; b.textContent = 'Save'; alert((err && err.userMsg) || 'That did not open this backup.'); });
+      return false;
+    }, '<div class="mute">Type the PIN to prove this file can be opened with it, the way a new phone would have to. Nothing on this phone is changed.</div>');
+  }
+}
+$('#testFile').onchange = e => { const f = e.target.files && e.target.files[0]; if (!f) return; const r = new FileReader(); r.onload = () => testBackupText(String(r.result)); r.readAsText(f); };
+// E. A locked backup to your own cloud folder, through the phone's share menu. No StockPile server is involved.
+function cloudBackup() { if (staffMode) return;
+  if (!SEC && !confirm('You have no PIN, so this backup is not locked. Anyone who can open your cloud folder could read it.\n\nSend it anyway? (Set a PIN under More to lock your backups.)')) return;
+  shareBackup();
+}
+/* ---------- C. how your records are kept private ---------- */
+function privacySheet() {
+  const m = $('#modal'); closeForm();
+  const meta = document.querySelector('meta[http-equiv="Content-Security-Policy"]'), rule = ((meta && meta.content) || '').match(/connect-src [^;]+/), pics = S.tx.filter(t => t.pics && t.pics.length).length;
+  const li = (h, t) => `<div class="br"><b>${h}</b><div class="mute" style="margin-top:2px">${t}</div></div>`;
+  m.innerHTML = `<div class="sheet"><div class="row between"><h2 style="margin:0">How your records are kept private</h2><button class="x" style="font-size:24px" onclick="closeForm()">✕</button></div>
+    ${li('Your records stay on this phone', `Everything you enter is saved inside this browser, on this phone. Right now that is ${S.tx.length} ${S.tx.length === 1 ? 'entry' : 'entries'}${pics ? ` and receipt photos on ${pics} of them` : ''} in “${esc(profName())}”. There is no StockPile account and no StockPile server holding a copy.`)}
+    ${li(SEC ? 'Locked with your PIN 🔒' : '⚠️ Not locked yet', SEC ? 'Your records, receipt photos and backups are scrambled (AES-256 encryption) with a key that only your PIN or recovery key can unlock. Without one of those, nobody can read them, including whoever made this app.' : 'No PIN is set, so anyone who can open this phone and this app can read your records, and backups are readable files. Set a PIN under More → PIN lock to encrypt them.')}
+    ${li('The app cannot send your records anywhere', `The page carries a rule the browser enforces: <code>${esc(rule ? rule[0] : 'connect-src (not found)')}</code>. It means the app’s code is not allowed to connect to any server, so it has no way to upload what you type.<div class="row" style="margin-top:8px"><button class="btn sec sm" onclick="netTest()">Test it now</button></div><div id="netRes" style="margin-top:6px"></div>`)}
+    ${li('No ads, no trackers, no bank logins', 'Nothing in the app loads from another company: no advertising, no analytics, no “anonymous usage data”. It never asks for a bank or card login.')}
+    ${li('What it does fetch', 'Only its own files, from the website it was installed from: the app itself (to pick up updates) and, the first time you read a receipt, the reader’s files (about 7 MB). As with any website, that host can see that this phone downloaded the app. It cannot see your records.')}
+    ${li('Things leave only when you send them', 'A backup, a spreadsheet file, a shared receipt, a calendar file, or a live link between two phones on the same Wi-Fi (direct, phone to phone, encrypted, with no server in between). Each one happens only when you tap it. Spreadsheet files and unlocked backups are readable by whoever gets them.')}
+    ${li('Check it yourself', 'Turn on airplane mode and use the app: everything still works, because nothing depends on the internet.')}
+    <div class="row" style="margin-top:14px"><button class="btn" onclick="closeForm()">Done</button></div></div>`;
+  m.hidden = false; m.onclick = e => { if (e.target === m) closeForm(); };
+}
+// Try to reach an outside website. The browser should refuse because of the rule above, and it tells us when it does.
+function netTest() {
+  const out = $('#netRes'); if (!out) return; out.innerHTML = '<span class="mute">Testing…</span>';
+  let blocked = false; const on = () => { blocked = true; };
+  document.addEventListener('securitypolicyviolation', on);
+  const done = msg => { document.removeEventListener('securitypolicyviolation', on); const el = $('#netRes'); if (el) el.innerHTML = msg; };
+  let p; try { p = fetch('https://example.com/?stockpile-privacy-test', { mode: 'no-cors', cache: 'no-store' }); } catch (e) { p = Promise.reject(e); }
+  p.then(() => setTimeout(() => done('<b class="neg">⚠️ An outside website could be reached.</b> <span class="mute">That should not happen in StockPile. Please report it.</span>'), 50))
+    .catch(() => setTimeout(() => done(blocked ? '<b class="pos">✓ Blocked.</b> <span class="mute">The app just tried to reach an outside website and the browser refused, as it should.</span>' : '<span class="mute">The connection did not go through, but the browser did not say why (the phone may be offline). Try again with the internet on.</span>'), 50));
+}
 async function restoreText(text) {
   let d;
   try { d = JSON.parse(text); } catch (e) { alert("That file doesn't look like a StockPile backup."); return; }
@@ -3498,6 +3584,8 @@ const V = {
       <p class="mute">Everything is saved inside this browser on this phone only. Nothing goes on the internet unless you share a backup yourself.</p>
       <p class="mute">Last backup: ${S.lastBackup ? niceDate(S.lastBackup) : 'never'}${S.dirty > 0 ? ` · ${S.dirty} change${S.dirty > 1 ? 's' : ''} since` : ''}</p>
       <div class="row"><button class="btn" onclick="backup()">💾 Back up now</button><button class="btn" onclick="shareBackup()">📤 Send backup</button><button class="btn sec" onclick="restore()">Restore</button></div>
+      <div class="row" style="margin-top:8px"><button class="btn sec" onclick="cloudBackup()">☁️ Save to my cloud folder</button><button class="btn sec" onclick="testBackup()">✓ Test a backup</button></div>
+      <p class="mute">“Save to my cloud folder” opens the share menu: pick Drive, OneDrive or your files app. ${SEC ? 'The file is locked with your PIN before it leaves this phone.' : 'Set a PIN first so the file is locked.'} No StockPile server is involved. “Test a backup” opens a backup file to prove it can be read, without changing anything here.</p>
       ${S.tx.some(t => t.pics && t.pics.length) ? '<p><button class="btn sec sm" onclick="backup(false,false,true)">💾 Back up with receipt photos</button></p><p class="mute">Daily auto backups and “Send backup” leave the photos out so the files stay small. Use this button now and then to save the photos as well.</p>' : ''}
       <p class="mute">“Send backup” opens your phone's share menu (Quick Share, email, etc.). ${SEC ? 'Backups are locked 🔒: they can only be opened with the PIN that was set when they were made.' : 'Backups are not locked, so only send them to yourself or someone you trust. Set a PIN below to lock them.'}</p>
       ${SEC ? '<p><button class="btn sec sm" onclick="backup(false,true)">Save an unlocked safety copy</button></p>' : ''}
@@ -3505,9 +3593,15 @@ const V = {
       <label class="chk"><input type="checkbox" ${S.offRemind !== false ? 'checked' : ''} onchange="S.offRemind=this.checked;save()"> Remind me every 2 weeks to send a backup off this phone</label>
       <p class="mute">Last sent off this phone: ${S.lastSent ? niceDate(S.lastSent) : 'never'} · <a href="#" onclick="event.preventDefault();S.lastSent=today();S.offSnooze=null;save();render()">I copied one off myself</a></p></div>
     ${storageCard()}
+    <div class="card" style="margin-bottom:12px"><b>Privacy</b>
+      <p class="mute">See what StockPile keeps, where it is kept, and what the app is not able to do.</p>
+      <button class="btn" onclick="privacySheet()">How my records are kept private</button></div>
     <div class="card" style="margin-bottom:12px"><b>PIN lock</b>
-      <p class="mute">${SEC ? 'PIN is ON 🔒. Your data and backups are encrypted. StockPile asks for the PIN when opened, and again after a minute away.' : LEGACY ? 'PIN is ON. StockPile asks for it when opened.' : 'Ask for a PIN before anything is shown' + (CAN ? ', and encrypt your data and backups with it.' : '.')}</p>
+      <p class="mute">${SEC ? `PIN is ON 🔒. Your data and backups are encrypted. StockPile asks for the PIN when opened, and again ${okLock(P.lock) === 0 ? 'every time you leave the app' : okLock(P.lock) === 300 ? 'after 5 minutes away' : 'after a minute away'}.` : LEGACY ? 'PIN is ON. StockPile asks for it when opened.' : 'Ask for a PIN before anything is shown' + (CAN ? ', and encrypt your data and backups with it.' : '.')}</p>
       <div class="row"><button class="btn" onclick="setPin()">${SEC || LEGACY ? 'Change PIN' : 'Set a PIN'}</button>${SEC || LEGACY ? '<button class="btn sec" onclick="removePin()">Remove PIN</button><button class="btn sec" onclick="lockNow()">🔒 Lock now</button>' : ''}</div>
+      ${SEC || LEGACY ? `<div class="row between" style="margin-top:10px"><span>Lock when I leave the app</span><select class="f" style="width:auto" onchange="setLockAfter(this.value)">${[[0, 'Right away'], [60, 'After 1 minute'], [300, 'After 5 minutes']].map(([v, l]) => `<option value="${v}" ${okLock(P.lock) === v ? 'selected' : ''}>${l}</option>`).join('')}</select></div>` : ''}
+      ${SEC ? `<div class="row between" style="margin-top:10px"><span>Erase this phone’s StockPile after wrong PINs</span><select class="f" style="width:auto" onchange="guardSet(this.value)">${[[0, 'Off'], [5, 'After 5 in a row'], [10, 'After 10 in a row'], [15, 'After 15 in a row']].map(([v, l]) => `<option value="${v}" ${((guardGet() || {}).max || 0) === v ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
+        <p class="mute">Off unless you turn it on. It stops someone guessing your PIN on this phone. Keep a backup somewhere else first: an erased phone can only be brought back from a backup.</p>` : ''}
       ${SEC ? `<p class="mute">Recovery key: ${SEC.rec ? 'set ✓' : '<b>not set</b>. Without one, a forgotten PIN means everything is lost.'}</p>
         <p><button class="btn ${SEC.rec ? 'sec' : ''}" onclick="makeRecovery()">${SEC.rec ? 'Make a new recovery key' : 'Create recovery key'}</button></p>
         <p class="mute">Security questions: ${SEC.qa ? 'set ✓' : 'not set'}</p>
@@ -3602,7 +3696,7 @@ async function init() {
   try { raw = JSON.parse(localStorage.getItem(PKEY) || 'null'); } catch (e) { storageOK = false; }
   if (raw && raw.sec && raw.body) { SEC = raw.sec; render(); showLock(); return; }
   if (raw && typeof raw === 'object') {
-    P = Object.assign(defaultP(), { list: raw.list, current: raw.current, dark: okDark(raw.dark), biz: raw.biz !== false });
+    P = Object.assign(defaultP(), { list: raw.list, current: raw.current, dark: okDark(raw.dark), biz: raw.biz !== false, lock: okLock(raw.lock) });
     if (typeof raw.pin === 'string' && /^[a-z0-9]{1,16}$/.test(raw.pin)) LEGACY = raw.pin;
   }
   if (!raw) { let any = false; try { any = !!localStorage.getItem(KEY0); } catch (e) {} firstRun = !any; }

@@ -26,7 +26,7 @@ await switchProfile('default');
 ok(/SecretWidget/.test(store[KEY0]) && S.items.length===1,'plain mode stores readable data');
 await enableEnc('123456');
 const all=()=>Object.keys(store).map(k=>store[k]).join('|');
-ok(!/SecretWidget|Bob|Hidden Biz|Second Biz|Gas/.test(all()),'after PIN: nothing readable in storage (data + business names)');
+ok(!/SecretWidget|"Bob"|Hidden Biz|Second Biz|"Gas"/.test(all()),'after PIN: nothing readable in storage (data + business names)');
 ok(JSON.parse(store[PKEY]).sec && JSON.parse(store[keyFor('p2')]).enc===2,'header + other business encrypted');
 S.tx.push({id:'t2',type:'out',amount:30,cat:'Tools',acct:'cash',date:today()}); save(); await saveQ;
 await lockNow();
@@ -39,7 +39,7 @@ allTabs(); ok(true,'all screens render while encrypted');
 await switchProfile('p2'); ok(S.tx.length===1 && S.tx[0].cat==='Gas','switch business under encryption');
 await switchProfile('default'); ok(S.tx.length===2,'switch back');
 const bk=await backupText(); const bd=JSON.parse(bk);
-ok(bd.stockpileBackup===3 && !/SecretWidget|Bob/.test(bk),'backup file is encrypted');
+ok(bd.stockpileBackup===3 && !/SecretWidget|"Bob"/.test(bk),'backup file is encrypted');
 ok((await openBackup(bd)).items[0].name==='SecretWidget','backup opens on same phone without asking');
 const plain=await backupText(true); ok(/SecretWidget/.test(plain),'unlocked safety copy is readable');
 await changePin('123456','abcdef-long');
@@ -53,6 +53,24 @@ els['#pinIn'].value='abcdef-long'; await tryUnlock(); ok(S.tx.length===2,'new PI
 const keep=DK, keepKR=KR; DK=null; KR=new Map(); let np=false; try{ await openBackup(bd) }catch(e){ np=e.message==='needpin' } ok(np,'backup elsewhere asks for PIN');
 let wp=false; try{ await openBackup(bd,'wrong') }catch(e){wp=true} ok(wp,'backup rejects wrong PIN');
 ok((await openBackup(bd,'123456')).tx.length===2,'backup opens with the PIN from when it was made'); DK=keep; KR=keepKR;
+// privacy extras (3.20.0): test a backup, wipe after wrong PINs
+{ const r=await backupCheck(bk,'123456'); ok(r.locked && r.tx===2 && /with that PIN/.test(backupReport(r)) && /Nothing on this phone was changed/.test(backupReport(r)) && S.tx.length===2,'Test a backup opens the file with the PIN alone and changes nothing');
+  let np2=false; try{ await backupCheck(bk) }catch(e){ np2=e.message==='needpin' } ok(np2,'…and asks for the PIN even on the phone that made it');
+  let wp2=false; try{ await backupCheck(bk,'wrong') }catch(e){ wp2=!!e.userMsg } ok(wp2,'…and says so when the PIN does not open it');
+  let nb=false; try{ await backupCheck('not a backup') }catch(e){ nb=/look like/.test(e.userMsg) } ok(nb,'…and refuses a file that is not a backup');
+  const r2=await backupCheck(plain); ok(!r2.locked && r2.tx===2 && /NOT locked/.test(backupReport(r2)),'an unlocked backup is flagged as readable by anyone');
+  ok(guardGet()===null && guardMiss()===-1,'erasing after wrong PINs is off unless it is turned on');
+  guardSet(5); ok(guardGet().max===5 && guardGet().bad===0 && /After 5 in a row/.test(V.more()),'a limit of wrong PINs can be set');
+  await saveQ; const snapStore={...store};
+  await lockNow(); els['#pinIn'].value='nope'; await tryUnlock(); ok(guardGet().bad===1 && /Wrong PIN/.test(els['#pinMsg'].textContent) && !/erased/.test(els['#pinMsg'].textContent),'a wrong PIN is counted');
+  els['#pinIn'].value='abcdef-long'; await tryUnlock(); ok(guardGet().bad===0 && S.tx.length===2,'the right PIN sets the count back to zero');
+  await lockNow(); for(let i=0;i<4;i++){ els['#pinIn'].value='bad'+i; await tryUnlock(); }
+  ok(guardGet().bad===4 && /1 more wrong try/.test(els['#pinMsg'].textContent),'the lock screen warns when the last tries are near');
+  lastAlert=''; els['#pinIn'].value='bad5'; await tryUnlock();
+  ok(/erased/.test(lastAlert) && !store[PKEY] && !store[KEY0] && !store[GKEY] && SEC===null && S.tx.length===0 && els['#lock'].hidden===true,'after the set number of wrong PINs everything on the phone is erased');
+  // put the phone back the way it was for the rest of the checks
+  await saveQ; Object.keys(store).forEach(k=>delete store[k]); Object.assign(store,snapStore); delete store[GKEY]; SEC=null;DK=null;LEGACY=null;S=fresh();P=defaultP(); await init();
+  els['#pinIn'].value='abcdef-long'; await tryUnlock(); ok(S.tx.length===2 && P.list.length===2 && guardGet()===null,'(the test phone is restored)'); }
 // corrupted data must not be overwritten
 const good=store[KEY0]; const o=JSON.parse(good); o.ct=o.ct.slice(0,-8)+'AAAAAAA='; store[KEY0]=JSON.stringify(o);
 await loadProfile(); ok(loadFailed && S.tx.length===0,'damaged data detected');
@@ -564,6 +582,14 @@ addTx('out',null,R1); ok(/Filled in from the photo/.test($('#modal').innerHTML) 
   lastAlert=''; bankOpen('hello,world\\nno,dates'); ok(/find dated amounts/.test(lastAlert) && imp===null,'a file that is not a statement is refused');
   const A=csv(allRows()); ok(/LEDGER/.test(A) && /Tim Hortons/.test(A) && /ACCOUNTS/.test(A) && /Everything \\(\\.csv\\)/.test(V.more()) && /Choose a statement file/.test(V.more()),'everything can be exported as one spreadsheet file');
   if(keepK) me.kind=keepK; else delete me.kind; S.tx=keepTx; S.rec=keepR; S.learn=keepL; closeUndo(); }
+// privacy extras (3.20.0): auto-lock time, privacy screen, cloud folder
+{ const keepLock=P.lock;
+  ok(okLock(undefined)===60 && okLock(0)===0 && okLock(300)===300 && okLock(7)===60,'the auto-lock time is a minute unless another one is chosen');
+  P.lock=0; const a1=shouldLock(1,false) && !shouldLock(200000,true) && shouldLock(400000,true); P.lock=300; const a2=!shouldLock(200000,false) && shouldLock(301000,false); delete P.lock; const a3=!shouldLock(59000,false) && shouldLock(61000,false);
+  ok(a1 && a2 && a3,'the app locks right away, after 1 minute or after 5; the camera and file pickers get 5 minutes');
+  setLockAfter(300); ok(P.lock===300 && JSON.parse(headerBody()).lock===300,'the chosen auto-lock time is remembered'); if(keepLock===undefined) delete P.lock; else P.lock=keepLock; save();
+  privacySheet(); const pv=$('#modal').innerHTML; ok(/stay on this phone/.test(pv) && /Test it now/.test(pv) && /No ads/.test(pv) && /airplane mode/.test(pv) && html.includes("connect-src 'none'"),'the privacy screen says what is kept and what the app cannot do'); closeForm();
+  ok(/How my records are kept private/.test(V.more()) && /Save to my cloud folder/.test(V.more()) && /Test a backup/.test(V.more()),'More offers the privacy screen, a cloud-folder backup and a backup test'); }
 { const keepTx=S.tx, keepB=S.budgets, keepSN=showNums, me=P.list.find(p=>p.id===P.current), keepK=me.kind; S.tx=[]; S.budgets={Groceries:200}; me.kind='personal';
   const d=today(); S.tx.push({id:'h1',type:'out',amount:80,cat:'Groceries',note:'Safeway',acct:'cash',gst:0,date:d},{id:'h2',type:'in',amount:900,cat:'Pay',note:'',acct:'cash',gst:0,date:d});
   tab='money'; render(); ok(tab==='home','personal books open the Ledger inside Home');
