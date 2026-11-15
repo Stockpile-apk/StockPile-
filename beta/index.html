@@ -9,7 +9,7 @@
 <link rel="icon" href="icon-192.png">
 <title>StockPile</title>
 <style>
-:root{--bg:#f3f4f6;--card:#fff;--ink:#1d2433;--mute:#6b7280;--line:#e5e7eb;--green:#15803d;--red:#b91c1c;--accent:#0f766e}
+:root{--s1:#2a78d6;--s2:#eb6834;--s3:#1baf7a;--s4:#eda100;--s5:#e87ba4;--s6:#008300;--s7:#6250d6;--s8:#e34948;--bg:#f3f4f6;--card:#fff;--ink:#1d2433;--mute:#6b7280;--line:#e5e7eb;--green:#15803d;--red:#b91c1c;--accent:#0f766e}
 *{box-sizing:border-box}
 body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--ink);font-size:16px}
 header{background:var(--ink);color:#fff;padding:10px 16px;font-weight:700;font-size:18px;display:flex;justify-content:space-between;align-items:center;gap:10px}
@@ -56,6 +56,8 @@ select.f,input.f{padding:8px;border-radius:8px;border:1px solid var(--line);font
 .fl span{display:block;font-size:14px;color:var(--mute);margin-bottom:4px}
 .fl input,.fl select{width:100%;padding:12px;font-size:17px;border:1px solid #d1d5db;border-radius:10px;background:#fff}
 .fl input.bad{border-color:var(--red);background:#fef2f2}
+.lg{font-size:13px;color:var(--mute);margin-left:10px;white-space:nowrap}.lg i,.dot{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:5px;vertical-align:-1px}.lg i.dash{height:0;width:14px;border-radius:0;border-top:2px dashed var(--mute)}
+.viz{width:100%;height:auto;display:block;touch-action:manipulation}.viz text{fill:var(--mute);font-size:11px;font-family:inherit}.viz .gl{stroke:var(--line);stroke-width:1}.cap{font-size:13px;color:var(--mute);min-height:18px;margin-top:4px}
 .chk{display:flex;gap:10px;align-items:center;margin:14px 0;font-size:15px}
 .chk input{width:22px;height:22px;flex:none}
 .pf{display:flex;flex-direction:column;font-size:13px;color:var(--mute);flex:1;min-width:80px}
@@ -80,7 +82,7 @@ body.setup nav,body.setup header select{display:none}
 .cats{display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:8px}
 .cat{border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:12px;padding:10px 4px;font-size:13px;display:flex;flex-direction:column;align-items:center;gap:4px;cursor:pointer}
 .cat span{font-size:22px}
-body.dark{--bg:#0f1420;--card:#1a2233;--ink:#e6e9ef;--mute:#9aa3b2;--line:#2b3548;--green:#34d399;--red:#f87171;--accent:#2dd4bf}
+body.dark{--s1:#3987e5;--s2:#d95926;--s3:#199e70;--s4:#c98500;--s5:#d55181;--s6:#0ca30c;--s7:#9085e9;--s8:#e66767;--bg:#0f1420;--card:#1a2233;--ink:#e6e9ef;--mute:#9aa3b2;--line:#2b3548;--green:#34d399;--red:#f87171;--accent:#2dd4bf}
 body.dark header,body.dark #lock{background:#0b0f18}
 body.dark nav,body.dark .list,body.dark .sheet,body.dark .fl input,body.dark .fl select,body.dark select.f,body.dark input.f,body.dark .qb{background:var(--card);color:var(--ink);border-color:var(--line)}
 body.dark .btn{color:#06201c}body.dark .btn.in{color:#052e1b}body.dark .btn.out{color:#3b0a0a}body.dark .btn.sec{background:#2b3548;color:var(--ink)}
@@ -130,7 +132,7 @@ body.dark .sheet .rc{color:var(--ink)}body.dark .sheet .rcs{color:var(--mute)}bo
 // The test copy (served from /beta/) keeps its data under separate names, so it can never touch the real app's data.
 const BETA = /\/beta\//.test((typeof location !== 'undefined' && location.pathname) || '');
 const KEY0 = (BETA ? 'beta_' : '') + 'money_inventory_tracker_v1', PKEY = (BETA ? 'beta_' : '') + 'stockpile_profiles';
-const VERSION = '3.12.1';
+const VERSION = '3.13.0';
 const okDark = v => v === true || v === false ? v : undefined;
 const fresh = () => ({ tx: [], items: [], debts: [], lastBackup: null, dirty: 0, auto: true, offRemind: true, lastSent: null, offSnooze: null, contacts: [], adj: [], rec: [], budgets: {}, staff: [], gone: {}, mm: {}, learn: {}, cards: [], banks: [], house: [], goals: [], open: {}, set: { gst: false, gstRate: 5 } });
 const defaultP = () => ({ list: [{ id: 'default', name: 'My business' }], current: 'default' });
@@ -328,6 +330,7 @@ function clean(d) {
   const st = d.set && typeof d.set === 'object' ? d.set : {};
   o.set = { gst: !!st.gst, gstRate: num(st.gstRate) || 5 };
   if (typeof st.pin === 'string' && /^[a-z0-9]{1,16}$/.test(st.pin)) o.set.pin = st.pin;
+  if (st.chart && typeof st.chart === 'object') { const c = st.chart, k = {}; if (['donut', 'list'].includes(c.spend)) k.spend = c.spend; if (['columns', 'line', 'off'].includes(c.trend)) k.trend = c.trend; if (typeof c.pace === 'boolean') k.pace = c.pace; o.set.chart = k; }
   if (Array.isArray(st.quick)) o.set.quick = [...new Set(st.quick.filter(x => typeof x === 'string').map(x => x.slice(0, 40)))].slice(0, 60);
   return o;
 }
@@ -1162,6 +1165,78 @@ function posTotals() {
   posOwing();
 }
 
+/* ---------- graphs: drawn on the phone as SVG, no internet needed ---------- */
+const chartSet = () => ({ spend: 'donut', trend: 'columns', pace: true, ...(S.set.chart || {}) });
+function setChart(k, v) { S.set = { ...S.set, chart: { ...(S.set.chart || {}), [k]: v } }; save(); render(); }
+const CAP = {};
+function chartCap(k, i) { const el = $('#cap_' + k); if (el && CAP[k]) el.textContent = CAP[k][i] || ''; }
+const shortMoney = n => { const a = Math.abs(n), t = a >= 1e6 ? (a / 1e6).toFixed(1) + 'M' : a >= 1e4 ? Math.round(a / 1e3) + 'k' : a >= 1e3 ? (a / 1e3).toFixed(1).replace('.0', '') + 'k' : String(Math.round(a)); return (n < 0 ? '−$' : '$') + t; };
+const niceMax = v => { if (!(v > 0)) return 100; const p = 10 ** Math.floor(Math.log10(v)), m = v / p; return ([1, 1.2, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10].find(x => m <= x)) * p; };
+const monShort = ym => new Date(ym + '-15T12:00').toLocaleDateString('en-CA', { month: 'short' }).replace('.', '');
+const hiddenGraph = '<div class="card mute" style="margin-top:8px;text-align:center">📊 Tap Show to see this graph.</div>';
+// Biggest categories get a colour each (up to 7); the rest share grey as "Other". Colour goes by size this month.
+function spendSlots(spent) {
+  const e = Object.entries(spent).filter(x => x[1] > 0).sort((a, b) => b[1] - a[1]), many = e.length > 8;
+  const out = (many ? e.slice(0, 7) : e).map((x, i) => [x[0], x[1], `var(--s${i + 1})`]);
+  if (many) out.push(['Other', sum(e.slice(7), x => x[1]), 'var(--mute)']);
+  return out;
+}
+function donutSVG(slots, total, label) {
+  const r = 62, C = 2 * Math.PI * r, gap = slots.length > 1 ? 2.5 : 0; let at = 0;
+  CAP.spend = slots.map(([c, v]) => `${c}: ${cur(v)} · ${Math.round(v / total * 100)}% of spending`);
+  const arcs = slots.map(([c, v, col], i) => { const len = v / total * C, d = Math.max(len - gap, 0.5), o = at; at += len;
+    return `<circle cx="80" cy="80" r="${r}" fill="none" stroke="${col}" stroke-width="22" stroke-dasharray="${d} ${C - d}" stroke-dashoffset="${-o}" transform="rotate(-90 80 80)" onclick="chartCap('spend',${i})" style="cursor:pointer"><title>${esc(CAP.spend[i])}</title></circle>`; }).join('');
+  return `<svg class="viz" viewBox="0 0 160 160" style="max-width:170px;margin:0 auto" role="img" aria-label="Spending by category">${arcs}
+    <text x="80" y="78" text-anchor="middle" style="font-size:17px;font-weight:700;fill:var(--ink)">${esc(shortMoney(total))}</text><text x="80" y="96" text-anchor="middle">${esc(label)}</text></svg>
+    <div class="cap" id="cap_spend" style="text-align:center">Tap a colour for details.</div>`;
+}
+// Money in and out for the last 6 months (savings left out in personal books).
+function trendData() { return [-5, -4, -3, -2, -1, 0].map(k => { const m = ymAdd(thisMonth(), k), tx = S.tx.filter(t => t.date.startsWith(m) && !isSav(t)); return [m, sum(tx.filter(t => t.type === 'in'), t => t.amount), sum(tx.filter(t => t.type === 'out'), t => t.amount)]; }); }
+const barPath = (x, y, w, y0) => { const h = y0 - y; if (h <= 0) return ''; const r = Math.min(4, h, w / 2); return `M${x},${y0}V${y + r}Q${x},${y} ${x + r},${y}H${x + w - r}Q${x + w},${y} ${x + w},${y + r}V${y0}Z`; };
+function trendChart() {
+  const st = chartSet().trend; if (st === 'off') return '';
+  const head = `<div class="row between" style="margin-top:22px"><h3 style="margin:0">Last 6 months</h3><span><span class="lg"><i style="background:var(--s1)"></i>In</span><span class="lg"><i style="background:var(--s2)"></i>Out</span></span></div>`;
+  if (!showNums) return head + hiddenGraph;
+  const D = trendData(); if (!D.some(d => d[1] || d[2])) return '';
+  const W = 340, H = 170, L = 40, R = 6, T = 10, B = 22, pw = W - L - R, ph = H - T - B, y0 = T + ph, mx = niceMax(Math.max(...D.flatMap(d => [d[1], d[2]]))), y = v => y0 - v / mx * ph, step = pw / 6;
+  CAP.trend = D.map(([m, i, o]) => `${ymName(m)}${m === thisMonth() ? ' (so far)' : ''}: in ${cur(i)} · out ${cur(o)} · ${i - o >= 0 ? 'left over' : 'short'} ${cur(Math.abs(i - o))}`);
+  const grid = [0, 0.5, 1].map(f => `<line class="gl" x1="${L}" x2="${W - R}" y1="${y(mx * f)}" y2="${y(mx * f)}"/><text x="${L - 5}" y="${y(mx * f) + 4}" text-anchor="end">${esc(shortMoney(mx * f))}</text>`).join('');
+  const cx = k => L + step * k + step / 2;
+  let marks;
+  if (st === 'line') {
+    const pl = (j, col) => `<polyline fill="none" stroke="${col}" stroke-width="2" stroke-linejoin="round" points="${D.map((d, k) => `${cx(k)},${y(d[j])}`).join(' ')}"/>` + D.map((d, k) => `<circle cx="${cx(k)}" cy="${y(d[j])}" r="4" fill="${col}" stroke="var(--card)" stroke-width="2"/>`).join('');
+    marks = pl(1, 'var(--s1)') + pl(2, 'var(--s2)');
+  } else {
+    const w = Math.min(16, step / 2 - 4);
+    marks = D.map((d, k) => `<path d="${barPath(cx(k) - w - 1, y(d[1]), w, y0)}" fill="var(--s1)"/><path d="${barPath(cx(k) + 1, y(d[2]), w, y0)}" fill="var(--s2)"/>`).join('');
+  }
+  const xl = D.map((d, k) => `<text x="${cx(k)}" y="${H - 6}" text-anchor="middle"${d[0] === thisMonth() ? ' style="font-weight:700;fill:var(--ink)"' : ''}>${esc(monShort(d[0]))}</text>`).join('');
+  const hit = D.map((d, k) => `<rect x="${L + step * k}" y="${T}" width="${step}" height="${ph + B}" fill="transparent" onclick="chartCap('trend',${k})" style="cursor:pointer"><title>${esc(CAP.trend[k])}</title></rect>`).join('');
+  return `${head}<div class="card" style="margin-top:8px"><svg class="viz" viewBox="0 0 ${W} ${H}" role="img" aria-label="Money in and out, last 6 months">${grid}<line class="gl" x1="${L}" x2="${W - R}" y1="${y0}" y2="${y0}" style="stroke:var(--mute)"/>${marks}${xl}${hit}</svg><div class="cap" id="cap_trend">Tap a month for details.</div></div>`;
+}
+// Budget tab: spending in budgeted categories building up through the month, against an even pace.
+function paceChart() {
+  if (!chartSet().pace || !isPersonal()) return '';
+  const B = budgetsNow(), cats = Object.keys(B), totB = sum(Object.values(B), x => x); if (!totB) return '';
+  const head = `<div class="row between" style="margin-top:22px"><h3 style="margin:0">This month's pace</h3><span><span class="lg"><i style="background:var(--s1)"></i>Spent</span><span class="lg"><i class="dash"></i>Even pace</span></span></div>`;
+  if (!showNums) return head + hiddenGraph;
+  const ym = thisMonth(), days = daysIn(ym), td = +today().slice(8), daily = Array(days + 1).fill(0);
+  S.tx.forEach(t => { if (t.type === 'out' && !isSav(t) && t.date.startsWith(ym) && cats.includes(t.cat || 'Misc')) daily[+t.date.slice(8)] += t.amount; });
+  const cum = []; let run = 0; for (let d = 1; d <= td; d++) { run += daily[d]; cum.push(round(run)); }
+  const W = 340, H = 170, L = 40, R = 10, T = 10, B2 = 22, pw = W - L - R, ph = H - T - B2, y0 = T + ph, mx = niceMax(Math.max(totB, run) * 1.05), y = v => y0 - v / mx * ph, x = d => L + (d - 1) / Math.max(days - 1, 1) * pw;
+  CAP.pace = cum.map((v, i) => `${niceDate(ym + '-' + String(i + 1).padStart(2, '0'))}: ${cur(v)} spent so far · even pace ${cur(totB * (i + 1) / days)}`);
+  const grid = [0, 0.5, 1].map(f => `<line class="gl" x1="${L}" x2="${W - R}" y1="${y(mx * f)}" y2="${y(mx * f)}"/><text x="${L - 5}" y="${y(mx * f) + 4}" text-anchor="end">${esc(shortMoney(mx * f))}</text>`).join('');
+  const over = run > totB * td / days, last = cum.length - 1;
+  const hit = cum.map((v, i) => `<rect x="${x(i + 1) - pw / days / 2}" y="${T}" width="${pw / days}" height="${ph}" fill="transparent" onclick="chartCap('pace',${i})"/>`).join('');
+  return `${head}<div class="card" style="margin-top:8px"><svg class="viz" viewBox="0 0 ${W} ${H}" role="img" aria-label="Spending this month against an even pace">${grid}
+    <line x1="${x(1)}" y1="${y(totB / days)}" x2="${x(days)}" y2="${y(totB)}" stroke="var(--mute)" stroke-width="2" stroke-dasharray="5 4"/>
+    <polyline fill="none" stroke="var(--s1)" stroke-width="2" stroke-linejoin="round" points="${cum.map((v, i) => `${x(i + 1)},${y(v)}`).join(' ')}"/>
+    <circle cx="${x(last + 1)}" cy="${y(cum[last])}" r="4.5" fill="var(--s1)" stroke="var(--card)" stroke-width="2"/>
+    <line class="gl" x1="${L}" x2="${W - R}" y1="${y0}" y2="${y0}" style="stroke:var(--mute)"/>
+    <text x="${x(1)}" y="${H - 6}" text-anchor="start">1</text><text x="${x(td)}" y="${H - 6}" text-anchor="middle" style="font-weight:700;fill:var(--ink)">Today</text><text x="${x(days)}" y="${H - 6}" text-anchor="end">${days}</text>${hit}</svg>
+    <div class="cap" id="cap_pace">${over ? 'Ahead of an even pace.' : 'At or under an even pace.'} Tap the line for a day.</div></div>`;
+}
+
 /* ---------- hidden phone test checklist: tap the version number 5 times ---------- */
 const TKEY = (BETA ? 'beta_' : '') + 'stockpile_tests';
 const TESTS = [
@@ -1217,6 +1292,8 @@ function personalHome(notes) {
   const cash = acctBal('cash'), od = S.debts.filter(overdue), mn = new Date().toLocaleDateString('en-CA', { month: 'long' });
   const iOwe = sum(S.debts.filter(d => d.dir === 'owe'), d => Math.max(bal(d), 0)), owedMe = sum(S.debts.filter(d => d.dir === 'owed'), d => Math.max(bal(d), 0));
   const spent = Object.fromEntries(groupBy(outs, t => t.cat)), B = budgetsNow(), U = usual(), cats = [...new Set([...Object.keys(spent), ...Object.keys(B)])].sort((a, b) => (spent[b] || 0) - (spent[a] || 0)), top = Math.max(...Object.values(spent), 1);
+  const slots = spendSlots(spent), dotCol = {}; slots.forEach(([c, , col]) => { dotCol[c] = col; }); Object.keys(spent).forEach(c => { dotCol[c] = dotCol[c] || 'var(--mute)'; });
+  const donut = showNums && chartSet().spend === 'donut' && mOut > 0 ? donutSVG(slots, mOut, 'spent') : '';
   return `${notes}<div class="row bar"><button class="btn" onclick="snapNew()">📷 Snap a receipt</button><button class="btn out" onclick="addTx('out')">− Out</button><button class="btn in" onclick="addTx('in')">+ In</button><button class="btn sec" onclick="addMove()">⇄ Move</button>${tog}</div>
     <h3>${mn}</h3>
     <div class="grid">
@@ -1226,10 +1303,10 @@ function personalHome(notes) {
       <div class="card"><div class="lbl">Left over</div><div class="big ${showNums && mIn - mOut - aside < 0 ? 'neg' : 'pos'}">${fmt(mIn - mOut - aside)}</div></div>
     </div>
     <div class="row between" style="margin-top:22px"><h3 style="margin:0">Spending habits</h3><button class="btn sec sm" onclick="tab='budget';render();window.scrollTo(0,0)">Budgets</button></div>
-    <div class="card" style="margin-top:8px">${cats.length ? cats.map(c => { const s = spent[c] || 0, b = B[c] || 0, over = b > 0 && s > b, u = U.months ? U.cats[c] || 0 : 0;
-      return `<div class="br"><div class="row between"><span>${catIcon(c)} ${esc(c)}</span><b class="${over && showNums ? 'neg' : ''}">${fmt(s)}${b ? ' of ' + fmt(b) : ''}</b></div>
+    <div class="card" style="margin-top:8px">${donut}${cats.length ? cats.map(c => { const s = spent[c] || 0, b = B[c] || 0, over = b > 0 && s > b, u = U.months ? U.cats[c] || 0 : 0;
+      return `<div class="br"><div class="row between"><span>${donut && dotCol[c] ? `<i class="dot" style="background:${dotCol[c]}"></i>` : ''}${catIcon(c)} ${esc(c)}</span><b class="${over && showNums ? 'neg' : ''}">${fmt(s)}${b ? ' of ' + fmt(b) : ''}</b></div>
         <div class="track"><div class="fill" style="width:${showNums ? Math.max(Math.min((b ? s / b : s / top) * 100, 100), s > 0 ? 2 : 0) : 0}%;background:${over ? 'var(--red)' : 'var(--accent)'}"></div></div>${u ? `<div class="mute" style="font-size:12px">usual month ${fmt(u)}</div>` : ''}</div>`; }).join('') : '<div class="empty">Nothing spent yet this month.</div>'}</div>
-    ${adviceCard()}
+    ${adviceCard()}${trendChart()}
     <h3>Accounts</h3>
     <div class="grid">
       <div class="card" onclick="acctSheet('cash')" style="cursor:pointer"><div class="lbl">Cash on hand</div><div class="big ${showNums && cash < 0 ? 'neg' : ''}">${fmt(cash)}</div></div>
@@ -2852,6 +2929,7 @@ const V = {
       <div class="card"><div class="lbl">I owe</div><div class="big ${iOwe ? 'neg' : ''}">${fmt(iOwe)}</div></div>
       <div class="card"><div class="lbl">Owed to me</div><div class="big ${owedMe ? 'pos' : ''}">${fmt(owedMe)}</div></div>
     </div>
+    ${trendChart()}
     ${low.length ? `<h3>⚠️ Running low – time to restock</h3><div class="list">${low.map(i => `<div class="it"><div class="main" onclick="tab='stock';render()"><div class="t">${esc(i.name)}</div></div><div class="amt neg">${i.qty} left</div></div>`).join('')}</div>` : ''}
     ${od.length ? `<h3>⚠️ Overdue</h3><div class="list">${od.map(d => `<div class="it"><div class="main" onclick="tab='debts';render()"><div class="t">${esc(d.name)}</div><div class="mute">${d.dir === 'owe' ? 'I owe them' : 'Owes me'} · was due ${niceDate(d.due)}</div></div><div class="amt neg">${fmt(bal(d))}</div></div>`).join('')}</div>` : ''}
     <h3>Latest entries</h3>
@@ -2971,6 +3049,7 @@ const V = {
       <div class="card"><div class="lbl">Budgeted – ${mn}</div><div class="big">${fmt(totB)}</div></div>
       <div class="card"><div class="lbl">Spent so far</div><div class="big ${showNums && totS > totB ? 'neg' : ''}">${fmt(totS)}</div></div>
       <div class="card"><div class="lbl">${totS > totB ? 'Over by' : 'Left to spend'}</div><div class="big ${showNums && totS > totB ? 'neg' : 'pos'}">${fmt(Math.abs(totB - totS))}</div></div></div>` : ''}
+    ${paceChart()}
     <h3>Tap a category to set its budget</h3>
     <div class="card">${shown.length ? shown.map((c, i) => { const s = now[c] || 0, b = B[c] || 0, over = b > 0 && s > b, u = U.months ? U.cats[c] || 0 : 0;
       const sub = [b ? (over ? `${fmt(s - b)} over` : `${fmt(b - s)} left · about ${fmt((b - s) / left)} a day`) : 'no budget', u ? `usual month ${fmt(u)}` : ''].filter(Boolean).join(' · ');
@@ -3070,6 +3149,11 @@ const V = {
     <div class="card" style="margin-bottom:12px"><b>Year summary</b>
       <p class="mute">${isPersonal() ? 'Money in and out for a year, by category, to print or download.' : 'Income, expenses and profit for a year, to print or download at tax time.'}</p>
       <button class="btn" onclick="yearSheet()">Open year summary</button></div>
+    <div class="card" style="margin-bottom:12px"><b>Graphs</b>
+      ${isPersonal() ? `<div class="row between" style="margin-top:10px"><span>Spending on Home</span><select class="f" style="width:auto" onchange="setChart('spend',this.value)"><option value="donut" ${chartSet().spend === 'donut' ? 'selected' : ''}>Donut + list</option><option value="list" ${chartSet().spend === 'list' ? 'selected' : ''}>List only</option></select></div>` : ''}
+      <div class="row between" style="margin-top:10px"><span>Last 6 months</span><select class="f" style="width:auto" onchange="setChart('trend',this.value)">${[['columns', 'Columns'], ['line', 'Line'], ['off', 'Off']].map(([v, l]) => `<option value="${v}" ${chartSet().trend === v ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
+      ${isPersonal() ? `<label class="chk"><input type="checkbox" ${chartSet().pace ? 'checked' : ''} onchange="setChart('pace',this.checked)"> Show the pace graph on the Budget tab</label>` : ''}
+      <p class="mute">Graphs stay hidden until you tap Show.</p></div>
     <div class="card" style="margin-bottom:12px"><b>Appearance</b>
       <label class="chk"><input type="checkbox" ${isDark() ? 'checked' : ''} onchange="P.dark=this.checked;save();render()"> Dark mode</label></div>
     <div class="card" style="margin-bottom:12px"><b>Share with another phone</b>

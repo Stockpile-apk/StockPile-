@@ -469,6 +469,19 @@ addTx('out',null,R1); ok(/Filled in from the photo/.test($('#modal').innerHTML) 
   quickForm(); PCATS.forEach((c,i)=>FC('q'+i,true)); SAVE(); ok(S.set.quick===undefined && quickCats().length===PCATS.length,'ticking them all goes back to showing every icon');
   delete me.kind; tab='budget'; render(); ok(!isPersonal() && tab==='home','business books have no Budget tab'); me.kind=keepK; if(keepK===undefined) delete me.kind;
   S.tx=keepTx; S.budgets=keepB; showNums=keepSN; tab='home'; }
+// 3.13.0: graphs
+{ const keepTx=S.tx, keepB=S.budgets, keepSN=showNums, keepSet=S.set, me=P.list.find(p=>p.id===P.current), keepK=me.kind; me.kind='personal'; S.tx=[]; S.budgets={Groceries:300}; S.set={...S.set}; delete S.set.chart;
+  const ym=thisMonth(), d=ym+'-01'; S.tx.push({id:'c1',type:'out',amount:120,cat:'Groceries',note:'',acct:'cash',gst:0,date:d},{id:'c2',type:'out',amount:30,cat:'Fuel',note:'',acct:'cash',gst:0,date:d},{id:'c3',type:'in',amount:1000,cat:'Pay',note:'',acct:'cash',gst:0,date:d},{id:'c4',type:'out',amount:400,cat:'Rent or mortgage',note:'',acct:'cash',gst:0,date:ymAdd(ym,-2)+'-03'});
+  showNums=false; let H=V.home(); ok(!/<svg/.test(H) && /Tap Show to see this graph/.test(H),'graphs stay hidden until Show is tapped');
+  showNums=true; H=V.home(); ok(/aria-label="Spending by category"/.test(H) && /aria-label="Money in and out, last 6 months"/.test(H) && /class="dot"/.test(H) && !/NaN|undefined/.test(H),'Home shows the spending donut and the 6-month graph');
+  ok(CAP.trend.length===6 && /in \\$1,000\\.00 · out \\$150\\.00/.test(CAP.trend[5]) && /out \\$400\\.00/.test(CAP.trend[3]),'the 6-month graph adds up each month');
+  ok(spendSlots({a:5,b:1,c:2,d:1,e:1,f:1,g:1,h:1,i:1,j:1}).length===8 && spendSlots({a:5,b:1,c:2,d:1,e:1,f:1,g:1,h:1,i:1,j:1})[7][0]==='Other' && spendSlots({a:5,b:1})[0][2]==='var(--s1)','more than 8 categories fold into Other');
+  let Bt=V.budget(); ok(/This month's pace/.test(Bt) && /aria-label="Spending this month against an even pace"/.test(Bt) && /\\$120\\.00 spent so far/.test(CAP.pace[0]),'the Budget tab shows the pace graph');
+  setChart('trend','line'); H=V.home(); ok(/<polyline/.test(H.split('Last 6 months')[1]) && S.set.chart.trend==='line','the 6-month graph can be a line');
+  setChart('spend','list'); setChart('trend','off'); setChart('pace',false); H=V.home(); ok(!/<svg/.test(H) && !/This month's pace/.test(V.budget()) && /Graphs/.test(V.more()),'each graph can be changed or turned off under More');
+  ok(clean(JSON.parse(JSON.stringify(S))).set.chart.trend==='off' && clean({set:{chart:{trend:'bad',pace:'x'}}}).set.chart.trend===undefined,'graph choices survive reload and are cleaned');
+  ok(niceMax(1134)===1200 && niceMax(0)===100 && shortMoney(2500)==='$2.5k' && shortMoney(12000)==='$12k','graph axes use round numbers');
+  me.kind=keepK; if(keepK===undefined) delete me.kind; S.tx=keepTx; S.budgets=keepB; S.set=keepSet; showNums=keepSN; }
 // savings are set aside, not spending; storage meter; hidden test checklist
 { const keepTx=S.tx, keepB=S.budgets, keepR=S.rec, keepG=S.goals, keepSN=showNums, me=P.list.find(p=>p.id===P.current), keepK=me.kind; showNums=true; S.tx=[]; S.rec=[]; S.goals=[]; S.budgets={Savings:100,Groceries:200};
   const ym=thisMonth(), d1=ym+'-01';
