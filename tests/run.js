@@ -366,9 +366,15 @@ ok(findDate('Date: 14-Mar-2026')==='2026-03-14' && findDate('03/14/26 10:22')===
 ok(parseReceipt('NHS A 7 PLR\\nTOTAL 5.00').note===undefined && parseReceipt('Thank you\\nCorner Store\\nTOTAL 5.00').note==='Corner Store','a garbled top line is not used as the store name');
 S.learn={}; S.learn[storeKey('Corner Store')]='Snacks'; ok(parseReceipt('Corner Store\\nTOTAL 5.00').cat==='Snacks','a store you categorised before gets the same category'); S.learn={};
 { const keep=S.tx; S.tx=[{id:'c1',type:'out',amount:50,acct:'credit',cat:'x',note:'',date:today()},{id:'c2',type:'move',amount:20,from:'bank',to:'credit',note:'',date:today()},{id:'c3',type:'move',amount:5,from:'cash',note:'',date:today()}];
-  ok(acctBal('credit')===-30 && acctBal('bank')===-15 && acctBal('cash')===-5 && usesCredit() && moveName(S.tx[1])==='Paid credit card from Debit (bank)','credit card spending and paying it off add up; old Cash → Bank moves still work');
+  ok(acctBal('credit')===-30 && acctBal('bank')===-15 && acctBal('cash')===-5 && usesCredit() && moveName(S.tx[1])==='Paid Credit card from Debit (bank)','credit card spending and paying it off add up; old Cash → Bank moves still work');
   const C=clean({tx:[...S.tx,{id:'c4',type:'out',amount:1,acct:'weird',place:'Maple Ridge',date:today()}],learn:{costco:'Groceries','BAD KEY':'x'}});
   ok(C.tx[0].acct==='credit' && C.tx[1].to==='credit' && !C.tx[2].to && C.tx[3].acct==='cash' && C.tx[3].place==='Maple Ridge' && C.learn.costco==='Groceries' && !C.learn['BAD KEY'],'saved books keep credit card, payoff moves, places and learned categories');
+  S.cards=[{id:'credit',name:'RBC Visa',last4:'4417'},{id:'cctd1',name:'TD Mastercard'}]; S.tx.push({id:'c5',type:'out',amount:12,acct:'cctd1',cat:'x',note:'',date:today()});
+  ok(acctName('credit')==='RBC Visa ••4417' && owedOn('cctd1')===12 && owedOn('credit')===30 && cardTiles().includes('TD Mastercard owed') && acctField('cash').o.map(x=>x[0]).join()==='cash,bank,credit,cctd1','each credit card has its own name and balance');
+  ok(parseReceipt('Shell\\nTOTAL 20.00\\nVISA ************4417').acct==='credit' && parseReceipt('Shell\\nTOTAL 20.00\\nMASTERCARD').acct==='credit' && parseReceipt('Shell\\nTOTAL 20.00\\nCARD ****9999\\nDEBIT').acct==='bank','a receipt picks the card by its last 4 digits');
+  const C2=clean({cards:[{id:'credit',name:'RBC Visa',last4:'4417'},{id:'cctd1',name:'TD',last4:'12'},{id:'bad',name:'x'},{id:'cczz',name:''}],tx:[{id:'m9',type:'move',amount:5,from:'bank',to:'cctd1',date:today()}]});
+  ok(C2.cards.length===2 && C2.cards[1].last4===undefined && C2.tx[0].to==='cctd1','saved books keep the card list and payments to each card');
+  S.cards=[];
   S.tx=keep; }
 addTx('out',null,R1); ok(/Filled in from the photo/.test($('#modal').innerHTML) && /value="8.48"/.test($('#modal').innerHTML) && /value="2026-11-12"/.test($('#modal').innerHTML),'a read receipt pre-fills the entry and asks you to check it'); closeForm();
 // business books still get receipts

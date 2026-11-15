@@ -129,9 +129,9 @@ body.dark .sheet .rc{color:var(--ink)}body.dark .sheet .rcs{color:var(--mute)}bo
 // The test copy (served from /beta/) keeps its data under separate names, so it can never touch the real app's data.
 const BETA = /\/beta\//.test((typeof location !== 'undefined' && location.pathname) || '');
 const KEY0 = (BETA ? 'beta_' : '') + 'money_inventory_tracker_v1', PKEY = (BETA ? 'beta_' : '') + 'stockpile_profiles';
-const VERSION = '3.4.0';
+const VERSION = '3.5.0';
 const okDark = v => v === true || v === false ? v : undefined;
-const fresh = () => ({ tx: [], items: [], debts: [], lastBackup: null, dirty: 0, auto: true, offRemind: true, lastSent: null, offSnooze: null, contacts: [], adj: [], rec: [], budgets: {}, staff: [], gone: {}, mm: {}, learn: {}, set: { gst: false, gstRate: 5 } });
+const fresh = () => ({ tx: [], items: [], debts: [], lastBackup: null, dirty: 0, auto: true, offRemind: true, lastSent: null, offSnooze: null, contacts: [], adj: [], rec: [], budgets: {}, staff: [], gone: {}, mm: {}, learn: {}, cards: [], set: { gst: false, gstRate: 5 } });
 const defaultP = () => ({ list: [{ id: 'default', name: 'My business' }], current: 'default' });
 const CAN = !!(globalThis.crypto && crypto.subtle);
 let S = fresh(), P = defaultP(), storageOK = true, loadFailed = false;
@@ -206,16 +206,26 @@ const stamp = () => { const d = new Date(); return today() + '-' + String(d.getH
 const sum = (a, f) => a.reduce((t, x) => t + (f(x) || 0), 0);
 const round = n => Math.round(n * 100) / 100;
 const niceDate = d => { try { return new Date(d + 'T12:00').toLocaleDateString('en-CA', { month: 'short', day: 'numeric', year: 'numeric' }); } catch (e) { return d; } };
-const ACCT = { cash: 'Cash', bank: 'Debit (bank)', credit: 'Credit card' };
-const ACCTS = Object.keys(ACCT), okAcct = a => ACCTS.includes(a) ? a : 'cash';
+// Accounts: cash, bank (debit) and any number of credit cards. The first card's key is "credit"
+// (older entries used it); more cards are "cc" + an id.
+const cardList = () => (S.cards || []).length ? S.cards : [{ id: 'credit', name: 'Credit card' }];
+const isCard = a => a === 'credit' || /^cc[a-z0-9]{1,24}$/i.test(a || '');
+const cardName = c => c.name + (c.last4 ? ' ••' + c.last4 : '');
+const acctName = a => a === 'bank' ? 'Debit (bank)' : isCard(a) ? cardName(cardList().find(c => c.id === a) || { name: 'Credit card' }) : 'Cash';
+const ACCT = new Proxy({}, { get: (_, a) => acctName(a) });
+const okAcct = a => a === 'bank' || isCard(a) ? a : 'cash';
 const acct = t => t.acct || 'cash';
 // A move shifts money between two accounts. Older moves only stored "from" (Cash ↔ Bank).
 const moveTo = t => t.to || (t.from === 'cash' ? 'bank' : 'cash');
-const MOVES = [['cash>bank', 'Cash → Debit (bank deposit)'], ['bank>cash', 'Debit (bank) → Cash (withdrawal)'], ['bank>credit', 'Pay credit card from Debit (bank)'], ['cash>credit', 'Pay credit card with Cash']];
-const moveName = t => t.to === 'credit' || moveTo(t) === 'credit' ? `Paid credit card from ${ACCT[t.from]}` : `Moved ${ACCT[t.from]} → ${ACCT[moveTo(t)]}`;
-// For Credit card the balance is negative while you owe on it.
+const moves = () => [['cash>bank', 'Cash → Debit (bank deposit)'], ['bank>cash', 'Debit (bank) → Cash (withdrawal)'], ...cardList().flatMap(c => [[`bank>${c.id}`, `Pay ${cardName(c)} from Debit (bank)`], [`cash>${c.id}`, `Pay ${cardName(c)} with Cash`]])];
+const moveName = t => isCard(moveTo(t)) ? `Paid ${acctName(moveTo(t))} from ${acctName(t.from)}` : `Moved ${acctName(t.from)} → ${acctName(moveTo(t))}`;
+// For a credit card the balance is negative while you owe on it.
 const acctBal = a => sum(S.tx, t => t.type === 'move' ? (t.from === a ? -t.amount : moveTo(t) === a ? t.amount : 0) : acct(t) !== a ? 0 : t.type === 'in' ? t.amount : -t.amount);
-const usesCredit = () => S.tx.some(t => t.acct === 'credit' || t.to === 'credit') || (S.rec || []).some(r => r.acct === 'credit');
+const cardUsed = id => S.tx.some(t => t.acct === id || t.to === id) || (S.rec || []).some(r => r.acct === id);
+const cardsShown = () => cardList().filter(c => (S.cards || []).length || cardUsed(c.id));
+const usesCredit = () => cardsShown().length > 0;
+const owedOn = id => Math.max(-acctBal(id), 0);
+const cardTiles = () => cardsShown().map(c => `<div class="card" onclick="addMove(null, { from: 'bank', to: '${c.id}' })" style="cursor:pointer"><div class="lbl">${esc(cardName(c))} owed</div><div class="big ${owedOn(c.id) ? 'neg' : ''}">${fmt(owedOn(c.id))}</div><div class="mute">tap to pay it off</div></div>`).join('');
 const gstOf = (amount, inc) => S.set.gst && inc ? round(amount * S.set.gstRate / (100 + S.set.gstRate)) : 0;
 const eye = () => staffMode ? '' : `<button class="btn sec sm" onclick="showNums=!showNums;render()">${showNums ? '🙈 Hide amounts' : '👁 Show amounts'}</button>`;
 
@@ -236,7 +246,7 @@ function clean(d) {
   o.tx = arr(d.tx).filter(t => ['in', 'out', 'move'].includes(t.type)).map(t => {
     const r = { id: okId(t.id), type: t.type, amount: num(t.amount), note: str(t.note), date: okDate(t.date) };
     if (num(t.m) > 0) r.m = num(t.m);
-    if (t.type === 'move') { r.from = t.from === 'bank' ? 'bank' : 'cash'; if (ACCTS.includes(t.to) && t.to !== r.from) r.to = t.to; }
+    if (t.type === 'move') { r.from = t.from === 'bank' ? 'bank' : 'cash'; if (t.to && okAcct(t.to) === t.to && t.to !== r.from) r.to = t.to; }
     else {
       r.cat = str(t.cat); r.acct = okAcct(t.acct); r.gst = num(t.gst);
       if (t.place) r.place = str(t.place).slice(0, 80);
@@ -263,6 +273,7 @@ function clean(d) {
   o.dirty = Math.max(0, Math.round(num(d.dirty))); o.auto = d.auto !== false;
   o.contacts = arr(d.contacts).map(c => ({ key: ckey(str(c.name)), name: str(c.name).trim(), phone: cleanPhone(c.phone), email: EMAIL_OK.test(str(c.email).trim()) ? str(c.email).trim().slice(0, 120) : '', promo: !!c.promo, ...(num(c.m) > 0 ? { m: num(c.m) } : {}) })).filter(c => c.key);
   o.adj = arr(d.adj).map(a => ({ id: okId(a.id), date: okDate(a.date), itemId: okId(a.itemId), name: str(a.name), qty: Math.round(num(a.qty)), why: str(a.why), note: str(a.note), value: num(a.value), ...(num(a.m) > 0 ? { m: num(a.m) } : {}) }));
+  o.cards = arr(d.cards).filter(c => isCard(c && c.id) && str(c.name).trim()).slice(0, 20).map(c => ({ id: c.id, name: str(c.name).trim().slice(0, 30), ...(/^\d{4}$/.test(c.last4) ? { last4: c.last4 } : {}), ...(num(c.m) > 0 ? { m: num(c.m) } : {}) }));
   o.rec = arr(d.rec).map(r => ({ id: okId(r.id), name: str(r.name), amount: num(r.amount), cat: str(r.cat), acct: okAcct(r.acct), day: Math.min(Math.max(Math.round(num(r.day)) || 1, 1), 28), last: /^\d{4}-\d{2}$/.test(r.last) ? r.last : today().slice(0, 7), ...(num(r.m) > 0 ? { m: num(r.m) } : {}) }));
   if (d.budgets && typeof d.budgets === 'object') Object.entries(d.budgets).slice(0, 80).forEach(([k, v]) => { if (num(v) > 0 && str(k)) o.budgets[str(k).slice(0, 60)] = num(v); });
   o.staff = arr(d.staff).map(x => ({ id: okId(x.id), who: str(x.who).slice(0, 40), perms: Object.fromEntries(['stock', 'stockEdit', 'owing', 'sales', 'refunds'].filter(k => x.perms && x.perms[k]).map(k => [k, true])) }));
@@ -334,7 +345,7 @@ function fieldHTML(f) {
   return `<label class="fl"><span>${esc(f.l)}</span><input id="${id}" ${attrs} value="${esc(val)}" placeholder="${esc(f.ph || '')}">${list}</label>`;
 }
 // Credit card is for money you spend; sales are paid to you in cash or into the bank.
-const acctField = (v, l, noCredit) => ({ k: 'acct', l: l || 'Paid with', t: 'select', v: noCredit && v === 'credit' ? 'cash' : v || 'cash', o: noCredit ? [['cash', 'Cash'], ['bank', 'Debit / card (to bank)']] : ACCTS.map(a => [a, ACCT[a]]) });
+const acctField = (v, l, noCredit) => ({ k: 'acct', l: l || 'Paid with', t: 'select', v: noCredit && isCard(v) ? 'cash' : v || 'cash', o: noCredit ? [['cash', 'Cash'], ['bank', 'Debit / card (to bank)']] : [['cash', 'Cash'], ['bank', 'Debit (bank)'], ...cardList().map(c => [c.id, cardName(c)]), ...(isCard(v) && !cardList().some(c => c.id === v) ? [[v, acctName(v)]] : [])] });
 const gstField = def => S.set.gst ? { k: 'gstInc', l: `Amount includes GST (${S.set.gstRate}%)`, t: 'check', v: def } : null;
 function categories(type) {
   const base = isPersonal() ? (type === 'in' ? PINCOME : PCATS.map(c => c[0])) : type === 'in' ? ['Sales', 'Job payment', 'Other income'] : ['Inventory', 'Supplies', 'Gas', 'Tools', 'Rent', 'Phone', 'Food', 'Other'];
@@ -375,14 +386,14 @@ function addMove(t, preset) { if (staffMode) return;
   const isEdit = !!t;
   t = t || { date: today(), amount: '', from: 'cash', note: '', ...(preset || {}) };
   form(isEdit ? 'Edit move' : 'Move money', [
-    { k: 'way', l: 'Which way?', t: 'select', v: t.from + '>' + moveTo(t), o: MOVES },
+    { k: 'way', l: 'Which way?', t: 'select', v: t.from + '>' + moveTo(t), o: moves() },
     { k: 'amount', l: 'Amount ($)', t: 'money', v: t.amount, req: 1, pos: 1, ph: '0.00' },
     { k: 'note', l: 'Note (optional)', v: t.note },
     { k: 'date', l: 'Date', t: 'date', v: t.date }
   ], v => {
-    const [from, to] = String(v.way || 'cash>bank').split('>'), data = { from, to, amount: round(v.amount), note: v.note, date: v.date || today() };
+    const [from, to] = String(v.way || 'cash>bank').split('>').map(okAcct), data = { from, to, amount: round(v.amount), note: v.note, date: v.date || today() };
     if (isEdit) Object.assign(t, data); else S.tx.push({ id: uid(), type: 'move', ...data });
-  }, `<div class="mute">For deposits, withdrawals and paying off your credit card. It shifts money between your accounts without counting as income or spending.${usesCredit() ? ` Credit card owed now: <b>${fmt(Math.max(-acctBal('credit'), 0))}</b>.` : ''}</div>`, isEdit ? () => delTx(t.id) : null);
+  }, `<div class="mute">For deposits, withdrawals and paying off your credit card. It shifts money between your accounts without counting as income or spending.${usesCredit() ? ' Owed now: ' + cardsShown().map(c => `${esc(cardName(c))} <b>${fmt(owedOn(c.id))}</b>`).join(', ') + '.' : ''}</div>`, isEdit ? () => delTx(t.id) : null);
 }
 function editTx(id) { if (staffMode) return; const t = S.tx.find(x => x.id === id); if (t) t.type === 'move' ? addMove(t) : addTx(t.type, t); }
 function delTx(id) { if (staffMode) return;
@@ -916,6 +927,21 @@ function applyRecurring() {
   }
   return changed;
 }
+function cardForm(id) {
+  const c = (S.cards || []).find(x => x.id === id) || { name: '', last4: '' };
+  form(id ? 'Edit credit card' : 'Add a credit card', [
+    { k: 'name', l: 'Card name', v: c.name, req: 1, ph: 'e.g. RBC Visa' },
+    { k: 'last4', l: 'Last 4 digits (optional)', v: c.last4 || '', ph: 'e.g. 4417' }
+  ], v => {
+    const l4 = String(v.last4 || '').replace(/\D/g, '');
+    if (l4 && l4.length !== 4) { alert('Put just the last 4 digits of the card.'); return false; }
+    const data = { name: String(v.name).trim().slice(0, 30), ...(l4 ? { last4: l4 } : {}) };
+    // The first card takes over entries already marked "Credit card".
+    if (id) { Object.keys(c).filter(k => k !== 'id' && k !== 'm').forEach(k => delete c[k]); Object.assign(c, data); }
+    else (S.cards = S.cards || []).push({ id: S.cards.length ? 'cc' + uid() : 'credit', ...data });
+  }, id ? '' : `<div class="mute">${(S.cards || []).length ? '' : 'Anything you already put on “Credit card” goes on this first card.'}</div>`,
+    id ? () => { if (cardUsed(id)) { alert('This card has entries in your Ledger, so it can’t be deleted. You can rename it instead.'); return; } if (confirm('Delete this card?')) { S.cards = S.cards.filter(x => x.id !== id); commit(); render(); } } : null);
+}
 function recurForm(id) {
   const r = (S.rec || []).find(x => x.id === id) || { name: '', amount: '', cat: '', acct: 'cash', day: 1 };
   form(id ? 'Edit recurring expense' : 'Add recurring expense', [
@@ -1037,7 +1063,7 @@ function personalHome(notes) {
     <div class="grid">
       <div class="card"><div class="lbl">Cash on hand</div><div class="big ${cash < 0 ? 'neg' : ''}">${fmt(cash)}</div></div>
       <div class="card"><div class="lbl">In the bank (debit)</div><div class="big ${bank < 0 ? 'neg' : ''}">${fmt(bank)}</div></div>
-      ${usesCredit() ? `<div class="card" onclick="addMove(null, { from: 'bank', to: 'credit' })" style="cursor:pointer"><div class="lbl">Credit card owed</div><div class="big ${acctBal('credit') < 0 ? 'neg' : ''}">${fmt(Math.max(-acctBal('credit'), 0))}</div><div class="mute">tap to pay it off</div></div>` : ''}
+      ${cardTiles()}
       <div class="card"><div class="lbl">In – ${mn}</div><div class="big pos">${fmt(mIn)}</div></div>
       <div class="card"><div class="lbl">Out – ${mn}</div><div class="big neg">${fmt(mOut)}</div></div>
       <div class="card"><div class="lbl">Left over – ${mn}</div><div class="big ${mIn - mOut < 0 ? 'neg' : 'pos'}">${fmt(mIn - mOut)}</div></div>
@@ -1228,7 +1254,8 @@ function parseReceipt(text) {
   const place = findPlace(lines); if (place) out.place = place;
   const learned = out.note && S.learn ? S.learn[storeKey(out.note)] : '';
   const cat = learned || bookCat(chain ? chain.cat : guessCat(text)); if (cat) out.cat = cat;
-  const pay = findPay(text); if (pay) out.acct = pay;
+  const pay = findPay(text), l4 = (String(text).match(/(?:[*x#•]{2,}|ending(?: in)?|acct)\s*[:#]?\s*(\d{4})\b/i) || [])[1], byL4 = l4 && (S.cards || []).find(c => c.last4 === l4);
+  if (byL4) out.acct = byL4.id; else if (pay === 'credit') out.acct = cardList()[0].id; else if (pay) out.acct = pay;
   const gl = lines.find(l => /\b(g\.?s\.?t|h\.?s\.?t)\b/i.test(l) && !/pst|#|reg|no\.|number/i.test(l) && amts(l).length);
   if (gl) { const g = amts(gl).pop(); if (g > 0 && (out.amount === undefined || g < out.amount)) out.gst = g; }
   if (lines.length) out.lines = lines.slice(0, 60);
@@ -1461,7 +1488,7 @@ const setupCard = () => `<div class="card" style="text-align:center;padding:26px
 const DKEY = (BETA ? 'beta_' : '') + 'stockpile_device', MKEY = (BETA ? 'beta_' : '') + 'stockpile_me';
 let DEV = (() => { try { let d = localStorage.getItem(DKEY); if (!/^[a-z0-9]{6,12}$/.test(d || '')) { d = (Date.now().toString(36) + Math.random().toString(36).slice(2)).slice(-8); localStorage.setItem(DKEY, d); } return d; } catch (e) { return 'd' + Math.random().toString(36).slice(2, 9); } })();
 const myName = () => { try { return (localStorage.getItem(MKEY) || '').slice(0, 30); } catch (e) { return ''; } };
-const SYNC_COLS = ['tx', 'items', 'debts', 'adj', 'rec'];
+const SYNC_COLS = ['tx', 'items', 'debts', 'adj', 'rec', 'cards'];
 let baseSnap = null;
 const sigOf = (r, col) => JSON.stringify(r, (k, v) => k === 'm' || (col === 'items' && (k === 'q' || k === 'qty')) ? undefined : v);
 const qtyOf = it => Object.values(it.q || {}).reduce((t, e) => t + (e.n || 0), 0);
@@ -1513,7 +1540,7 @@ function mergeInto(R) {
     for (const r of R[col] || []) { const l = m.get(r.id); if (!l) { if (!dead(r.id, r)) { m.set(r.id, r); if (col === 'tx') added++; } } else m.set(r.id, both ? both(l, r) : newer(l, r)); }
     S[col] = [...m.values()].filter(r => !dead(r.id, r));
   };
-  mergeCol('tx'); mergeCol('adj'); mergeCol('rec');
+  mergeCol('tx'); mergeCol('adj'); mergeCol('rec'); mergeCol('cards');
   mergeCol('items', (l, r) => {
     const w = { ...newer(l, r) }, q = { ...(l.q || {}) };
     for (const [dev, e] of Object.entries(r.q || {})) if (!q[dev] || (e.v || 0) > (q[dev].v || 0)) q[dev] = e;
@@ -2367,7 +2394,7 @@ const V = {
     <div class="grid">
       <div class="card"><div class="lbl">Cash on hand</div><div class="big ${cash < 0 ? 'neg' : ''}">${fmt(cash)}</div></div>
       <div class="card"><div class="lbl">In the bank (debit)</div><div class="big ${bank < 0 ? 'neg' : ''}">${fmt(bank)}</div></div>
-      ${usesCredit() ? `<div class="card" onclick="addMove(null, { from: 'bank', to: 'credit' })" style="cursor:pointer"><div class="lbl">Credit card owed</div><div class="big ${acctBal('credit') < 0 ? 'neg' : ''}">${fmt(Math.max(-acctBal('credit'), 0))}</div><div class="mute">tap to pay it off</div></div>` : ''}
+      ${cardTiles()}
       <div class="card"><div class="lbl">Total money</div><div class="big ${cash + bank < 0 ? 'neg' : ''}">${fmt(cash + bank)}</div></div>
       <div class="card"><div class="lbl">In – ${mn}</div><div class="big pos">${fmt(mIn)}</div></div>
       <div class="card"><div class="lbl">Out – ${mn}</div><div class="big neg">${fmt(mOut)}</div></div>
@@ -2532,6 +2559,10 @@ const V = {
       ${SEC ? (SEC.bio ? '<p class="mute">Fingerprint unlock is ON.</p><button class="btn sec" onclick="disableBio()">Turn off fingerprint</button>'
         : bioOK() ? '<p class="mute">Unlock with your fingerprint instead of typing the PIN.</p><button class="btn" onclick="enableBio()">Turn on fingerprint unlock</button>'
         : '<p class="mute">Fingerprint unlock is available in the installed app version.</p>') : ''}</div>
+    <div class="card" style="margin-bottom:12px"><b>Credit cards</b>
+      <p class="mute">Add each card so spending goes on the right one. Put in the last 4 digits and a snapped receipt picks the card by itself.</p>
+      ${(S.cards || []).length ? `<div class="list" style="margin-bottom:10px">${S.cards.map(c => `<div class="it"><div class="main" onclick="cardForm('${c.id}')"><div class="t">${esc(cardName(c))}</div><div class="mute">Owed ${fmt(owedOn(c.id))}</div></div></div>`).join('')}</div>` : ''}
+      <button class="btn" onclick="cardForm()">+ Add a credit card</button></div>
     <div class="card" style="margin-bottom:12px"><b>Recurring expenses</b>
       <p class="mute">Bills that repeat every month, added to your Ledger automatically.</p>
       ${(S.rec || []).length ? `<div class="list" style="margin-bottom:10px">${S.rec.map(r => `<div class="it"><div class="main" onclick="recurForm('${r.id}')"><div class="t">${esc(r.name)}</div><div class="mute">Day ${r.day} of each month · ${ACCT[r.acct]}</div></div><div class="amt">${fmt(r.amount)}</div></div>`).join('')}</div>` : ''}
