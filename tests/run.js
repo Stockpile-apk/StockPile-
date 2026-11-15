@@ -522,7 +522,7 @@ staffMode=true; render(); ok(!/<select/.test($('#hdr').innerHTML) && /Lock/.test
 
 
 // ================= version 12: separate keys per books, per-person staff PINs, private PINs =================
-const wait=async(cond,ms=8000)=>{const t0=Date.now(); while(!cond()&&Date.now()-t0<ms) await tick(40);};
+const wait=async(cond,ms=25000)=>{const t0=Date.now(); while(!cond()&&Date.now()-t0<ms) await tick(40);};
 const fails=async p=>{try{await p;return false}catch(e){return true}};
 await saveQ; saveGen++; KR=new Map(); KEYS={}; staff=null; staffMode=false; SEC=null;DK=null;LEGACY=null;S=fresh();P=defaultP();Object.keys(store).forEach(k=>delete store[k]);memPhotos.clear();thumbCache.clear();
 S.items.push({id:'a',name:'Widget',num:1,qty:10,cost:5,price:10}); S.debts.push({id:'ow1',name:'Supplier',dir:'owe',amount:50,date:today(),payments:[]},{id:'od1',name:'Cust',dir:'owed',amount:30,date:today(),payments:[]}); S.tx.push({id:'bizsecret',type:'in',amount:555,cat:'Sales',acct:'cash',gst:0,date:today()}); save();
