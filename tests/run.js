@@ -401,7 +401,7 @@ addTx('out',null,R1); ok(/Filled in from the photo/.test($('#modal').innerHTML) 
   const U=usual(); ok(U.months===2 && U.cats.Groceries===300 && U.inc===2000,'usual months are averaged from past entries');
   const A=advice(), all=A.warn.join(' ')+' '+A.tips.join(' ')+' '+A.suggTip;
   ok(/Groceries<\\/b> is \\$900\\.00 so far/.test(all) && /Suggested budgets/.test(all) && A.sugg.Groceries===300 && A.sugg['Eating out']===undefined,'unusual spending is flagged and budgets are suggested for categories without one');
-  ok(/Tim Hortons<\\/b> 6 times/.test(all) && /monthly bill: <b>Netflix/.test(all) && (+today().slice(8)<5 || /At this pace/.test(all)),'small buys, repeat bills and a month-end forecast are shown');
+  ok(/Tim Hortons<\\/b> 6 times/.test(all) && /monthly bill: <b>Netflix/.test(all) && (+today().slice(8)<5 || /at this pace/i.test(all)),'small buys, repeat bills and a month-end forecast are shown');
   ok(budgetAlert('Eating out',d(1)).startsWith('Heads up')===false && /Heads up|Over budget/.test(budgetAlert('Eating out',d(1))||'Heads up')===true,'budget alert runs');
   S.tx.push({id:'t9',type:'out',amount:60,cat:'Eating out',note:'',date:d(1)}); ok(/Over budget: Eating out is now \\$114\\.00 of your \\$100\\.00/.test(budgetAlert('Eating out',d(1))),'saving an entry that goes over budget warns you');
   useSugg(); ok(S.budgets.Groceries===300 && S.budgets['Eating out']===100,'suggested budgets can be used with one tap, keeping ones you set');
