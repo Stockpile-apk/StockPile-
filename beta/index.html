@@ -130,7 +130,7 @@ body.dark .sheet .rc{color:var(--ink)}body.dark .sheet .rcs{color:var(--mute)}bo
 // The test copy (served from /beta/) keeps its data under separate names, so it can never touch the real app's data.
 const BETA = /\/beta\//.test((typeof location !== 'undefined' && location.pathname) || '');
 const KEY0 = (BETA ? 'beta_' : '') + 'money_inventory_tracker_v1', PKEY = (BETA ? 'beta_' : '') + 'stockpile_profiles';
-const VERSION = '3.12.0';
+const VERSION = '3.12.1';
 const okDark = v => v === true || v === false ? v : undefined;
 const fresh = () => ({ tx: [], items: [], debts: [], lastBackup: null, dirty: 0, auto: true, offRemind: true, lastSent: null, offSnooze: null, contacts: [], adj: [], rec: [], budgets: {}, staff: [], gone: {}, mm: {}, learn: {}, cards: [], banks: [], house: [], goals: [], open: {}, set: { gst: false, gstRate: 5 } });
 const defaultP = () => ({ list: [{ id: 'default', name: 'My business' }], current: 'default' });
@@ -328,6 +328,7 @@ function clean(d) {
   const st = d.set && typeof d.set === 'object' ? d.set : {};
   o.set = { gst: !!st.gst, gstRate: num(st.gstRate) || 5 };
   if (typeof st.pin === 'string' && /^[a-z0-9]{1,16}$/.test(st.pin)) o.set.pin = st.pin;
+  if (Array.isArray(st.quick)) o.set.quick = [...new Set(st.quick.filter(x => typeof x === 'string').map(x => x.slice(0, 40)))].slice(0, 60);
   return o;
 }
 function sanitizeP() {
@@ -1201,6 +1202,15 @@ function budgetsForm() {
     S.budgets = {}; cats.forEach((c, i) => { if (v['b' + i] > 0) S.budgets[c] = round(v['b' + i]); });
   }, '<div class="mute">Set a monthly limit for any category you want to keep an eye on. Leave the rest blank.</div>');
 }
+// Which category icons show under Quick add on Home (indexes into PCATS). Not set = all of them.
+const quickCats = () => PCATS.map((c, i) => i).filter(i => !Array.isArray(S.set.quick) || S.set.quick.includes(PCATS[i][0]));
+function quickForm() {
+  const on = quickCats();
+  form('Quick add icons on Home', PCATS.map((c, i) => ({ k: 'q' + i, l: `${c[1]} ${c[0]}`, t: 'check', v: on.includes(i) })), v => {
+    const pick = PCATS.filter((c, i) => v['q' + i]).map(c => c[0]);
+    S.set = { ...S.set }; if (pick.length === PCATS.length) delete S.set.quick; else S.set.quick = pick;
+  }, '<div class="mute">Tick the ones you want on Home. Every category is still there when you tap − Out. Untick them all to hide Quick add.</div>');
+}
 function personalHome(notes) {
   const tog = `<button class="btn sec" onclick="showNums=!showNums;render()">${showNums ? '🙈 Hide' : '👁 Show'}</button>`;
   const mt = S.tx.filter(t => t.date.startsWith(thisMonth())), mIn = sum(mt.filter(t => t.type === 'in' && !isSav(t)), t => t.amount), outs = mt.filter(t => t.type === 'out' && !isSav(t)), mOut = sum(outs, t => t.amount), aside = setAside(thisMonth());
@@ -1230,7 +1240,7 @@ function personalHome(notes) {
     </div>
     ${reportNudge()}${houseCard()}${goalsCard()}
     ${od.length ? `<h3>⚠️ Overdue</h3><div class="list">${od.map(d => `<div class="it"><div class="main" onclick="tab='debts';render()"><div class="t">${esc(d.name)}</div><div class="mute">${d.dir === 'owe' ? 'I owe them' : 'Owes me'} · was due ${niceDate(d.due)}</div></div><div class="amt neg">${fmt(bal(d))}</div></div>`).join('')}</div>` : ''}
-    <h3>Quick add</h3><div class="cats">${PCATS.map((c, i) => `<button class="cat" onclick="addTx('out',null,{cat:PCATS[${i}][0]})"><span>${c[1]}</span>${esc(c[0])}</button>`).join('')}</div>
+    ${quickCats().length ? `<div class="row between" style="margin-top:22px"><h3 style="margin:0">Quick add</h3><button class="btn sec sm" onclick="quickForm()">Edit</button></div><div class="cats" style="margin-top:8px">${quickCats().map(i => `<button class="cat" onclick="addTx('out',null,{cat:PCATS[${i}][0]})"><span>${PCATS[i][1]}</span>${esc(PCATS[i][0])}</button>`).join('')}</div>` : ''}
     ${V.money(true)}${verTag()}`;
 }
 
@@ -3030,6 +3040,9 @@ const V = {
       ${SEC ? (SEC.bio ? '<p class="mute">Fingerprint unlock is ON.</p><button class="btn sec" onclick="disableBio()">Turn off fingerprint</button>'
         : bioOK() ? '<p class="mute">Unlock with your fingerprint instead of typing the PIN.</p><button class="btn" onclick="enableBio()">Turn on fingerprint unlock</button>'
         : '<p class="mute">Fingerprint unlock is available in the installed app version.</p>') : ''}</div>
+    ${isPersonal() ? `<div class="card" style="margin-bottom:12px"><b>Quick add icons</b>
+      <p class="mute">Showing ${quickCats().length} of ${PCATS.length} category icons on Home.</p>
+      <button class="btn" onclick="quickForm()">Choose icons</button></div>` : ''}
     ${isPersonal() ? `<div class="card" style="margin-bottom:12px"><b>Household</b>
       <p class="mute">People who chip in toward bills each month. Home shows who has paid their share.</p>
       ${(S.house || []).length ? `<div class="list" style="margin-bottom:10px">${S.house.map(h => `<div class="it"><div class="main" onclick="houseForm('${h.id}')"><div class="t">${esc(h.name)}</div><div class="mute">${fmt(h.share)} a month</div></div></div>`).join('')}</div>` : ''}

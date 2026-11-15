@@ -462,6 +462,11 @@ addTx('out',null,R1); ok(/Filled in from the photo/.test($('#modal').innerHTML) 
   V.budget(); budgetOne(bCats.indexOf('Groceries')); F('b',250); SAVE(); ok(S.budgets.Groceries===250,'tapping a category sets its budget');
   V.budget(); budgetOne(bCats.indexOf('Groceries')); F('b',''); SAVE(); ok(S.budgets.Groceries===undefined,'clearing it removes the budget');
   ok(guessCat('TRANSLINK COMPASS')==='Transportation' && guessCat('Impark parking')==='Transportation' && guessCat('Uber Eats')==='Eating out' && guessCat('Lordco auto parts')==='Vehicle','receipts sort transit, parking and ride shares into Transportation');
+  quickForm(); PCATS.forEach((c,i)=>FC('q'+i,['Groceries','Fuel'].includes(c[0]))); SAVE();
+  H=V.home(); ok(/Choose icons/.test(V.more()) && S.set.quick.join()==='Groceries,Fuel' && H.includes('{cat:PCATS[0][0]}') && !H.includes('{cat:PCATS[4][0]}'),'Quick add on Home shows only the icons picked');
+  ok(clean(JSON.parse(JSON.stringify(S))).set.quick.join()==='Groceries,Fuel','the picked icons survive reload');
+  quickForm(); PCATS.forEach((c,i)=>FC('q'+i,false)); SAVE(); ok(!/Quick add/.test(V.home()),'unticking every icon hides Quick add');
+  quickForm(); PCATS.forEach((c,i)=>FC('q'+i,true)); SAVE(); ok(S.set.quick===undefined && quickCats().length===PCATS.length,'ticking them all goes back to showing every icon');
   delete me.kind; tab='budget'; render(); ok(!isPersonal() && tab==='home','business books have no Budget tab'); me.kind=keepK; if(keepK===undefined) delete me.kind;
   S.tx=keepTx; S.budgets=keepB; showNums=keepSN; tab='home'; }
 // savings are set aside, not spending; storage meter; hidden test checklist
