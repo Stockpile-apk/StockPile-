@@ -286,7 +286,17 @@ ok(applyRecurring()===false && S.tx.length===2,'recurring bills are never added 
 recurForm(); F('name','Phone'); F('amount',50); F('cat','Phone'); F('acct','cash'); F('day',28); FC('now',false); SAVE();
 ok(S.rec.length===2 && S.rec[1].day===28 && S.tx.length===2,'a new recurring bill waits for its day');
 recurForm(); F('name','Web'); F('amount',9); F('cat','Web'); F('acct','cash'); F('day',1); FC('now',true); SAVE(); ok(S.tx.length===3 && S.tx[2].note==='Web','“add this month too” records it straight away');
-ok(/Recurring expenses/.test(V.more()) && /Rent/.test(V.more()) && clean(JSON.parse(JSON.stringify(S))).rec.length===3,'recurring bills list under More and survive reload');
+ok(/Recurring bills &amp; paydays|Recurring bills & paydays/.test(V.more()) && /Rent/.test(V.more()) && clean(JSON.parse(JSON.stringify(S))).rec.length===3,'recurring bills list under More and survive reload');
+{ const n0=S.tx.length, past=dayShift(today(),-28);
+  recurForm(null,{type:'in',freq:'biweekly'}); F('name','Paycheque'); F('amount',1500); F('cat','Pay'); F('next',past); SAVE();
+  const pay=S.rec.find(r=>r.name==='Paycheque'); ok(pay.type==='in' && pay.freq==='biweekly' && S.tx.length===n0+3 && S.tx.slice(-3).every(t=>t.type==='in'&&t.amount===1500) && pay.next===dayShift(today(),14),'a bi-weekly payday from 4 weeks ago adds 3 paycheques and points to the next one');
+  ok(applyRecurring()===false,'paydays are never added twice');
+  ok(recDates({freq:'weekly',next:'2026-11-06',day:1},'2026-11-01','2026-11-30').join()==='2026-11-06,2026-11-13,2026-11-20,2026-11-27' && recDates({freq:'biweekly',next:'2026-11-20',day:1},'2026-11-01','2026-11-30').join()==='2026-11-06,2026-11-20','weekly and every-2-weeks dates are worked out');
+  ok(recDates({freq:'semimonthly',day:15,d2:31},'2026-02-01','2026-02-28').join()==='2026-02-15,2026-02-28' && semiAfter({day:15,d2:31},'2026-11-15')==='2026-11-30' && semiAfter({day:15,d2:31},'2026-11-30')==='2026-12-15' && recDates({day:31},'2026-11-01','2026-11-30').join()==='2026-11-30','twice a month uses the 15th and the last day; 31 means the last day');
+  const n1=S.tx.length; recurForm(null,{type:'in',freq:'semimonthly'}); F('name','Wages'); F('amount',1000); F('day',1); F('d2',15); FC('now',true); SAVE();
+  const w=S.rec.find(r=>r.name==='Wages'); ok(w.freq==='semimonthly' && w.d2===15 && S.tx.length>n1 && S.tx.slice(n1).every(t=>t.type==='in') && w.next>today(),'twice-a-month pay with “add the latest one” records it and waits for the next');
+  const C=clean(JSON.parse(JSON.stringify(S))).rec; ok(C.find(r=>r.name==='Paycheque').freq==='biweekly' && C.find(r=>r.name==='Wages').d2===15 && C.find(r=>r.name==='Rent').freq===undefined,'paydays and their schedule survive reload');
+  ok(/Every 2 weeks · next/.test(V.more()) && /Add payday/.test(V.more()),'paydays show under More with how often and when next'); }
 // year summary
 S=mk11(); const Y=today().slice(0,4);
 recordSale([{it:S.items[0],qty:2,price:10}],{pay:'full',acct:'cash'}); S.tx.push({id:'o1',type:'out',amount:7,cat:'Gas',acct:'cash',gst:0,date:today()},{id:'i2',type:'in',amount:30,cat:'Job payment',acct:'bank',gst:0,date:today()},{id:'old',type:'in',amount:999,cat:'Sales',acct:'cash',gst:0,date:'2001-05-05'});

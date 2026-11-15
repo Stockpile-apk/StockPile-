@@ -129,7 +129,7 @@ body.dark .sheet .rc{color:var(--ink)}body.dark .sheet .rcs{color:var(--mute)}bo
 // The test copy (served from /beta/) keeps its data under separate names, so it can never touch the real app's data.
 const BETA = /\/beta\//.test((typeof location !== 'undefined' && location.pathname) || '');
 const KEY0 = (BETA ? 'beta_' : '') + 'money_inventory_tracker_v1', PKEY = (BETA ? 'beta_' : '') + 'stockpile_profiles';
-const VERSION = '3.7.0';
+const VERSION = '3.8.0';
 const okDark = v => v === true || v === false ? v : undefined;
 const fresh = () => ({ tx: [], items: [], debts: [], lastBackup: null, dirty: 0, auto: true, offRemind: true, lastSent: null, offSnooze: null, contacts: [], adj: [], rec: [], budgets: {}, staff: [], gone: {}, mm: {}, learn: {}, cards: [], banks: [], house: [], set: { gst: false, gstRate: 5 } });
 const defaultP = () => ({ list: [{ id: 'default', name: 'My business' }], current: 'default' });
@@ -284,7 +284,10 @@ function clean(d) {
   o.cards = arr(d.cards).filter(c => isCard(c && c.id) && str(c.name).trim()).slice(0, 20).map(c => ({ id: c.id, name: str(c.name).trim().slice(0, 30), ...(/^\d{4}$/.test(c.last4) ? { last4: c.last4 } : {}), ...(num(c.m) > 0 ? { m: num(c.m) } : {}) }));
   o.banks = arr(d.banks).filter(c => isBank(c && c.id) && str(c.name).trim()).slice(0, 20).map(c => ({ id: c.id, name: str(c.name).trim().slice(0, 30), ...(/^\d{4}$/.test(c.last4) ? { last4: c.last4 } : {}), ...(num(c.m) > 0 ? { m: num(c.m) } : {}) }));
   o.house = arr(d.house).filter(h => h && str(h.name).trim()).slice(0, 20).map(h => ({ id: okId(h.id), name: str(h.name).trim().slice(0, 30), share: num(h.share), ...(num(h.m) > 0 ? { m: num(h.m) } : {}) }));
-  o.rec = arr(d.rec).map(r => ({ id: okId(r.id), name: str(r.name), amount: num(r.amount), cat: str(r.cat), acct: okAcct(r.acct), day: Math.min(Math.max(Math.round(num(r.day)) || 1, 1), 28), last: /^\d{4}-\d{2}$/.test(r.last) ? r.last : today().slice(0, 7), ...(num(r.m) > 0 ? { m: num(r.m) } : {}) }));
+  const d31 = v => Math.min(Math.max(Math.round(num(v)) || 1, 1), 31);
+  o.rec = arr(d.rec).map(r => { const f = ['weekly', 'biweekly', 'semimonthly'].includes(r.freq) ? r.freq : 'monthly';
+    return { id: okId(r.id), name: str(r.name), amount: num(r.amount), cat: str(r.cat), acct: okAcct(r.acct), day: d31(r.day), last: /^\d{4}-\d{2}$/.test(r.last) ? r.last : today().slice(0, 7),
+      ...(r.type === 'in' ? { type: 'in' } : {}), ...(f !== 'monthly' ? { freq: f, next: isDate(r.next) ? r.next : today() } : {}), ...(f === 'semimonthly' ? { d2: d31(r.d2 || 31) } : {}), ...(num(r.m) > 0 ? { m: num(r.m) } : {}) }; });
   if (d.budgets && typeof d.budgets === 'object') Object.entries(d.budgets).slice(0, 80).forEach(([k, v]) => { if (num(v) > 0 && str(k)) o.budgets[str(k).slice(0, 60)] = num(v); });
   o.staff = arr(d.staff).map(x => ({ id: okId(x.id), who: str(x.who).slice(0, 40), perms: Object.fromEntries(['stock', 'stockEdit', 'owing', 'sales', 'refunds'].filter(k => x.perms && x.perms[k]).map(k => [k, true])) }));
   if (d.gone && typeof d.gone === 'object') Object.entries(d.gone).slice(0, 6000).forEach(([k, v]) => { if (/^[a-z0-9:. _@&'()+,-]{1,90}$/i.test(k) && num(v) > 0) o.gone[k] = num(v); });
@@ -923,16 +926,47 @@ function adjustForm(id) { if (!can('stockEdit')) return;
 
 /* ---------- recurring expenses (rent, phone, and so on) ---------- */
 let recDay = '';
+/* ---------- recurring bills and paydays: monthly, twice a month, every 2 weeks or weekly ---------- */
+const FREQS = [['monthly', 'Once a month'], ['semimonthly', 'Twice a month'], ['biweekly', 'Every 2 weeks'], ['weekly', 'Every week']];
+const PER_MONTH = { monthly: 1, semimonthly: 2, biweekly: 26 / 12, weekly: 52 / 12 };
+function dimOf(ym) { return new Date(+ym.slice(0, 4), +ym.slice(5, 7), 0).getDate(); }
+function onDay(ym, d) { return ym + '-' + String(Math.min(d, dimOf(ym))).padStart(2, '0'); }
+function dayShift(date, n) { const x = new Date(date + 'T12:00'); x.setDate(x.getDate() + n); return x.toLocaleDateString('en-CA'); }
+function monthShift(ym, k) { const x = new Date(ym + '-15T12:00'); x.setMonth(x.getMonth() + k); return x.toLocaleDateString('en-CA').slice(0, 7); }
+// The first twice-a-month date after a given date (31 means the last day of the month).
+function semiAfter(r, after) {
+  for (let k = 0; k < 3; k++) { const ym = monthShift(after.slice(0, 7), k); for (const d of [r.day, r.d2 || 31].sort((x, y) => x - y)) { const dt = onDay(ym, d); if (dt > after) return dt; } }
+  return dayShift(after, 15);
+}
+const recStep = (r, d) => r.freq === 'weekly' ? dayShift(d, 7) : r.freq === 'biweekly' ? dayShift(d, 14) : semiAfter(r, d);
+// Every date a recurring item falls on between two dates (inclusive), worked out from its schedule.
+function recDates(r, from, to) {
+  const out = [];
+  if (!r.freq || r.freq === 'monthly' || r.freq === 'semimonthly') {
+    for (let ym = from.slice(0, 7), g = 0; ym <= to.slice(0, 7) && g < 24; ym = monthShift(ym, 1), g++)
+      for (const d of r.freq === 'semimonthly' ? [r.day, r.d2 || 31] : [r.day]) { const dt = onDay(ym, d); if (dt >= from && dt <= to && !out.includes(dt)) out.push(dt); }
+    return out.sort();
+  }
+  const step = r.freq === 'weekly' ? 7 : 14, a = new Date(r.next + 'T12:00'), f = new Date(from + 'T12:00');
+  let k = Math.ceil((f - a) / 864e5 / step), dt = dayShift(r.next, k * step);
+  for (let g = 0; dt <= to && g < 60; g++, dt = dayShift(dt, step)) if (dt >= from) out.push(dt);
+  return out;
+}
+const recEntry = (r, date) => ({ id: uid(), type: r.type === 'in' ? 'in' : 'out', amount: r.amount, cat: r.cat, note: r.name, acct: r.acct, gst: 0, date });
 function applyRecurring() {
   if (loadFailed || !S.rec || !S.rec.length) return false;
   const now = today(), thisYm = now.slice(0, 7); let changed = false;
   for (const r of S.rec) {
+    if (r.freq && r.freq !== 'monthly') {
+      for (let g = 0; r.next <= now && g < 120; g++) { S.tx.push(recEntry(r, r.next)); r.next = recStep(r, r.next); changed = true; }
+      continue;
+    }
     let [y, m] = String(r.last || thisYm).split('-').map(Number), guard = 0;
     while (guard++ < 24) {
       m++; if (m > 12) { m = 1; y++; }
       const ym = y + '-' + String(m).padStart(2, '0'); if (ym > thisYm) break;
-      const date = ym + '-' + String(r.day).padStart(2, '0'); if (date > now) break;
-      S.tx.push({ id: uid(), type: 'out', amount: r.amount, cat: r.cat, note: r.name, acct: r.acct, gst: 0, date });
+      const date = onDay(ym, r.day); if (date > now) break;
+      S.tx.push(recEntry(r, date));
       r.last = ym; changed = true;
     }
   }
@@ -956,22 +990,39 @@ function cardForm(id, kind) {
   }, id || list.length ? '' : `<div class="mute">Anything you already put on “${K.legacy}” goes on this first one.</div>`,
     id ? () => { if (cardUsed(id)) { alert(`This ${K.one} has entries in your Ledger, so it can’t be deleted. You can rename it instead.`); return; } if (confirm(`Delete this ${K.one}?`)) { S[K.col] = list.filter(x => x.id !== id); commit(); render(); } } : null);
 }
-function recurForm(id) {
-  const r = (S.rec || []).find(x => x.id === id) || { name: '', amount: '', cat: '', acct: 'cash', day: 1 };
-  form(id ? 'Edit recurring expense' : 'Add recurring expense', [
-    { k: 'name', l: 'What is it?', v: r.name, req: 1, ph: 'e.g. Shop rent' },
-    { k: 'amount', l: 'Amount each month ($)', t: 'money', v: r.amount, req: 1, pos: 1, ph: '0.00' },
-    { k: 'cat', l: 'Category', v: r.cat, list: categories('out'), ph: 'e.g. Rent' },
-    acctField(r.acct, 'Paid from'),
-    { k: 'day', l: 'Day of the month it is paid (1 to 28)', t: 'number', v: r.day, req: 1, pos: 1 },
-    id ? null : { k: 'now', l: "Add this month's one too, even if that day has passed", t: 'check', v: false }
+const recWhen = r => { const nx = recDates(r, dayShift(today(), 1), dayShift(today(), 70))[0];
+  return (FREQS.find(f => f[0] === (r.freq || 'monthly')) || FREQS[0])[1] + (nx ? ' · next ' + niceDate(nx) : ''); };
+function recurForm(id, draft) {
+  const base = (S.rec || []).find(x => x.id === id) || { name: '', amount: '', cat: '', acct: 'cash', day: 1, freq: 'monthly' };
+  const r = { ...base, ...(draft || {}) }, isIn = r.type === 'in', f = r.freq || 'monthly';
+  form(id ? (isIn ? 'Edit payday' : 'Edit recurring bill') : isIn ? 'Add a payday' : 'Add a recurring bill', [
+    { k: 'type', l: 'Money in or out?', t: 'select', v: isIn ? 'in' : 'out', o: [['out', 'A bill or expense (money out)'], ['in', 'A paycheque or income (money in)']] },
+    { k: 'freq', l: 'How often?', t: 'select', v: f, o: FREQS },
+    { k: 'name', l: isIn ? 'What is it?' : 'What is it?', v: r.name, req: 1, ph: isIn ? 'e.g. Paycheque' : 'e.g. Rent' },
+    { k: 'amount', l: 'Amount each time ($)', t: 'money', v: r.amount, req: 1, pos: 1, ph: '0.00' },
+    { k: 'cat', l: 'Category', v: r.cat || (isIn && isPersonal() ? 'Pay' : ''), list: categories(isIn ? 'in' : 'out'), ph: isIn ? 'e.g. Pay' : 'e.g. Rent' },
+    acctField(r.acct, isIn ? 'Paid into' : 'Paid from', isIn),
+    f === 'monthly' || f === 'semimonthly' ? { k: 'day', l: f === 'semimonthly' ? 'First day of the month (1 to 31)' : 'Day of the month (1 to 31; 31 = last day)', t: 'number', v: f === 'semimonthly' && !draft && !id ? 15 : r.day, req: 1, pos: 1 } : null,
+    f === 'semimonthly' ? { k: 'd2', l: 'Second day (31 = last day of the month)', t: 'number', v: r.d2 || 31, req: 1, pos: 1 } : null,
+    f === 'weekly' || f === 'biweekly' ? { k: 'next', l: isIn ? 'Next payday (or a past one to add from)' : 'Next one is on (or a past one to add from)', t: 'date', v: isDate(r.next) ? r.next : today() } : null,
+    !id && f !== 'weekly' && f !== 'biweekly' ? { k: 'now', l: f === 'semimonthly' ? 'Add the latest one too, even if that day has passed' : "Add this month's one too, even if that day has passed", t: 'check', v: false } : null
   ], v => {
-    const day = Math.min(Math.max(Math.round(v.day), 1), 28), ym = thisMonth(), d = new Date(ym + '-15T12:00'); d.setMonth(d.getMonth() - 1);
-    const prev = d.toLocaleDateString('en-CA').slice(0, 7), passed = +today().slice(8) >= day;
-    const data = { name: v.name, amount: round(v.amount), cat: v.cat || v.name, acct: v.acct, day };
-    if (id) Object.assign(r, data); else (S.rec = S.rec || []).push({ id: uid(), ...data, last: passed && !v.now ? ym : prev });
+    v.freq = FREQS.some(x => x[0] === v.freq) ? v.freq : f; v.type = v.type === 'in' || v.type === 'out' ? v.type : isIn ? 'in' : 'out';
+    const day = Math.min(Math.max(Math.round(v.day || 1), 1), 31), d2 = Math.min(Math.max(Math.round(v.d2 || 31), 1), 31), now = today(), ym = thisMonth();
+    const data = { name: v.name, amount: round(v.amount), cat: v.cat || v.name, acct: v.acct, day, ...(v.type === 'in' ? { type: 'in' } : {}), ...(v.freq !== 'monthly' ? { freq: v.freq } : {}) };
+    if (v.freq === 'semimonthly') data.d2 = d2;
+    if (v.freq === 'weekly' || v.freq === 'biweekly') data.next = isDate(v.next) ? v.next : now;
+    else if (v.freq === 'semimonthly') { const t = { ...data }, past = recDates(t, dayShift(now, -45), now).pop(); data.next = v.now && past ? past : semiAfter(t, now); if (id && base.freq === 'semimonthly' && isDate(base.next) && base.d2 === d2 && base.day === day) data.next = base.next; }
+    const passed = data.day && onDay(ym, day) <= now, prev = monthShift(ym, -1);
+    if (id) { const was = base.freq; ['freq', 'type', 'd2', 'next'].forEach(k => delete base[k]); Object.assign(base, data); if (!data.freq && was && was !== 'monthly') base.last = passed ? ym : prev; }
+    else (S.rec = S.rec || []).push({ id: uid(), ...data, last: passed && !v.now ? ym : prev });
     applyRecurring();
-  }, '<div class="mute">StockPile adds this to your Ledger as Money Out each month on that day. You can still edit or delete each entry.</div>', id ? () => { S.rec = S.rec.filter(x => x.id !== id); commit(); render(); } : null);
+  }, `<div class="mute">StockPile adds this to your Ledger as ${isIn ? 'Money In' : 'Money Out'} on each date. You can still edit or delete each entry.</div>`, id ? () => { S.rec = S.rec.filter(x => x.id !== id); commit(); render(); } : null);
+  const redo = () => { const g = k => { const el = document.getElementById('f_' + k); return el ? el.value : undefined; };
+    const dr = { type: g('type'), freq: g('freq'), name: g('name'), amount: g('amount'), cat: g('cat'), acct: g('acct') };
+    if (g('day')) dr.day = +g('day'); if (g('next')) dr.next = g('next'); if (dr.type !== (r.type === 'in' ? 'in' : 'out')) { dr.cat = ''; dr.acct = dr.type === 'in' ? bankList()[0].id : 'cash'; }
+    recurForm(id, dr); };
+  ['type', 'freq'].forEach(k => { const el = document.getElementById('f_' + k); if (el) el.onchange = redo; });
 }
 
 /* ---------- year summary (for tax time) ---------- */
@@ -1153,9 +1204,10 @@ function advice() {
     if (sp > b) warn.push(`<b>${esc(c)}</b> is over budget: ${fmt(sp)} of ${fmt(b)}.`);
     else if (used >= 0.5 && used > gone + 0.15) warn.push(`<b>${esc(c)}</b>: ${Math.round(used * 100)}% of the budget is used and only ${Math.round(gone * 100)}% of the month has gone. About ${fmt((b - sp) / Math.max(days - day + 1, 1))} a day left for ${days - day + 1} days.`); }
   // month-end forecast
-  const recDone = sum((S.rec || []).filter(r => r.last === ym), r => r.amount), recLeft = sum((S.rec || []).filter(r => r.last !== ym), r => r.amount);
+  const R = S.rec || [], first = ym + '-01', tdy = today(), end = onDay(ym, 31), tmr = dayShift(tdy, 1), occ = (r, a, b) => recDates(r, a, b).length * r.amount;
+  const recDone = sum(R.filter(r => r.type !== 'in'), r => occ(r, first, tdy)), recLeft = sum(R.filter(r => r.type !== 'in'), r => occ(r, tmr, end)), payLeft = sum(R.filter(r => r.type === 'in'), r => occ(r, tmr, end));
   const outSoFar = sum(Object.values(now), x => x), inSoFar = sum(S.tx.filter(t => t.type === 'in' && t.date.startsWith(ym)), t => t.amount);
-  const proj = day >= 5 ? outSoFar + Math.max(outSoFar - recDone, 0) / day * (days - day) + recLeft : 0, incomeExp = Math.max(inSoFar, U.inc) + houseLeft();
+  const proj = day >= 5 ? outSoFar + Math.max(outSoFar - recDone, 0) / day * (days - day) + recLeft : 0, incomeExp = Math.max(inSoFar + payLeft, U.inc) + houseLeft();
   if (proj && incomeExp > 0) { if (proj > incomeExp) warn.push(`At this pace you'll spend about <b>${fmt(proj)}</b> this month — ${fmt(proj - incomeExp)} more than is coming in.`);
     else tips.push(`On track: at this pace you'll spend about ${fmt(proj)} this month and have about <b>${fmt(incomeExp - proj)}</b> left over.`); }
   // unusual spending
@@ -1172,14 +1224,17 @@ function advice() {
   const small = {}; S.tx.forEach(t => { if (t.type === 'out' && t.date.startsWith(ym) && t.amount < 20) { const k = t.note || t.cat || 'Misc'; (small[k] = small[k] || [0, 0])[0]++; small[k][1] += t.amount; } });
   Object.entries(small).filter(([, v]) => v[0] >= 4).sort((a, b) => b[1][1] - a[1][1]).slice(0, 2).forEach(([k, v]) => tips.push(`Small buys add up: <b>${esc(k)}</b> ${v[0]} times this month, ${fmt(v[1])}. That's on pace for about ${fmt(v[1] / gone)} a month — cutting it in half would save about ${fmt(v[1] / gone / 2)}.`));
   // bills & subscriptions
-  const due = (S.rec || []).filter(r => r.last !== ym).sort((a, b) => a.day - b.day);
-  if (due.length) tips.push(`Bills still to come this month: ${due.slice(0, 4).map(r => `${esc(r.name)} ${fmt(r.amount)} (the ${r.day}${['th', 'st', 'nd', 'rd'][r.day % 10 > 3 || [11, 12, 13].includes(r.day) ? 0 : r.day % 10]})`).join(', ')} — ${fmt(sum(due, r => r.amount))} in all.`);
-  const subs = sum((S.rec || []).filter(r => /subscri|stream|netflix|spotify|disney|prime|apple|google|gym/i.test(r.cat + ' ' + r.name)), r => r.amount);
+  const nth = d => { d = +d.slice(8); return d + (['th', 'st', 'nd', 'rd'][d % 10 > 3 || [11, 12, 13].includes(d) ? 0 : d % 10]); };
+  const due = R.filter(r => r.type !== 'in').flatMap(r => recDates(r, tmr, end).map(d => [r, d])).sort((a, b) => a[1].localeCompare(b[1]));
+  if (due.length) tips.push(`Bills still to come this month: ${due.slice(0, 4).map(([r, d]) => `${esc(r.name)} ${fmt(r.amount)} (the ${nth(d)})`).join(', ')}${due.length > 4 ? '…' : ''} — ${fmt(sum(due, x => x[0].amount))} in all.`);
+  const pays = R.filter(r => r.type === 'in').flatMap(r => recDates(r, tmr, dayShift(tdy, 35)).map(d => [r, d])).sort((a, b) => a[1].localeCompare(b[1]));
+  if (pays.length) tips.push(`Next payday: <b>${niceDate(pays[0][1])}</b> — ${esc(pays[0][0].name)} ${fmt(pays[0][0].amount)}.${payLeft ? ` Still to come this month: ${fmt(payLeft)}.` : ''}`);
+  const subs = sum(R.filter(r => r.type !== 'in' && /subscri|stream|netflix|spotify|disney|prime|apple|google|gym/i.test(r.cat + ' ' + r.name)), r => r.amount * PER_MONTH[r.freq || 'monthly']);
   if (subs) tips.push(`Subscriptions cost ${fmt(subs)} a month (${fmt(subs * 12)} a year). Worth a look for any you don't use.`);
   const recNames = new Set((S.rec || []).map(r => storeKey(r.name))), last1 = ymAdd(ym, -1), last2 = ymAdd(ym, -2);
   const rep = {}; S.tx.forEach(t => { if (t.type === 'out' && t.note && (t.date.startsWith(last1) || t.date.startsWith(last2))) { const k = storeKey(t.note); (rep[k] = rep[k] || { n: t.note, m: {} }).m[t.date.slice(0, 7)] = t.amount; } });
   Object.entries(rep).filter(([k, v]) => !recNames.has(k) && v.m[last1] && v.m[last2] && Math.abs(v.m[last1] - v.m[last2]) <= v.m[last1] * 0.1).slice(0, 2)
-    .forEach(([, v]) => tips.push(`Looks like a monthly bill: <b>${esc(v.n)}</b> about ${fmt(v.m[last1])}. Add it under More → Recurring expenses so it's counted ahead of time.`));
+    .forEach(([, v]) => tips.push(`Looks like a monthly bill: <b>${esc(v.n)}</b> about ${fmt(v.m[last1])}. Add it under More → Recurring bills & paydays so it's counted ahead of time.`));
   if (!Object.keys(B).length && !Object.keys(sugg).length) tips.push('Set a budget for the categories you want to watch, and StockPile will warn you before you go over.');
   return { warn, tips, sugg, suggTip };
 }
@@ -2696,10 +2751,10 @@ const V = {
       <p class="mute">Add each card so spending goes on the right one. Put in the last 4 digits and a snapped receipt picks the card by itself.</p>
       ${(S.cards || []).length ? `<div class="list" style="margin-bottom:10px">${S.cards.map(c => `<div class="it"><div class="main" onclick="cardForm('${c.id}')"><div class="t">${esc(cardName(c))}</div><div class="mute">Owed ${fmt(owedOn(c.id))}</div></div></div>`).join('')}</div>` : ''}
       <button class="btn" onclick="cardForm()">+ Add a credit card</button></div>
-    <div class="card" style="margin-bottom:12px"><b>Recurring expenses</b>
-      <p class="mute">Bills that repeat every month, added to your Ledger automatically.</p>
-      ${(S.rec || []).length ? `<div class="list" style="margin-bottom:10px">${S.rec.map(r => `<div class="it"><div class="main" onclick="recurForm('${r.id}')"><div class="t">${esc(r.name)}</div><div class="mute">Day ${r.day} of each month · ${ACCT[r.acct]}</div></div><div class="amt">${fmt(r.amount)}</div></div>`).join('')}</div>` : ''}
-      <button class="btn" onclick="recurForm()">+ Add recurring expense</button></div>
+    <div class="card" style="margin-bottom:12px"><b>Recurring bills & paydays</b>
+      <p class="mute">Bills and paycheques that repeat — monthly, twice a month, every 2 weeks or weekly — added to your Ledger automatically.</p>
+      ${(S.rec || []).length ? `<div class="list" style="margin-bottom:10px">${[...S.rec].sort((a, b) => (a.type === 'in' ? 0 : 1) - (b.type === 'in' ? 0 : 1)).map(r => `<div class="it"><div class="main" onclick="recurForm('${r.id}')"><div class="t">${r.type === 'in' ? '💵 ' : ''}${esc(r.name)}</div><div class="mute">${recWhen(r)} · ${esc(acctName(r.acct))}</div></div><div class="amt ${r.type === 'in' ? 'pos' : ''}">${r.type === 'in' ? '+' : ''}${fmt(r.amount)}</div></div>`).join('')}</div>` : ''}
+      <div class="row"><button class="btn in" onclick="recurForm(null, { type: 'in', cat: '${isPersonal() ? 'Pay' : ''}', acct: '${bankList()[0].id}' })">+ Add payday</button><button class="btn" onclick="recurForm()">+ Add bill</button></div></div>
     <div class="card" style="margin-bottom:12px"><b>Year summary</b>
       <p class="mute">${isPersonal() ? 'Money in and out for a year, by category, to print or download.' : 'Income, expenses and profit for a year, to print or download at tax time.'}</p>
       <button class="btn" onclick="yearSheet()">Open year summary</button></div>
