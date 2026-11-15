@@ -129,7 +129,7 @@ body.dark .sheet .rc{color:var(--ink)}body.dark .sheet .rcs{color:var(--mute)}bo
 // The test copy (served from /beta/) keeps its data under separate names, so it can never touch the real app's data.
 const BETA = /\/beta\//.test((typeof location !== 'undefined' && location.pathname) || '');
 const KEY0 = (BETA ? 'beta_' : '') + 'money_inventory_tracker_v1', PKEY = (BETA ? 'beta_' : '') + 'stockpile_profiles';
-const VERSION = '3.10.0';
+const VERSION = '3.11.0';
 const okDark = v => v === true || v === false ? v : undefined;
 const fresh = () => ({ tx: [], items: [], debts: [], lastBackup: null, dirty: 0, auto: true, offRemind: true, lastSent: null, offSnooze: null, contacts: [], adj: [], rec: [], budgets: {}, staff: [], gone: {}, mm: {}, learn: {}, cards: [], banks: [], house: [], goals: [], open: {}, set: { gst: false, gstRate: 5 } });
 const defaultP = () => ({ list: [{ id: 'default', name: 'My business' }], current: 'default' });
@@ -171,6 +171,26 @@ async function loadProfile() {
   delete S.set.pin;
   const grew = !loadFailed && prepSync(); if (!loadFailed) takeSnap();
   if (applyRecurring() || grew) save();
+}
+// How full this browser's storage is. Browsers allow roughly 5 million characters per site; receipt photos are kept elsewhere and don't count.
+const STORE_CAP = 5e6;
+function storageUse() {
+  let used = 0;
+  try { for (const k of Object.keys(localStorage)) used += k.length + String(localStorage.getItem(k) || '').length; } catch (e) {}
+  return { used, cap: STORE_CAP, pct: Math.min(Math.round(used / STORE_CAP * 100), 100) };
+}
+const kb = n => n >= 1048576 ? (n / 1048576).toFixed(1) + ' MB' : Math.max(Math.round(n / 1024), n ? 1 : 0) + ' KB';
+function storageNote() {
+  const u = storageUse(); if (u.pct < 70) return '';
+  return `<div class="note">${u.pct >= 90 ? '⚠️ <b>Storage is almost full</b>' : '💾 Storage is filling up'}: ${u.pct}% used. ${u.pct >= 90 ? 'New entries may stop saving soon. Send a backup off this phone now.' : 'Send a backup off this phone so nothing is lost.'}
+    <div class="row" style="margin-top:8px"><button class="btn sm" onclick="shareBackup()">Send backup</button></div></div>`;
+}
+function storageCard() {
+  const u = storageUse();
+  return `<div class="card" style="margin-bottom:12px"><b>Storage on this phone</b>
+    <p class="mute">${u.pct}% used: ${kb(u.used)} of about ${kb(u.cap)}, for all your books together. Receipt photos are stored separately and don't count.</p>
+    <div class="track"><div class="fill" style="width:${Math.max(u.pct, 1)}%;background:${u.pct >= 90 ? 'var(--red)' : 'var(--accent)'}"></div></div>
+    ${u.pct >= 70 ? '<p class="mute">Getting full. Keep a backup off this phone.</p>' : ''}</div>`;
 }
 function save() {
   if (loadFailed) return;
@@ -1140,6 +1160,31 @@ function posTotals() {
   posOwing();
 }
 
+/* ---------- hidden phone test checklist: tap the version number 5 times ---------- */
+const TKEY = (BETA ? 'beta_' : '') + 'stockpile_tests';
+const TESTS = [
+  ['Receipts', [['r1', 'Snap a real receipt: amount, date and store come out right'], ['r2', 'First read works after the one-time download; note how many seconds it takes'], ['r3', 'A second receipt reads with the internet off (airplane mode)'], ['r4', 'A card receipt picks the right account from the last 4 digits'], ['r5', 'Split one receipt across two categories']]],
+  ['Accounts & budgeting', [['a1', 'Add a bank account and a credit card with real balances'], ['a2', 'Add a payday and a bill; they show up in the Ledger on the right days'], ['a3', 'Add a household person and record their payment'], ['a4', 'Add a savings goal and put money in; it shows as Set aside, not spending'], ['a5', 'Set a budget and go over it; the warning appears'], ['a6', 'Open the monthly report and Print / PDF it'], ['a7', 'Calendar export: the file opens in your phone calendar']]],
+  ['Phone-only features', [['p1', 'Install to the home screen; opens with no internet'], ['p2', 'PIN lock, then fingerprint unlock'], ['p3', 'Camera barcode scanning on the Sell or Stock tab'], ['p4', 'Print a label'], ['p5', 'Share sheet: send a receipt or report by text or email'], ['p6', 'Dark mode looks right']]],
+  ['Backups', [['b1', 'Back up now: the file lands in Downloads'], ['b2', 'Send backup through the share menu'], ['b3', 'Restore from a backup file'], ['b4', 'Check Storage on this phone under More and note the % used']]],
+  ['Two phones', [['t1', 'Share books to a second phone with a file and merge it back'], ['t2', 'Live link on the same Wi-Fi: a sale on one shows on the other'], ['t3', 'Two tills sell the same item; stock adds up right']]],
+  ['Updates', [['u1', 'After a new version is pushed, the second open shows the new version number']]]
+];
+let verTaps = 0, verAt = 0;
+const verTag = () => `<p class="mute" style="text-align:center;margin-top:24px;font-size:12px" onclick="verTap()">StockPile version ${VERSION}</p>`;
+function verTap() { const n = Date.now(); verTaps = n - verAt < 1500 ? verTaps + 1 : 1; verAt = n; if (verTaps >= 5) { verTaps = 0; testSheet(); } }
+function testDone() { try { const o = JSON.parse(localStorage.getItem(TKEY) || '{}'); return o && typeof o === 'object' && !Array.isArray(o) ? o : {}; } catch (e) { return {}; } }
+function testTick(id, on) { const d = testDone(); if (on) d[id] = VERSION; else delete d[id]; try { localStorage.setItem(TKEY, JSON.stringify(d)); } catch (e) {} testSheet(); }
+function testSheet() {
+  if (staffMode) return;
+  const d = testDone(), all = TESTS.flatMap(g => g[1]), n = all.filter(t => d[t[0]]).length, m = $('#modal'); closeForm();
+  m.innerHTML = `<div class="sheet"><div class="row between"><h2 style="margin:0">Phone test checklist</h2><button class="x" style="font-size:24px" onclick="closeForm()">✕</button></div>
+    <p class="mute">${n} of ${all.length} done. Ticks are saved on this phone only. Hidden screen: tap the version number 5 times to open it.</p>
+    ${TESTS.map(([g, list]) => `<h3>${esc(g)}</h3><div class="card">${list.map(([id, t]) => `<label class="chk"><input type="checkbox" ${d[id] ? 'checked' : ''} onchange="testTick('${id}',this.checked)"> <span>${esc(t)}${d[id] ? ` <span class="mute">(v${esc(String(d[id]))})</span>` : ''}</span></label>`).join('')}</div>`).join('')}
+    <div class="row" style="margin-top:12px"><button class="btn sec" onclick="if(confirm('Clear all ticks?')){try{localStorage.removeItem(TKEY)}catch(e){}testSheet()}">Clear ticks</button></div></div>`;
+  m.hidden = false; m.onclick = e => { if (e.target === m) closeForm(); };
+}
+
 /* ---------- dark mode ---------- */
 const isDark = () => P.dark === true || (P.dark == null && typeof matchMedia === 'function' && matchMedia('(prefers-color-scheme: dark)').matches);
 
@@ -1148,7 +1193,7 @@ const PCATS = [['Groceries', '🛒'], ['Eating out', '🍔'], ['Fuel', '⛽'], [
 const PINCOME = ['Pay', 'Household', 'Side work', 'Benefits', 'Refunds', 'Other income'];
 const isPersonal = () => (P.list.find(p => p.id === P.current) || {}).kind === 'personal';
 const catIcon = c => (PCATS.find(x => x[0] === c) || [0, '•'])[1];
-function budgetCats() { return [...new Set([...PCATS.map(c => c[0]), ...S.tx.filter(t => t.type === 'out').map(t => t.cat).filter(Boolean), ...Object.keys(S.budgets || {})])]; }
+function budgetCats() { return [...new Set([...PCATS.map(c => c[0]), ...S.tx.filter(t => t.type === 'out').map(t => t.cat).filter(Boolean), ...Object.keys(S.budgets || {})])].filter(c => !(c === 'Savings' && isPersonal())); }
 function budgetsForm() {
   const cats = budgetCats();
   form('Monthly budgets', cats.map((c, i) => ({ k: 'b' + i, l: `${catIcon(c)} ${c}`, t: 'money', v: (S.budgets || {})[c] || '', ph: 'no limit' })), v => {
@@ -1156,16 +1201,16 @@ function budgetsForm() {
   }, '<div class="mute">Set a monthly limit for any category you want to keep an eye on. Leave the rest blank.</div>');
 }
 function personalHome(notes) {
-  const ver = `<p class="mute" style="text-align:center;margin-top:24px;font-size:12px">StockPile version ${VERSION}</p>`;
+  const ver = `${verTag()}`;
   const quick = `<div class="row bar" style="justify-content:center"><button class="btn" onclick="snapNew()">📷 Snap a receipt</button><button class="btn out" onclick="addTx('out')">− Money Out</button><button class="btn in" onclick="addTx('in')">+ Money In</button></div>`;
   const grid = `<h3>Quick add</h3><div class="cats">${PCATS.map((c, i) => `<button class="cat" onclick="addTx('out',null,{cat:PCATS[${i}][0]})"><span>${c[1]}</span>${esc(c[0])}</button>`).join('')}</div>`;
   if (!showNums) return `${notes}<div class="card" style="text-align:center;padding:24px 16px;margin-top:10px"><div style="font-size:42px">📦</div>
       <h2 style="margin:8px 0 4px">Welcome back</h2><div class="mute">${new Date().toLocaleDateString('en-CA', { weekday: 'long', month: 'long', day: 'numeric' })}</div></div>
     ${quick}${grid}<div style="text-align:center;margin-top:18px"><button class="btn sec" onclick="showNums=true;render()">👁 Show my summary</button></div>${ver}`;
-  const mt = S.tx.filter(t => t.date.startsWith(thisMonth())), mIn = sum(mt.filter(t => t.type === 'in'), t => t.amount), outs = mt.filter(t => t.type === 'out'), mOut = sum(outs, t => t.amount);
+  const mt = S.tx.filter(t => t.date.startsWith(thisMonth())), mIn = sum(mt.filter(t => t.type === 'in' && !isSav(t)), t => t.amount), outs = mt.filter(t => t.type === 'out' && !isSav(t)), mOut = sum(outs, t => t.amount), aside = setAside(thisMonth());
   const cash = acctBal('cash'), bank = bankTotal(), od = S.debts.filter(overdue), mn = new Date().toLocaleDateString('en-CA', { month: 'long' });
   const iOwe = sum(S.debts.filter(d => d.dir === 'owe'), d => Math.max(bal(d), 0)), owedMe = sum(S.debts.filter(d => d.dir === 'owed'), d => Math.max(bal(d), 0));
-  const spent = Object.fromEntries(groupBy(outs, t => t.cat)), B = S.budgets || {}, cats = [...new Set([...Object.keys(spent), ...Object.keys(B)])].sort((a, b) => (spent[b] || 0) - (spent[a] || 0)), top = Math.max(...Object.values(spent), 1);
+  const spent = Object.fromEntries(groupBy(outs, t => t.cat)), B = budgetsNow(), cats = [...new Set([...Object.keys(spent), ...Object.keys(B)])].sort((a, b) => (spent[b] || 0) - (spent[a] || 0)), top = Math.max(...Object.values(spent), 1);
   return `${notes}<div class="row bar"><button class="btn" onclick="snapNew()">📷 Snap a receipt</button><button class="btn out" onclick="addTx('out')">− Out</button><button class="btn in" onclick="addTx('in')">+ In</button><button class="btn sec" onclick="showNums=false;render()">🙈 Hide</button></div>
     <div class="grid">
       <div class="card" onclick="acctSheet('cash')" style="cursor:pointer"><div class="lbl">Cash on hand</div><div class="big ${cash < 0 ? 'neg' : ''}">${fmt(cash)}</div></div>
@@ -1173,7 +1218,8 @@ function personalHome(notes) {
       ${cardTiles()}
       <div class="card"><div class="lbl">In – ${mn}</div><div class="big pos">${fmt(mIn)}</div></div>
       <div class="card"><div class="lbl">Out – ${mn}</div><div class="big neg">${fmt(mOut)}</div></div>
-      <div class="card"><div class="lbl">Left over – ${mn}</div><div class="big ${mIn - mOut < 0 ? 'neg' : 'pos'}">${fmt(mIn - mOut)}</div></div>
+      ${aside ? `<div class="card"><div class="lbl">${aside > 0 ? 'Set aside' : 'Taken from savings'} – ${mn}</div><div class="big">${fmt(Math.abs(aside))}</div></div>` : ''}
+      <div class="card"><div class="lbl">Left over – ${mn}</div><div class="big ${mIn - mOut - aside < 0 ? 'neg' : 'pos'}">${fmt(mIn - mOut - aside)}</div></div>
       <div class="card"><div class="lbl">I owe</div><div class="big ${iOwe ? 'neg' : ''}">${fmt(iOwe)}</div></div>
       ${owedMe ? `<div class="card"><div class="lbl">Owed to me</div><div class="big pos">${fmt(owedMe)}</div></div>` : ''}
     </div>
@@ -1221,26 +1267,30 @@ function contribForm(id) {
 /* ---------- budget helper: warnings and tips worked out on the phone from your own entries ---------- */
 const ymAdd = (ym, k) => { const d = new Date(ym + '-15T12:00'); d.setMonth(d.getMonth() + k); return d.toLocaleDateString('en-CA').slice(0, 7); };
 const daysIn = ym => new Date(+ym.slice(0, 4), +ym.slice(5, 7), 0).getDate();
-const catsIn = ym => { const o = {}; S.tx.forEach(t => { if (t.type === 'out' && t.date.startsWith(ym)) o[t.cat || 'Misc'] = (o[t.cat || 'Misc'] || 0) + t.amount; }); return o; };
+// In personal books, the Savings category is money set aside, not spending: it stays out of budgets, warnings and spending totals.
+const isSav = t => t.cat === 'Savings' && (t.type === 'in' || t.type === 'out') && isPersonal();
+const setAside = ym => round(sum(S.tx.filter(t => isSav(t) && t.date.startsWith(ym)), t => t.type === 'out' ? t.amount : -t.amount));
+const budgetsNow = () => { const B = { ...(S.budgets || {}) }; if (isPersonal()) delete B.Savings; return B; };
+const catsIn = ym => { const o = {}; S.tx.forEach(t => { if (t.type === 'out' && !isSav(t) && t.date.startsWith(ym)) o[t.cat || 'Misc'] = (o[t.cat || 'Misc'] || 0) + t.amount; }); return o; };
 const up10 = n => Math.ceil(n / 10) * 10;
 // Averages over the last 3 months that have entries (this month not included).
 function usual() {
   const ym = thisMonth(), months = [1, 2, 3].map(k => ymAdd(ym, -k)).filter(m => S.tx.some(t => t.date.startsWith(m)));
   const cats = {}, n = months.length || 1;
   months.forEach(m => Object.entries(catsIn(m)).forEach(([c, v]) => { cats[c] = (cats[c] || 0) + v / n; }));
-  const inc = sum(months, m => sum(S.tx.filter(t => t.type === 'in' && t.date.startsWith(m)), t => t.amount)) / n;
+  const inc = sum(months, m => sum(S.tx.filter(t => t.type === 'in' && !isSav(t) && t.date.startsWith(m)), t => t.amount)) / n;
   return { months: months.length, cats, inc, out: sum(Object.values(cats), x => x) };
 }
 function budgetAlert(cat, date) {
   if (!isPersonal() || !cat || !String(date || '').startsWith(thisMonth())) return '';
-  const b = (S.budgets || {})[cat]; if (!(b > 0)) return '';
+  const b = budgetsNow()[cat]; if (!(b > 0)) return '';
   const s = catsIn(thisMonth())[cat] || 0;
   if (s > b) return `⚠️ Over budget: ${cat} is now ${fmt(s)} of your ${fmt(b)} for this month (${fmt(s - b)} over).`;
   if (s >= b * 0.9) return `Heads up: ${cat} is at ${fmt(s)} of ${fmt(b)} — ${Math.round(s / b * 100)}% of this month's budget.`;
   return '';
 }
 function advice() {
-  const ym = thisMonth(), day = +today().slice(8), days = daysIn(ym), gone = day / days, B = S.budgets || {}, now = catsIn(ym), U = usual(), warn = [], tips = [];
+  const ym = thisMonth(), day = +today().slice(8), days = daysIn(ym), gone = day / days, B = budgetsNow(), now = catsIn(ym), U = usual(), warn = [], tips = [];
   // pace against each budget
   for (const c of cardsShown()) { const ow = owedOn(c.id), dd = cardDue(c), n = dd ? Math.round((new Date(dd + 'T12:00') - new Date(today() + 'T12:00')) / 864e5) : 99;
     if (ow > 0 && n <= 5) warn.push(`<b>${esc(cardName(c))}</b> payment due ${n === 0 ? 'today' : n === 1 ? 'tomorrow' : `${niceDate(dd)} (in ${n} days)`}: ${fmt(ow)} owed${c.min ? `, minimum ${fmt(c.min)}` : ''}.`);
@@ -1253,10 +1303,11 @@ function advice() {
   // month-end forecast
   const R = S.rec || [], first = ym + '-01', tdy = today(), end = onDay(ym, 31), tmr = dayShift(tdy, 1), occ = (r, a, b) => recDates(r, a, b).length * r.amount;
   const recDone = sum(R.filter(r => r.type !== 'in'), r => occ(r, first, tdy)), recLeft = sum(R.filter(r => r.type !== 'in'), r => occ(r, tmr, end)), payLeft = sum(R.filter(r => r.type === 'in'), r => occ(r, tmr, end));
-  const outSoFar = sum(Object.values(now), x => x), inSoFar = sum(S.tx.filter(t => t.type === 'in' && t.date.startsWith(ym)), t => t.amount);
+  const outSoFar = sum(Object.values(now), x => x), inSoFar = sum(S.tx.filter(t => t.type === 'in' && !isSav(t) && t.date.startsWith(ym)), t => t.amount), aside = setAside(ym);
   const proj = day >= 5 ? outSoFar + Math.max(outSoFar - recDone, 0) / day * (days - day) + recLeft : 0, incomeExp = Math.max(inSoFar + payLeft, U.inc) + houseLeft();
   if (proj && incomeExp > 0) { if (proj > incomeExp) warn.push(`At this pace you'll spend about <b>${fmt(proj)}</b> this month — ${fmt(proj - incomeExp)} more than is coming in.`);
     else tips.push(`On track: at this pace you'll spend about ${fmt(proj)} this month and have about <b>${fmt(incomeExp - proj)}</b> left over.`); }
+  if (aside > 0) tips.push(`Set aside so far this month: <b>${fmt(aside)}</b>. Savings are not counted as spending.`);
   // unusual spending
   if (U.months) for (const [c, sp] of Object.entries(now)) { const avg = U.cats[c] || 0; if (sp > avg * 1.5 && sp - avg > 50) warn.push(`<b>${esc(c)}</b> is ${fmt(sp)} so far this month. A usual month is ${fmt(avg)}.`); }
   // suggested budgets from the usual months
@@ -1268,7 +1319,7 @@ function advice() {
   if (ups.length) tips.push('Higher than usual by this point in the month: ' + ups.map(([c, d]) => `${esc(c)} (about ${fmt(d)} more)`).join(', ') + '.');
   if (downs.length) tips.push('Nice — so far you\'re spending less on ' + downs.map(([c, d]) => `${esc(c)} (about ${fmt(-d)} less)`).join(', ') + ' than usual.');
   // small buys that add up
-  const small = {}; S.tx.forEach(t => { if (t.type === 'out' && t.date.startsWith(ym) && t.amount < 20) { const k = t.note || t.cat || 'Misc'; (small[k] = small[k] || [0, 0])[0]++; small[k][1] += t.amount; } });
+  const small = {}; S.tx.forEach(t => { if (t.type === 'out' && !isSav(t) && t.date.startsWith(ym) && t.amount < 20) { const k = t.note || t.cat || 'Misc'; (small[k] = small[k] || [0, 0])[0]++; small[k][1] += t.amount; } });
   Object.entries(small).filter(([, v]) => v[0] >= 4).sort((a, b) => b[1][1] - a[1][1]).slice(0, 2).forEach(([k, v]) => tips.push(`Small buys add up: <b>${esc(k)}</b> ${v[0]} times this month, ${fmt(v[1])}. That's on pace for about ${fmt(v[1] / gone)} a month — cutting it in half would save about ${fmt(v[1] / gone / 2)}.`));
   // bills & subscriptions
   const nth = d => { d = +d.slice(8); return d + (['th', 'st', 'nd', 'rd'][d % 10 > 3 || [11, 12, 13].includes(d) ? 0 : d % 10]); };
@@ -1279,7 +1330,7 @@ function advice() {
   const subs = sum(R.filter(r => r.type !== 'in' && /subscri|stream|netflix|spotify|disney|prime|apple|google|gym/i.test(r.cat + ' ' + r.name)), r => r.amount * PER_MONTH[r.freq || 'monthly']);
   if (subs) tips.push(`Subscriptions cost ${fmt(subs)} a month (${fmt(subs * 12)} a year). Worth a look for any you don't use.`);
   const recNames = new Set((S.rec || []).map(r => storeKey(r.name))), last1 = ymAdd(ym, -1), last2 = ymAdd(ym, -2);
-  const rep = {}; S.tx.forEach(t => { if (t.type === 'out' && t.note && (t.date.startsWith(last1) || t.date.startsWith(last2))) { const k = storeKey(t.note); (rep[k] = rep[k] || { n: t.note, m: {} }).m[t.date.slice(0, 7)] = t.amount; } });
+  const rep = {}; S.tx.forEach(t => { if (t.type === 'out' && !isSav(t) && t.note && (t.date.startsWith(last1) || t.date.startsWith(last2))) { const k = storeKey(t.note); (rep[k] = rep[k] || { n: t.note, m: {} }).m[t.date.slice(0, 7)] = t.amount; } });
   Object.entries(rep).filter(([k, v]) => !recNames.has(k) && v.m[last1] && v.m[last2] && Math.abs(v.m[last1] - v.m[last2]) <= v.m[last1] * 0.1).slice(0, 2)
     .forEach(([, v]) => tips.push(`Looks like a monthly bill: <b>${esc(v.n)}</b> about ${fmt(v.m[last1])}. Add it under More → Recurring bills & paydays so it's counted ahead of time.`));
   if (!Object.keys(B).length && !Object.keys(sugg).length) tips.push('Set a budget for the categories you want to watch, and StockPile will warn you before you go over.');
@@ -1349,7 +1400,7 @@ function goalMoney(id, way) {
   form(add ? `Put money toward ${g.name}` : `Take money out of ${g.name}`, [
     { k: 'amount', l: 'Amount ($)', t: 'money', v: '', req: 1, pos: 1, ph: '0.00' }, acctField(bankList()[0].id, add ? 'Taken from' : 'Put back into', 1), { k: 'date', l: 'Date', t: 'date', v: today() }
   ], v => { S.tx.push({ id: uid(), type: add ? 'out' : 'in', amount: round(v.amount), cat: 'Savings', note: (add ? 'Saved for ' : 'From savings: ') + g.name, acct: v.acct, gst: 0, date: v.date || today(), goal: g.id }); },
-    `<div class="mute">${add ? 'This shows as money set aside (category Savings).' : 'This shows as money back in.'}</div>`);
+    `<div class="mute">${add ? 'This shows as money set aside (category Savings). It is not counted as spending.' : 'This shows as money back in.'}</div>`);
 }
 
 /* ---------- debt payoff plan: cards and debts I owe, highest interest first or smallest first ---------- */
@@ -1405,10 +1456,10 @@ function calendarExport() {
 
 /* ---------- monthly report ---------- */
 function reportData(ym) {
-  const tx = S.tx.filter(t => t.date.startsWith(ym)), prev = monthShift(ym, -1), ins = tx.filter(t => t.type === 'in'), outs = tx.filter(t => t.type === 'out');
-  const now = catsIn(ym), before = catsIn(prev), B = S.budgets || {}, stores = {};
+  const tx = S.tx.filter(t => t.date.startsWith(ym)), prev = monthShift(ym, -1), ins = tx.filter(t => t.type === 'in' && !isSav(t)), outs = tx.filter(t => t.type === 'out' && !isSav(t));
+  const now = catsIn(ym), before = catsIn(prev), B = budgetsNow(), stores = {};
   outs.forEach(t => { if (t.note) stores[t.note] = (stores[t.note] || 0) + t.amount; });
-  return { ym, inn: sum(ins, t => t.amount), out: sum(outs, t => t.amount), pin: sum(S.tx.filter(t => t.type === 'in' && t.date.startsWith(prev)), t => t.amount), pout: sum(Object.values(before), x => x),
+  return { ym, inn: sum(ins, t => t.amount), out: sum(outs, t => t.amount), aside: setAside(ym), pin: sum(S.tx.filter(t => t.type === 'in' && !isSav(t) && t.date.startsWith(prev)), t => t.amount), pout: sum(Object.values(before), x => x),
     cats: Object.keys({ ...now, ...B }).map(c => [c, now[c] || 0, B[c] || 0, before[c] || 0]).sort((a, b) => b[1] - a[1]), stores: Object.entries(stores).sort((a, b) => b[1] - a[1]).slice(0, 5),
     house: (S.house || []).map(h => [h.name, paidIn(h.id, ym), h.share]) };
 }
@@ -1417,13 +1468,14 @@ function reportHTML(R) {
   const diff = (a, b) => b ? `<span class="${a > b ? 'neg' : 'pos'}">${a > b ? '▲' : '▼'} ${fmt(Math.abs(a - b))}</span>` : '';
   return `<h2 style="margin:0 0 6px">${ymName(R.ym)}</h2>
     <div class="grid"><div class="card"><div class="lbl">In</div><div class="big pos">${fmt(R.inn)}</div></div><div class="card"><div class="lbl">Out</div><div class="big neg">${fmt(R.out)}</div><div class="mute">${diff(R.out, R.pout)} vs last month</div></div>
-      <div class="card"><div class="lbl">Left over</div><div class="big ${R.inn - R.out < 0 ? 'neg' : 'pos'}">${fmt(R.inn - R.out)}</div></div>${R.inn > 0 ? `<div class="card"><div class="lbl">Kept</div><div class="big">${Math.round((R.inn - R.out) / R.inn * 100)}%</div><div class="mute">of what came in</div></div>` : ''}</div>
+      ${R.aside ? `<div class="card"><div class="lbl">${R.aside > 0 ? 'Set aside' : 'Taken from savings'}</div><div class="big">${fmt(Math.abs(R.aside))}</div><div class="mute">savings, not spending</div></div>` : ''}
+      <div class="card"><div class="lbl">Left over</div><div class="big ${R.inn - R.out - R.aside < 0 ? 'neg' : 'pos'}">${fmt(R.inn - R.out - R.aside)}</div></div>${R.inn > 0 ? `<div class="card"><div class="lbl">Kept</div><div class="big">${Math.round((R.inn - R.out) / R.inn * 100)}%</div><div class="mute">of what came in</div></div>` : ''}</div>
     <h3>By category</h3><div class="card">${R.cats.length ? R.cats.map(([c, v, b, p]) => `<div class="row between" style="padding:4px 0"><span>${catIcon(c)} ${esc(c)}</span><span><b class="${b && v > b ? 'neg' : ''}">${fmt(v)}</b>${b ? ` <span class="mute">/ ${fmt(b)}</span>` : ''} ${diff(v, p)}</span></div>`).join('') : '<div class="mute">Nothing spent.</div>'}</div>
     ${R.stores.length ? `<h3>Top places</h3><div class="card">${R.stores.map(([n, v]) => `<div class="row between" style="padding:4px 0"><span>${esc(n)}</span><b>${fmt(v)}</b></div>`).join('')}</div>` : ''}
     ${R.house.length ? `<h3>Household</h3><div class="card">${R.house.map(([n, p, sh]) => `<div class="row between" style="padding:4px 0"><span>${esc(n)}</span><b class="${p >= sh ? 'pos' : 'neg'}">${fmt(p)} of ${fmt(sh)}</b></div>`).join('')}</div>` : ''}`;
 }
 function reportText(R) {
-  return `StockPile — ${ymName(R.ym)}\nIn: ${cur(R.inn)}\nOut: ${cur(R.out)}\nLeft over: ${cur(R.inn - R.out)}\n\nBy category:\n` + R.cats.filter(c => c[1]).map(([c, v, b]) => `• ${c}: ${cur(v)}${b ? ' of ' + cur(b) : ''}`).join('\n');
+  return `StockPile — ${ymName(R.ym)}\nIn: ${cur(R.inn)}\nOut: ${cur(R.out)}${R.aside ? `\n${R.aside > 0 ? 'Set aside' : 'Taken from savings'}: ${cur(Math.abs(R.aside))}` : ''}\nLeft over: ${cur(R.inn - R.out - R.aside)}\n\nBy category:\n` + R.cats.filter(c => c[1]).map(([c, v, b]) => `• ${c}: ${cur(v)}${b ? ' of ' + cur(b) : ''}`).join('\n');
 }
 function reportSheet(ym) {
   const R = reportData(ym), m = $('#modal'); closeForm(); const was = showNums; showNums = true; const html = reportHTML(R); showNums = was;
@@ -2480,7 +2532,7 @@ function recoverForm() {
 function eraseAll() {
   if (!confirm('Without the PIN, a recovery key or your security answers, your data cannot be opened, and neither can backups locked with that PIN.\n\nThe only way forward is to erase StockPile on this phone and start fresh.\n\nErase everything?')) return;
   if (!confirm('Last check: erase ALL businesses and data in StockPile on this phone?')) return;
-  try { Object.keys(localStorage).filter(k => k === PKEY || k.startsWith(KEY0)).forEach(k => localStorage.removeItem(k)); } catch (err) {}
+  try { Object.keys(localStorage).filter(k => k === PKEY || k === TKEY || k.startsWith(KEY0)).forEach(k => localStorage.removeItem(k)); } catch (err) {}
   saveGen++; memPhotos.clear(); thumbCache.clear();
   try { if (typeof indexedDB !== 'undefined') { const old = dbp; dbp = null; Promise.resolve(old).then(d => { if (d) d.close(); indexedDB.deleteDatabase(DBN); }).catch(() => {}); } } catch (err) {}
   SEC = null; DK = null; LEGACY = null; KR = new Map(); KEYS = {}; staff = null; staffMode = false; S = fresh(); P = defaultP(); loadFailed = false; saveQ = Promise.resolve();
@@ -2744,7 +2796,7 @@ function bars(entries, color, f = fmt, open = false) {
 }
 const V = {
   home() {
-    const warn = (storageOK ? '' : '<div class="note">⚠️ This browser is blocking saving. Your entries may not be kept.</div>')
+    const warn = (storageOK ? '' : `<div class="note">⚠️ ${storageUse().pct >= 90 ? 'Storage on this phone is full, so new entries are not being saved. Send a backup off this phone now.' : 'This browser is blocking saving. Your entries may not be kept.'}</div>`) + (storageOK ? storageNote() : '')
       + (loadFailed ? '<div class="note">⚠️ The saved data for this business could not be read, so nothing is being saved over it. Load a backup from More → Restore to fix it.</div>' : '')
       + (BETA ? '<div class="note">🧪 This is the test copy. It keeps its own separate data, so nothing you do here touches your real StockPile.</div>' : '');
     const backupNote = S.dirty > 0
@@ -2761,7 +2813,7 @@ const V = {
       <h2 style="margin:8px 0 4px">Welcome back</h2><div class="mute">${new Date().toLocaleDateString('en-CA', { weekday: 'long', month: 'long', day: 'numeric' })}</div></div>
     <div class="row bar" style="justify-content:center">${quick}</div>
     <div style="text-align:center;margin-top:18px"><button class="btn sec" onclick="showNums=true;render()">👁 Show my summary</button></div>
-    <p class="mute" style="text-align:center;margin-top:24px;font-size:12px">StockPile version ${VERSION}</p>`;
+    ${verTag()}`;
     const m = thisMonth(), mt = S.tx.filter(t => t.date.startsWith(m));
     const cash = acctBal('cash'), bank = bankTotal();
     const mIn = sum(mt.filter(t => t.type === 'in'), t => t.amount), mOut = sum(mt.filter(t => t.type === 'out'), t => t.amount);
@@ -2790,7 +2842,7 @@ const V = {
     ${od.length ? `<h3>⚠️ Overdue</h3><div class="list">${od.map(d => `<div class="it"><div class="main" onclick="tab='debts';render()"><div class="t">${esc(d.name)}</div><div class="mute">${d.dir === 'owe' ? 'I owe them' : 'Owes me'} · was due ${niceDate(d.due)}</div></div><div class="amt neg">${fmt(bal(d))}</div></div>`).join('')}</div>` : ''}
     <h3>Latest entries</h3>
     <div class="list">${S.tx.length ? [...S.tx].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 6).map(txRow).join('') : '<div class="empty">Nothing yet. Tap “+ Money In” or “− Money Out” to start.</div>'}</div>
-    <p class="mute" style="text-align:center;margin-top:24px;font-size:12px">StockPile version ${VERSION}</p>`;
+    ${verTag()}`;
   },
   sell() {
     if (!S.items.length) return `<h2>Sell</h2><div class="card empty">Add your products on the Stock tab first. Each one gets an item number to type in here.</div>`;
@@ -2931,6 +2983,7 @@ const V = {
       <label class="chk"><input type="checkbox" ${S.auto !== false ? 'checked' : ''} onchange="S.auto=this.checked;save()"> Auto backup: save a backup file to Downloads the first time I change something each day</label>
       <label class="chk"><input type="checkbox" ${S.offRemind !== false ? 'checked' : ''} onchange="S.offRemind=this.checked;save()"> Remind me every 2 weeks to send a backup off this phone</label>
       <p class="mute">Last sent off this phone: ${S.lastSent ? niceDate(S.lastSent) : 'never'} · <a href="#" onclick="event.preventDefault();S.lastSent=today();S.offSnooze=null;save();render()">I copied one off myself</a></p></div>
+    ${storageCard()}
     <div class="card" style="margin-bottom:12px"><b>PIN lock</b>
       <p class="mute">${SEC ? 'PIN is ON 🔒. Your data and backups are encrypted. StockPile asks for the PIN when opened, and again after a minute away.' : LEGACY ? 'PIN is ON. StockPile asks for it when opened.' : 'Ask for a PIN before anything is shown' + (CAN ? ', and encrypt your data and backups with it.' : '.')}</p>
       <div class="row"><button class="btn" onclick="setPin()">${SEC || LEGACY ? 'Change PIN' : 'Set a PIN'}</button>${SEC || LEGACY ? '<button class="btn sec" onclick="removePin()">Remove PIN</button><button class="btn sec" onclick="lockNow()">🔒 Lock now</button>' : ''}</div>

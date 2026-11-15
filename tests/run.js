@@ -450,6 +450,25 @@ addTx('out',null,R1); ok(/Filled in from the photo/.test($('#modal').innerHTML) 
   ok(R.out>=50 && R.stores.some(x=>x[0]==='Safeway') && /By category/.test(reportHTML(R)) && /Left over/.test(reportText(R)),'the monthly report adds up the month');
   reportSheet(ym); ok(/Print/.test($('#modal').innerHTML),'the report can be printed or shared'); closeForm();
   S.tx=keepTx; S.rec=keepR; S.cards=keepC; S.debts=keepD; S.goals=keepG; S.open={}; showNums=keepSN; }
+// savings are set aside, not spending; storage meter; hidden test checklist
+{ const keepTx=S.tx, keepB=S.budgets, keepR=S.rec, keepG=S.goals, keepSN=showNums, me=P.list.find(p=>p.id===P.current), keepK=me.kind; showNums=true; S.tx=[]; S.rec=[]; S.goals=[]; S.budgets={Savings:100,Groceries:200};
+  const ym=thisMonth(), d1=ym+'-01';
+  S.tx.push({id:'sv1',type:'out',amount:300,cat:'Savings',note:'Saved for Trip',acct:'bank',date:d1},{id:'sv2',type:'in',amount:50,cat:'Savings',note:'From savings: Trip',acct:'bank',date:d1},{id:'gr1',type:'out',amount:80,cat:'Groceries',note:'Safeway',date:d1},{id:'py1',type:'in',amount:1000,cat:'Pay',note:'',date:d1});
+  me.kind='personal';
+  const R=reportData(ym), A=advice(), all=A.warn.join(' ')+' '+A.tips.join(' ');
+  ok(catsIn(ym).Savings===undefined && catsIn(ym).Groceries===80 && setAside(ym)===250 && budgetAlert('Savings',d1)==='' && !budgetCats().includes('Savings'),'savings are left out of spending and budgets');
+  ok(R.out===80 && R.inn===1000 && R.aside===250 && !R.cats.some(c=>c[0]==='Savings') && /Set aside/.test(reportHTML(R)) && /Set aside: \\$250\\.00\\nLeft over: \\$670\\.00/.test(reportText(R)),'the monthly report shows savings as set aside, not spending');
+  ok(!/Savings<\\/b> is over budget/.test(all) && /Set aside so far this month: <b>\\$250\\.00/.test(all),'the budget check does not warn about savings');
+  const H=personalHome(''); ok(/Set aside – /.test(H) && /\\$670\\.00/.test(H) && !/🏦 Savings/.test(H.split('Latest entries')[0].split('Spending in')[1]),'Home shows money set aside and leaves it out of spending');
+  me.kind=keepK; if(keepK===undefined) delete me.kind;
+  ok(isPersonal() || catsIn(ym).Savings===300,'business books still count a Savings category as money out');
+  const u=storageUse(); ok(u.used>0 && u.pct>=0 && u.pct<=100 && /Storage on this phone/.test(V.more()) && storageNote()==='','More shows how full storage is');
+  store.zz_fill='x'.repeat(3.6e6); ok(/filling up/.test(storageNote()) && storageUse().pct>=70,'a backup nudge appears when storage passes 70%');
+  store.zz_fill='x'.repeat(4.7e6); ok(/almost full/.test(storageNote()) && /Send backup/.test(storageNote()),'a stronger warning appears when storage is almost full'); delete store.zz_fill;
+  closeForm(); for(let i=0;i<4;i++) verTap(); ok(!/Phone test checklist/.test($('#modal').innerHTML),'four taps on the version number do nothing'); verTap();
+  ok(/Phone test checklist/.test($('#modal').innerHTML) && /0 of /.test($('#modal').innerHTML),'five taps on the version number open the hidden test checklist');
+  testTick('r1',true); ok(testDone().r1===VERSION && /1 of /.test($('#modal').innerHTML) && store[TKEY],'ticks are saved on the phone'); testTick('r1',false); ok(!testDone().r1,'a tick can be cleared'); delete store[TKEY]; closeForm();
+  S.tx=keepTx; S.budgets=keepB; S.rec=keepR; S.goals=keepG; showNums=keepSN; }
 // business books still get receipts
 P.current='default'; S=fresh(); S.tx.push({id:'bz',type:'out',amount:5,cat:'Supplies',acct:'cash',gst:0,date:today(),pics:['zz1']}); tab='money'; moneyFilter='all';
 ok(!isPersonal() && /📎 Receipts/.test(V.money()) && /Customers/.test(V.debts()),'business books get a Receipts button and keep Customers'); moneyFilter='month';
