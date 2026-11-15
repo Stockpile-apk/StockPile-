@@ -524,6 +524,23 @@ addTx('out',null,R1); ok(/Filled in from the photo/.test($('#modal').innerHTML) 
   S.tx.push({id:'u2',type:'out',amount:7,cat:'Dogs',acct:'cash',gst:0,date:today()}); commit(); closeUndo(); undoLast(); ok(S.tx.some(t=>t.id==='u2'),'once the Undo bar has gone the change stays');
   staffMode=true; commit(); ok($('#undo').hidden===true,'staff are not offered Undo'); staffMode=false;
   if(keepK) me.kind=keepK; else delete me.kind; S.tx=keepTx; S.rec=keepR; S.budgets=keepB; S.set=keepSet; S.learn=keepL; closeUndo(); }
+// yearly bills with a monthly set-aside; bill calendar (3.18.0)
+{ const keepTx=S.tx, keepR=S.rec, keepB=S.budgets, keepSet=S.set, keepSN=showNums, me=P.list.find(p=>p.id===P.current), keepK=me.kind; me.kind='personal'; showNums=true; S.tx=[]; S.rec=[]; S.budgets={}; S.set={...S.set}; calYm=''; calDay='';
+  const t=today(), ym=thisMonth(), due=dayShift(t,120);
+  recurForm(null,{freq:'yearly'}); F('type','out'); F('freq','yearly'); F('name','House insurance'); F('amount',1200); F('cat','Insurance'); F('acct','bank'); F('next',due); F('auto','yes'); SAVE();
+  const yr=S.rec[0]; ok(yr.freq==='yearly' && yr.next===due && S.tx.length===0 && recDates(yr,t,dayShift(t,800)).length===2 && nextDue(yr)===due && clean(JSON.parse(JSON.stringify(S))).rec[0].freq==='yearly' && /Once a year/.test(recWhen(yr)),'a bill can repeat once a year');
+  let vb=V.budget(); ok(/Yearly bills/.test(vb) && /Set aside \\$100\\.00/.test(vb) && billsBudget().tot===100 && billsBudget().spent===0 && safeToSpend().fund===100 && /to put aside for yearly bills/.test(personalHome('')),'a yearly bill asks for a twelfth each month, and that counts in the budget and Safe to spend');
+  fundAdd(yr.id); ok(S.tx.length===1 && S.tx[0].cat==='Savings' && S.tx[0].fund===yr.id && S.tx[0].amount===100 && fundSaved(yr)===100 && safeToSpend().fund===0 && billsBudget().spent===100 && /✓ This month/.test(V.budget()) && setAside(ym)===100 && clean(JSON.parse(JSON.stringify(S))).tx[0].fund===yr.id,'Set aside puts this month’s share into savings for that bill');
+  yr.next=t; ok(applyRecurring()===true && S.tx.some(x=>x.rec===yr.id&&x.amount===1200&&x.date===t) && yr.next===yearShift(t,1) && !fundBills(ym).length && billsNow().some(b=>b.r===yr&&b.st==='paid'),'when the yearly bill comes due it is added like any other bill');
+  ok(yearShift('2028-02-29',1)==='2029-02-28' && recStep({freq:'yearly'},'2026-03-03')==='2027-03-03','yearly dates step a year at a time, leap day included');
+  S.rec.push({id:'cp',name:'Wages',amount:500,cat:'Pay',acct:'bank',type:'in',day:15,last:ym},{id:'cb',name:'Phone',amount:60,cat:'Phone',acct:'bank',day:10,last:ym,auto:false,since:ym+'-01'});
+  vb=V.budget(); ok(/Bill calendar/.test(vb) && (vb.match(/class="cd/g)||[]).length===daysIn(ym) && /Tap a day/.test(vb),'the Budget tab has a month calendar of bills and paydays');
+  calPick(ym+'-10'); vb=V.budget(); ok(vb.indexOf('<b>'+niceDate(ym+'-10')+'</b><div class="list"')>0 && /class="cd[a-z ]* sel"/.test(vb),'tapping a day shows what is due that day');
+  calPick(ym+'-15'); vb=V.budget(); ok(/Payday · /.test(vb),'…including paydays');
+  calMove(1); ok(calYm===ymAdd(ym,1) && calDay==='' && V.budget().includes("calPick('"+ymAdd(ym,1)+"-10')"),'the calendar can step to other months'); calMove(-1); ok(calYm==='','…and back');
+  setChart('cal',false); ok(!/Bill calendar/.test(V.budget()) && clean(JSON.parse(JSON.stringify(S))).set.chart.cal===false && /bill calendar on the Budget tab/.test(V.more()),'the bill calendar can be hidden');
+  setChart('cal',true); ok(/Bill calendar/.test(V.budget()),'…and shown again from More');
+  if(keepK) me.kind=keepK; else delete me.kind; S.tx=keepTx; S.rec=keepR; S.budgets=keepB; S.set=keepSet; showNums=keepSN; calDay=''; closeUndo(); }
 { const keepTx=S.tx, keepB=S.budgets, keepSN=showNums, me=P.list.find(p=>p.id===P.current), keepK=me.kind; S.tx=[]; S.budgets={Groceries:200}; me.kind='personal';
   const d=today(); S.tx.push({id:'h1',type:'out',amount:80,cat:'Groceries',note:'Safeway',acct:'cash',gst:0,date:d},{id:'h2',type:'in',amount:900,cat:'Pay',note:'',acct:'cash',gst:0,date:d});
   tab='money'; render(); ok(tab==='home','personal books open the Ledger inside Home');
