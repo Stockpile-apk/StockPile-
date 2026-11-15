@@ -132,7 +132,7 @@ body.dark .sheet .rc{color:var(--ink)}body.dark .sheet .rcs{color:var(--mute)}bo
 // The test copy (served from /beta/) keeps its data under separate names, so it can never touch the real app's data.
 const BETA = /\/beta\//.test((typeof location !== 'undefined' && location.pathname) || '');
 const KEY0 = (BETA ? 'beta_' : '') + 'money_inventory_tracker_v1', PKEY = (BETA ? 'beta_' : '') + 'stockpile_profiles';
-const VERSION = '3.15.0';
+const VERSION = '3.16.0';
 const okDark = v => v === true || v === false ? v : undefined;
 const fresh = () => ({ tx: [], items: [], debts: [], lastBackup: null, dirty: 0, auto: true, offRemind: true, lastSent: null, offSnooze: null, contacts: [], adj: [], rec: [], budgets: {}, staff: [], gone: {}, mm: {}, learn: {}, cards: [], banks: [], house: [], goals: [], open: {}, set: { gst: false, gstRate: 5 } });
 const defaultP = () => ({ list: [{ id: 'default', name: 'My business' }], current: 'default' });
@@ -1051,6 +1051,20 @@ function billPayForm(id, d) { if (staffMode) return;
     v => { payBill(r, d, v.amount, v.date); },
     `<div class="mute">Due ${niceDate(d)}. Saving marks it paid and adds it to your Ledger. The amount here is for this time only.</div><p style="margin:8px 0"><a href="#" onclick="event.preventDefault();closeForm();recurForm('${r.id}')">Edit this bill</a></p>`);
 }
+// Set bills count in the budget by themselves. A bill whose category has its own budget stays under that budget, so nothing is counted twice.
+function billsBudget(ym) {
+  ym = ym || thisMonth(); const B = budgetsNow(), now = catsIn(ym), cats = new Set(); let tot = 0, n = 0, np = 0;
+  for (const b of billsNow(ym)) { const c = b.r.cat || 'Misc'; if (!b.d.startsWith(ym) || B[c] > 0 || isSav({ cat: c, type: 'out' })) continue; cats.add(c); tot += b.amt; n++; if (b.st === 'paid') np++; }
+  return { tot: round(tot), cats, spent: round(sum([...cats], c => now[c] || 0)), n, np };
+}
+// What is safe to spend for the rest of the month: money in (and paydays still to come), less what has gone out, been set aside, and bills not paid yet.
+function safeToSpend() {
+  const ym = thisMonth(), tdy = today(), end = onDay(ym, 31), mt = S.tx.filter(t => t.date.startsWith(ym) && !isSav(t));
+  const inn = sum(mt.filter(t => t.type === 'in'), t => t.amount), out = sum(mt.filter(t => t.type === 'out'), t => t.amount);
+  const pay = round(sum((S.rec || []).filter(r => r.type === 'in'), r => recDates(r, dayShift(tdy, 1), end).length * r.amount));
+  const bills = round(sum(billsNow(ym).filter(b => b.st !== 'paid'), b => b.amt));
+  return { safe: round(inn + pay - out - setAside(ym) - bills), bills, pay };
+}
 const dueWord = d => { const n = Math.round((new Date(d + 'T12:00') - new Date(today() + 'T12:00')) / 864e5);
   return n === 0 ? 'today' : n === 1 ? 'tomorrow' : n > 1 && n < 7 ? new Date(d + 'T12:00').toLocaleDateString('en-CA', { weekday: 'short' }) : niceDate(d).replace(/,? \d{4}$/, ''); };
 const monthName = () => new Date().toLocaleDateString('en-CA', { month: 'long' });
@@ -1281,20 +1295,27 @@ function budgetSlots() { const e = Object.entries(budgetsNow()).filter(x => x[1]
 let donutSel = '', quickN = 6, chipN = 4, habitN = 5, blistN = 6;
 // "Show more" for a group of buttons: each tap shows `step` more; once all are showing it offers to show fewer.
 const moreBtn = (total, n, v, step) => total <= step ? '' : `<div style="text-align:center;margin-top:8px"><button class="btn sec sm" onclick="${v}=${n >= total ? step : n + step};render()">${n >= total ? 'Show less' : `Show more (${total - n})`}</button></div>`;
-function donutPick(i) { donutSel = i < 0 ? '' : Object.keys(budgetSlots())[i] || ''; render(); }
+const BILLS_KEY = '§bills';
+function donutPick(i) { donutSel = i === -2 ? BILLS_KEY : i < 0 ? '' : Object.keys(budgetSlots())[i] || ''; render(); }
 // The whole ring is your total budget, with each category's spending as a slice. Tap a budget below to see just that one.
 function budgetDonut(key) {
-  const B = budgetsNow(), now = catsIn(thisMonth()), col = budgetSlots(), cats = Object.keys(col), totB = sum(cats, c => B[c]); if (!totB) return '';
-  if (donutSel && !cats.includes(donutSel)) donutSel = '';
+  const B = budgetsNow(), now = catsIn(thisMonth()), col = budgetSlots(), cats = Object.keys(col), catB = sum(cats, c => B[c]); if (!catB) return '';
+  const bb = billsBudget(), totB = catB + bb.tot, billCol = 'var(--ink)';
+  if (donutSel && !cats.includes(donutSel) && !(donutSel === BILLS_KEY && bb.tot > 0)) donutSel = '';
   const ym = thisMonth(), left = daysIn(ym) - +today().slice(8) + 1;
   const chipList = cats.map((c, i) => [i, `${catIcon(c)} ${esc(c)}`, c]).filter(([i, , c]) => i < chipN || c === donutSel);
-  const chips = `<div class="row" style="flex-wrap:wrap;gap:6px;justify-content:center;margin:4px 0 0">${[[-1, 'All budgets', ''], ...chipList].map(([i, l, c]) => `<button class="btn sm ${donutSel === c ? '' : 'sec'}" onclick="donutPick(${i})">${l}</button>`).join('')}</div>${moreBtn(cats.length, chipN, 'chipN', 4)}<div style="height:8px"></div>`;
+  const chips = `<div class="row" style="flex-wrap:wrap;gap:6px;justify-content:center;margin:4px 0 0">${[[-1, 'All budgets', ''], ...(bb.tot > 0 ? [[-2, '🧾 Bills', BILLS_KEY]] : []), ...chipList].map(([i, l, c]) => `<button class="btn sm ${donutSel === c ? '' : 'sec'}" onclick="donutPick(${i})">${l}</button>`).join('')}</div>${moreBtn(cats.length, chipN, 'chipN', 4)}<div style="height:8px"></div>`;
   let ring;
   if (!donutSel) {
-    const segs = cats.map(c => [c, now[c] || 0, col[c], `${catIcon(c)} ${c}: ${cur(now[c] || 0)} of its ${cur(B[c])} budget`]), nb = sum(Object.keys(now).filter(c => !(B[c] > 0)), c => now[c]);
+    const segs = cats.map(c => [c, now[c] || 0, col[c], `${catIcon(c)} ${c}: ${cur(now[c] || 0)} of its ${cur(B[c])} budget`]), nb = sum(Object.keys(now).filter(c => !(B[c] > 0) && !bb.cats.has(c)), c => now[c]);
+    if (bb.tot > 0) segs.unshift(['Bills', bb.spent, billCol, `🧾 Bills: ${cur(bb.spent)} paid of ${cur(bb.tot)} · ${bb.np} of ${bb.n} paid`]);
     if (nb > 0) segs.push(['No budget', nb, 'var(--mute)', `Spending in categories with no budget: ${cur(nb)}`]);
     const all = sum(segs, x => x[1]);
     ring = ringSVG(key, segs, Math.max(totB, all), dollars(all), `of ${dollars(totB)} budget`, all <= totB ? `${cur(totB - all)} left of your ${cur(totB)} budget. Tap a colour for details.` : `⚠️ Over your total budget by ${cur(all - totB)}. Tap a colour for details.`, 'Spending against your total budget');
+  } else if (donutSel === BILLS_KEY) {
+    const b = bb.tot, sp = bb.spent, segs = [['Bills', Math.min(sp, b), billCol, `🧾 Bills: ${cur(sp)} paid of ${cur(b)} · ${bb.np} of ${bb.n} paid`]];
+    if (sp > b) segs.push(['Over', sp - b, 'var(--red)', `⚠️ ${cur(sp - b)} more than your set bills went out in these categories`]);
+    ring = ringSVG(key, segs, Math.max(b, sp), dollars(sp), `of ${dollars(b)} bills`, sp <= b ? `${bb.np} of ${bb.n} bills paid · ${cur(b - sp)} still to pay. The list is on the Budget tab.` : `⚠️ ${cur(sp - b)} more than your set bills`, 'Bills paid this month');
   } else {
     const c = donutSel, b = B[c], sp = now[c] || 0, segs = [[c, Math.min(sp, b), col[c], `${catIcon(c)} ${c}: ${cur(sp)} spent of ${cur(b)}`]];
     if (sp > b) segs.push(['Over', sp - b, 'var(--red)', `⚠️ Over this budget by ${cur(sp - b)}`]);
@@ -1401,20 +1422,22 @@ function quickForm() {
 function personalHome(notes) {
   const tog = `<button class="btn sec" onclick="showNums=!showNums;render()">${showNums ? '🙈 Hide' : '👁 Show'}</button>`;
   const mt = S.tx.filter(t => t.date.startsWith(thisMonth())), mIn = sum(mt.filter(t => t.type === 'in' && !isSav(t)), t => t.amount), outs = mt.filter(t => t.type === 'out' && !isSav(t)), mOut = sum(outs, t => t.amount), aside = setAside(thisMonth());
-  const cash = acctBal('cash'), od = S.debts.filter(overdue), mn = new Date().toLocaleDateString('en-CA', { month: 'long' });
+  const cash = acctBal('cash'), od = S.debts.filter(overdue), mn = new Date().toLocaleDateString('en-CA', { month: 'long' }), sts = safeToSpend();
   const iOwe = sum(S.debts.filter(d => d.dir === 'owe'), d => Math.max(bal(d), 0)), owedMe = sum(S.debts.filter(d => d.dir === 'owed'), d => Math.max(bal(d), 0));
   const spent = Object.fromEntries(groupBy(outs, t => t.cat)), B = budgetsNow(), U = usual(), cats = [...new Set([...Object.keys(spent), ...Object.keys(B)])].sort((a, b) => (spent[b] || 0) - (spent[a] || 0)), top = Math.max(...Object.values(spent), 1);
   const bcol = budgetSlots(), useB = Object.keys(bcol).length > 0, slots = spendSlots(spent), dotCol = {};
   if (useB) Object.assign(dotCol, bcol); else slots.forEach(([c, , col]) => { dotCol[c] = col; });
+  if (useB) billsBudget().cats.forEach(c => { dotCol[c] = 'var(--ink)'; });   // bill categories take the Bills slice colour
   Object.keys(spent).forEach(c => { dotCol[c] = dotCol[c] || 'var(--mute)'; });
   const donut = !showNums || chartSet().spend !== 'donut' ? '' : useB ? budgetDonut('spend') : mOut > 0 ? donutSVG(slots, mOut, 'spent') : '';
   return `${notes}<div class="row bar"><button class="btn" onclick="snapNew()">📷 Snap a receipt</button><button class="btn out" onclick="addTx('out')">− Out</button><button class="btn in" onclick="addTx('in')">+ In</button><button class="btn sec" onclick="addMove()">⇄ Move</button>${tog}</div>
     <h3>${mn}</h3>
+    <div class="card" id="safe" style="margin-bottom:10px"><div class="lbl">Safe to spend</div><div class="big ${showNums && sts.safe < 0 ? 'neg' : 'pos'}" style="font-size:30px">${fmt(sts.safe)}</div>
+      <div class="mute">${[sts.bills ? `after ${fmt(sts.bills)} of bills still to pay` : '', sts.pay ? `counts ${fmt(sts.pay)} of pay still to come` : ''].filter(Boolean).join(' · ') || 'Money in, less money out' + (aside ? ' and savings' : '') + ', this month'}</div></div>
     <div class="grid">
       <div class="card"><div class="lbl">In</div><div class="big pos">${fmt(mIn)}</div></div>
       <div class="card"><div class="lbl">Out</div><div class="big">${fmt(mOut)}</div></div>
       ${aside ? `<div class="card"><div class="lbl">${aside > 0 ? 'Set aside' : 'Taken from savings'}</div><div class="big">${fmt(Math.abs(aside))}</div></div>` : ''}
-      <div class="card"><div class="lbl">Left over</div><div class="big ${showNums && mIn - mOut - aside < 0 ? 'neg' : 'pos'}">${fmt(mIn - mOut - aside)}</div></div>
     </div>
     ${billsLine(true)}
     <div class="row between" style="margin-top:22px"><h3 style="margin:0">Spending habits</h3><button class="btn sec sm" onclick="tab='budget';render();window.scrollTo(0,0)">Budgets</button></div>
@@ -1516,7 +1539,7 @@ function advice() {
   // unusual spending
   if (U.months) for (const [c, sp] of Object.entries(now)) { const avg = U.cats[c] || 0; if (sp > avg * 1.5 && sp - avg > 50) warn.push(`<b>${esc(c)}</b> is ${fmt(sp)} so far this month. A usual month is ${fmt(avg)}.`); }
   // suggested budgets from the usual months
-  const sugg = U.months ? Object.fromEntries(Object.entries(U.cats).filter(([c, v]) => v >= 20 && !(B[c] > 0)).map(([c, v]) => [c, up10(v)])) : {};
+  const sugg = U.months ? Object.fromEntries(Object.entries(U.cats).filter(([c, v]) => v >= 20 && !(B[c] > 0) && !bills.some(b => (b.r.cat || 'Misc') === c)).map(([c, v]) => [c, up10(v)])) : {};
   const suggTip = Object.keys(sugg).length ? `Suggested budgets from your last ${U.months} month${U.months > 1 ? 's' : ''}: ${Object.entries(sugg).slice(0, 4).map(([c, v]) => `${esc(c)} ${fmt(v)}`).join(', ')}${Object.keys(sugg).length > 4 ? '…' : ''} — tap See all to use them.` : '';
   // compared to usual by this point in the month
   const cmp = U.months && day >= 7 ? Object.keys({ ...U.cats, ...now }).map(c => [c, (now[c] || 0) - (U.cats[c] || 0) * gone]).filter(x => Math.abs(x[1]) >= 25).sort((a, b) => b[1] - a[1]) : [];
@@ -3159,11 +3182,11 @@ const V = {
     const all = budgetCats(), shown = budgetAll ? all : all.filter(c => B[c] > 0 || now[c] > 0);
     shown.sort((a, b) => ((B[b] > 0) - (B[a] > 0)) || (now[b] || 0) - (now[a] || 0));
     bCats = shown;
-    const totB = sum(Object.values(B), x => x), totS = sum(Object.keys(B), c => now[c] || 0);
+    const bb = billsBudget(ym), totB = sum(Object.values(B), x => x) + bb.tot, totS = sum(Object.keys(B), c => now[c] || 0) + bb.spent;
     return `<h2>Budget</h2>
     <div class="row bar"><button class="btn" onclick="budgetsForm()">Set all budgets</button>${eye()}</div>
     ${totB ? `<div class="grid bar">
-      <div class="card"><div class="lbl">Budgeted – ${mn}</div><div class="big">${fmt(totB)}</div></div>
+      <div class="card"><div class="lbl">Budgeted – ${mn}</div><div class="big">${fmt(totB)}</div>${bb.tot ? `<div class="mute">includes ${fmt(bb.tot)} of bills</div>` : ''}</div>
       <div class="card"><div class="lbl">Spent so far</div><div class="big ${showNums && totS > totB ? 'neg' : ''}">${fmt(totS)}</div></div>
       <div class="card"><div class="lbl">${totS > totB ? 'Over by' : 'Left to spend'}</div><div class="big ${showNums && totS > totB ? 'neg' : 'pos'}">${fmt(Math.abs(totB - totS))}</div></div></div>` : ''}
     ${billsCard()}
@@ -3171,7 +3194,7 @@ const V = {
     ${paceChart()}
     <h3>Tap a category to set its budget</h3>
     <div class="card">${shown.length ? shown.slice(0, blistN).map((c, i) => { const s = now[c] || 0, b = B[c] || 0, over = b > 0 && s > b, u = U.months ? U.cats[c] || 0 : 0;
-      const sub = [b ? (over ? `${fmt(s - b)} over` : `${fmt(b - s)} left · about ${fmt((b - s) / left)} a day`) : 'no budget', u ? `usual month ${fmt(u)}` : ''].filter(Boolean).join(' · ');
+      const sub = [b ? (over ? `${fmt(s - b)} over` : `${fmt(b - s)} left · about ${fmt((b - s) / left)} a day`) : bb.cats.has(c) ? 'set bill · counted under Bills' : 'no budget', u ? `usual month ${fmt(u)}` : ''].filter(Boolean).join(' · ');
       return `<div class="br" style="cursor:pointer" onclick="budgetOne(${i})"><div class="row between"><span>${catIcon(c)} ${esc(c)}</span><b class="${over && showNums ? 'neg' : ''}">${fmt(s)}${b ? ' of ' + fmt(b) : ''}</b></div>
         <div class="track"><div class="fill" style="width:${showNums && b ? Math.max(Math.min(s / b * 100, 100), s > 0 ? 2 : 0) : 0}%;background:${over ? 'var(--red)' : 'var(--accent)'}"></div></div><div class="mute" style="font-size:12px">${sub}</div></div>`; }).join('') : '<div class="empty">No budgets or spending yet this month.</div>'}${moreBtn(shown.length, blistN, 'blistN', 6)}
       <p style="margin:10px 0 0"><a href="#" onclick="event.preventDefault();budgetAll=!budgetAll;render()">${budgetAll ? 'Show only the ones in use' : 'Show all categories'}</a></p></div>

@@ -484,6 +484,21 @@ addTx('out',null,R1); ok(/Filled in from the photo/.test($('#modal').innerHTML) 
   ok(/Open Bills/.test(V.more()) && !/Recurring bills/.test(V.more()),'personal More points to the Budget tab for bills');
   delete me.kind; ok(/Recurring bills/.test(V.more()) && !/Open Bills/.test(V.more()),'business books keep recurring bills under More'); if(keepK) me.kind=keepK;
   F('auto','yes'); S.tx=keepTx; S.rec=keepR; showNums=keepSN; }
+// bills inside the budget total and donut, Safe to spend (3.16.0)
+{ const keepTx=S.tx, keepR=S.rec, keepB=S.budgets, keepSN=showNums, me=P.list.find(p=>p.id===P.current), keepK=me.kind; me.kind='personal'; showNums=true; S.tx=[]; S.budgets={Groceries:300}; donutSel='';
+  const ym=thisMonth(), d1=ym+'-01', t=today();
+  S.rec=[{id:'b1',name:'Rent',amount:1000,cat:'Rent',acct:'bank',day:1,last:ym,auto:false,since:d1},{id:'b2',name:'Food box',amount:50,cat:'Groceries',acct:'bank',day:1,last:ym,auto:false,since:d1},{id:'b3',name:'Job',amount:500,cat:'Pay',acct:'bank',type:'in',freq:'weekly',next:dayShift(t,1),day:1,last:ym}];
+  S.tx.push({id:'s1',type:'in',amount:3000,cat:'Pay',acct:'bank',gst:0,date:t},{id:'s2',type:'out',amount:100,cat:'Groceries',acct:'cash',gst:0,date:t});
+  let bb=billsBudget(); ok(bb.tot===1000 && bb.cats.has('Rent') && !bb.cats.has('Groceries') && bb.spent===0 && bb.n===1,'set bills count in the budget, and a bill in a budgeted category is not counted twice');
+  let vb=V.budget(); ok(/\\$1,300\\.00/.test(vb) && /includes \\$1,000\\.00 of bills/.test(vb) && /\\$1,200\\.00/.test(vb),'the Budget total is bills plus spending budgets');
+  const payLeft=recDates(S.rec[2],dayShift(t,1),onDay(ym,31)).length*500, st=safeToSpend();
+  ok(st.safe===3000+payLeft-100-1050 && st.bills===1050 && st.pay===payLeft,'Safe to spend takes off bills that are not paid yet');
+  let hm=personalHome(''); ok(/id="safe"/.test(hm) && /Safe to spend/.test(hm) && !/Left over<\\/div>/.test(hm) && /donutPick\\(-2\\)/.test(hm) && /of \\$1,300 budget/.test(hm),'Home leads with Safe to spend, and the donut counts bills in the total');
+  billPay('b1',d1); bb=billsBudget(); const st2=safeToSpend();
+  ok(bb.spent===1000 && bb.np===1 && st2.safe===st.safe && st2.bills===50,'paying a bill leaves Safe to spend the same: it was already taken off');
+  donutPick(-2); hm=personalHome(''); ok(donutSel==='§bills' && /of \\$1,000 bills/.test(hm),'the Bills button on the donut shows bills alone'); donutPick(-1);
+  showNums=false; ok(!/1,000|3,000/.test(personalHome('')),'Safe to spend and bills stay hidden until Show is tapped'); 
+  if(keepK) me.kind=keepK; else delete me.kind; S.tx=keepTx; S.rec=keepR; S.budgets=keepB; showNums=keepSN; donutSel=''; }
 { const keepTx=S.tx, keepB=S.budgets, keepSN=showNums, me=P.list.find(p=>p.id===P.current), keepK=me.kind; S.tx=[]; S.budgets={Groceries:200}; me.kind='personal';
   const d=today(); S.tx.push({id:'h1',type:'out',amount:80,cat:'Groceries',note:'Safeway',acct:'cash',gst:0,date:d},{id:'h2',type:'in',amount:900,cat:'Pay',note:'',acct:'cash',gst:0,date:d});
   tab='money'; render(); ok(tab==='home','personal books open the Ledger inside Home');
