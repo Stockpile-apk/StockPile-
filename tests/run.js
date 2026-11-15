@@ -431,6 +431,25 @@ addTx('out',null,R1); ok(/Filled in from the photo/.test($('#modal').innerHTML) 
   // ledger account filter
   moneyFilter='all'; moneyAcct='credit'; let L=V.money(); ok(/All accounts/.test(L) && !/Costco/.test(L),'the Ledger can show one account'); moneyAcct='bank'; L=V.money(); ok(/Costco/.test(L),'…and that account’s entries'); moneyAcct=''; moneyFilter='month';
   S.tx=keepTx; S.cards=keepC; S.banks=keepB; S.open=keepO; showNums=keepSN; }
+// savings goals, payoff plan, calendar, monthly report
+{ const keepTx=S.tx, keepR=S.rec, keepC=S.cards, keepD=S.debts, keepG=S.goals, keepSN=showNums; showNums=true; S.tx=[]; S.rec=[]; S.cards=[]; S.debts=[]; S.goals=[]; S.open={};
+  const in90=dayShift(today(),90);
+  recurForm(null,{type:'in',freq:'biweekly'}); F('name','Pay'); F('amount',2000); F('cat','Pay'); F('next',dayShift(today(),1)); SAVE();
+  goalForm(); F('name','Mexico trip'); F('target',1200); F('date',in90); F('acct',''); F('start',200); SAVE();
+  const g=S.goals[0]; ok(goalSaved(g)===200 && paydaysUntil(in90)>=6 && paydaysUntil(in90)<=7 && /each payday/.test(goalPlan(g)),'a goal shows what is saved and how much to put aside each payday');
+  goalMoney(g.id,'out'); F('amount',300); SAVE(); ok(goalSaved(g)===500 && S.tx.some(t=>t.goal===g.id&&t.cat==='Savings'),'adding money to a goal moves it forward');
+  ok(/Mexico trip/.test(goalsCard()) && clean({goals:[{id:'g1',name:'Car',target:5000,acct:'bank'}],tx:[{id:'q',type:'out',amount:1,goal:'g1',date:today()}]}).goals[0].acct==='bank','goals show on Home and survive reload');
+  S.cards=[{id:'credit',name:'Visa',apr:20,min:50}]; S.open={credit:-3000}; S.debts=[{id:'d1',name:'Car loan',dir:'owe',amount:5000,payments:[],date:today(),rate:7,min:200}];
+  const L=planDebts(), r0=simulate(L,0,'rate'), r1=simulate(L,200,'rate'), r2=simulate(L,200,'small');
+  ok(L.length===2 && !r0.stuck && r1.months<r0.months && r1.interest<r0.interest && r1.order[0][0]==='Visa' && r2.order[0][0]==='Visa','the payoff plan pays highest interest first and saves time and interest with extra');
+  planSheet(); ok(/Debt-free by/.test($('#modal').innerHTML) && /Saves/.test($('#modal').innerHTML),'the payoff plan screen shows the debt-free date and savings'); closeForm();
+  ok(/Payoff plan/.test(V.debts()),'Owing has a Payoff plan button');
+  S.cards[0].due=25; S.debts[0].due=dayShift(today(),10); let got=null; const dl=download; download=(n,t)=>{got=t}; const yes=globalThis.confirm; globalThis.confirm=()=>true; calendarExport(); download=dl; globalThis.confirm=yes;
+  ok(got && /BEGIN:VCALENDAR/.test(got) && /RRULE:FREQ=WEEKLY;INTERVAL=2/.test(got) && /BYMONTHDAY=25/.test(got) && /Pay Car loan/.test(got) && /TRIGGER:-P1D/.test(got),'bills, paydays, card due dates and debts go into a calendar file with reminders');
+  const ym=thisMonth(); S.tx.push({id:'r1',type:'out',amount:50,cat:'Groceries',note:'Safeway',date:ym+'-01'}); const R=reportData(ym);
+  ok(R.out>=50 && R.stores.some(x=>x[0]==='Safeway') && /By category/.test(reportHTML(R)) && /Left over/.test(reportText(R)),'the monthly report adds up the month');
+  reportSheet(ym); ok(/Print/.test($('#modal').innerHTML),'the report can be printed or shared'); closeForm();
+  S.tx=keepTx; S.rec=keepR; S.cards=keepC; S.debts=keepD; S.goals=keepG; S.open={}; showNums=keepSN; }
 // business books still get receipts
 P.current='default'; S=fresh(); S.tx.push({id:'bz',type:'out',amount:5,cat:'Supplies',acct:'cash',gst:0,date:today(),pics:['zz1']}); tab='money'; moneyFilter='all';
 ok(!isPersonal() && /📎 Receipts/.test(V.money()) && /Customers/.test(V.debts()),'business books get a Receipts button and keep Customers'); moneyFilter='month';

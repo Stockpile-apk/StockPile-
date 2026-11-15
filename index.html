@@ -129,9 +129,9 @@ body.dark .sheet .rc{color:var(--ink)}body.dark .sheet .rcs{color:var(--mute)}bo
 // The test copy (served from /beta/) keeps its data under separate names, so it can never touch the real app's data.
 const BETA = /\/beta\//.test((typeof location !== 'undefined' && location.pathname) || '');
 const KEY0 = (BETA ? 'beta_' : '') + 'money_inventory_tracker_v1', PKEY = (BETA ? 'beta_' : '') + 'stockpile_profiles';
-const VERSION = '3.9.0';
+const VERSION = '3.10.0';
 const okDark = v => v === true || v === false ? v : undefined;
-const fresh = () => ({ tx: [], items: [], debts: [], lastBackup: null, dirty: 0, auto: true, offRemind: true, lastSent: null, offSnooze: null, contacts: [], adj: [], rec: [], budgets: {}, staff: [], gone: {}, mm: {}, learn: {}, cards: [], banks: [], house: [], open: {}, set: { gst: false, gstRate: 5 } });
+const fresh = () => ({ tx: [], items: [], debts: [], lastBackup: null, dirty: 0, auto: true, offRemind: true, lastSent: null, offSnooze: null, contacts: [], adj: [], rec: [], budgets: {}, staff: [], gone: {}, mm: {}, learn: {}, cards: [], banks: [], house: [], goals: [], open: {}, set: { gst: false, gstRate: 5 } });
 const defaultP = () => ({ list: [{ id: 'default', name: 'My business' }], current: 'default' });
 const CAN = !!(globalThis.crypto && crypto.subtle);
 let S = fresh(), P = defaultP(), storageOK = true, loadFailed = false;
@@ -262,6 +262,7 @@ function clean(d) {
       if (t.place) r.place = str(t.place).slice(0, 80);
       if (typeof t.who === 'string' && /^[a-z0-9]{1,24}$/i.test(t.who)) r.who = t.who;
       if (typeof t.grp === 'string' && /^[a-z0-9]{1,24}$/i.test(t.grp)) r.grp = t.grp;
+      if (typeof t.goal === 'string' && /^[a-z0-9]{1,24}$/i.test(t.goal)) r.goal = t.goal;
       if (t.cust) r.cust = str(t.cust);
       if (t.cogs !== undefined) r.cogs = num(t.cogs);
       if (t.itemId) r.itemId = okId(t.itemId);
@@ -280,7 +281,7 @@ function clean(d) {
   o.items.forEach(i => { if (!(i.num >= 1) || usedNums.has(i.num)) i.num = 0; else usedNums.add(i.num); });
   o.items.forEach(i => { if (!i.num) { while (usedNums.has(nx)) nx++; i.num = nx; usedNums.add(nx); } });
   o.debts = arr(d.debts).map(x => { const r = { id: okId(x.id), name: str(x.name), dir: x.dir === 'owed' ? 'owed' : 'owe', amount: num(x.amount), note: str(x.note), date: okDate(x.date),
-    payments: arr(x.payments).map(p => ({ amount: num(p.amount), date: okDate(p.date), ...(typeof p.id === 'string' && /^[a-z0-9]{1,24}$/i.test(p.id) ? { id: p.id } : {}) })) }; if (num(x.m) > 0) r.m = num(x.m); if (x.sale) r.sale = okId(x.sale); if (isDate(x.due)) r.due = x.due; return r; });
+    payments: arr(x.payments).map(p => ({ amount: num(p.amount), date: okDate(p.date), ...(typeof p.id === 'string' && /^[a-z0-9]{1,24}$/i.test(p.id) ? { id: p.id } : {}) })) }; if (num(x.m) > 0) r.m = num(x.m); if (x.sale) r.sale = okId(x.sale); if (isDate(x.due)) r.due = x.due; if (num(x.rate) > 0 && num(x.rate) < 100) r.rate = num(x.rate); if (num(x.min) > 0) r.min = round(num(x.min)); return r; });
   o.lastBackup = isDate(d.lastBackup) ? d.lastBackup : null;
   o.dirty = Math.max(0, Math.round(num(d.dirty))); o.auto = d.auto !== false;
   o.contacts = arr(d.contacts).map(c => ({ key: ckey(str(c.name)), name: str(c.name).trim(), phone: cleanPhone(c.phone), email: EMAIL_OK.test(str(c.email).trim()) ? str(c.email).trim().slice(0, 120) : '', promo: !!c.promo, ...(num(c.m) > 0 ? { m: num(c.m) } : {}) })).filter(c => c.key);
@@ -290,6 +291,7 @@ function clean(d) {
   o.banks = arr(d.banks).filter(c => isBank(c && c.id) && str(c.name).trim()).slice(0, 20).map(c => ({ id: c.id, name: str(c.name).trim().slice(0, 30), ...(/^\d{4}$/.test(c.last4) ? { last4: c.last4 } : {}), ...(num(c.m) > 0 ? { m: num(c.m) } : {}) }));
   o.house = arr(d.house).filter(h => h && str(h.name).trim()).slice(0, 20).map(h => ({ id: okId(h.id), name: str(h.name).trim().slice(0, 30), share: num(h.share), ...(num(h.m) > 0 ? { m: num(h.m) } : {}) }));
   const d31 = v => Math.min(Math.max(Math.round(num(v)) || 1, 1), 31);
+  o.goals = arr(d.goals).filter(g => g && str(g.name).trim()).slice(0, 20).map(g => ({ id: okId(g.id), name: str(g.name).trim().slice(0, 40), target: num(g.target), ...(isDate(g.date) ? { date: g.date } : {}), ...(g.acct && okAcct(g.acct) === g.acct && g.acct !== 'cash' ? { acct: g.acct } : {}), ...(num(g.start) ? { start: num(g.start) } : {}), ...(num(g.m) > 0 ? { m: num(g.m) } : {}) }));
   o.rec = arr(d.rec).map(r => { const f = ['weekly', 'biweekly', 'semimonthly'].includes(r.freq) ? r.freq : 'monthly';
     return { id: okId(r.id), name: str(r.name), amount: num(r.amount), cat: str(r.cat), acct: okAcct(r.acct), day: d31(r.day), last: /^\d{4}-\d{2}$/.test(r.last) ? r.last : today().slice(0, 7),
       ...(r.type === 'in' ? { type: 'in' } : {}), ...(f !== 'monthly' ? { freq: f, next: isDate(r.next) ? r.next : today() } : {}), ...(f === 'semimonthly' ? { d2: d31(r.d2 || 31) } : {}), ...(num(r.m) > 0 ? { m: num(r.m) } : {}) }; });
@@ -1175,7 +1177,7 @@ function personalHome(notes) {
       <div class="card"><div class="lbl">I owe</div><div class="big ${iOwe ? 'neg' : ''}">${fmt(iOwe)}</div></div>
       ${owedMe ? `<div class="card"><div class="lbl">Owed to me</div><div class="big pos">${fmt(owedMe)}</div></div>` : ''}
     </div>
-    ${houseCard()}${adviceCard()}
+    ${reportNudge()}${houseCard()}${goalsCard()}${adviceCard()}
     <div class="row between" style="margin-top:22px"><h3 style="margin:0">Spending in ${mn}</h3><button class="btn sec sm" onclick="budgetsForm()">Set budgets</button></div>
     <div class="card" style="margin-top:8px">${cats.length ? cats.map(c => { const s = spent[c] || 0, b = B[c] || 0, over = b > 0 && s > b;
       return `<div class="br"><div class="row between"><span>${catIcon(c)} ${esc(c)}</span><b class="${over ? 'neg' : ''}">${fmt(s)}${b ? ' of ' + fmt(b) : ''}</b></div>
@@ -1302,6 +1304,141 @@ function adviceSheet() {
   m.hidden = false; m.onclick = e => { if (e.target === m) closeForm(); };
 }
 function useSugg() { const A = advice(); S.budgets = { ...(S.budgets || {}), ...A.sugg }; closeForm(); commit(); render(); }
+
+/* ---------- savings goals ---------- */
+const goalSaved = g => round(g.acct ? acctBal(g.acct) : (g.start || 0) + sum(S.tx.filter(t => t.goal === g.id), t => t.type === 'out' ? t.amount : -t.amount));
+// How many paydays fall between now and a date (from recurring paydays), so we can say "per payday".
+function paydaysUntil(date) { const pays = (S.rec || []).filter(r => r.type === 'in'); if (!pays.length || !date) return 0; return new Set(pays.flatMap(r => recDates(r, dayShift(today(), 1), date))).size; }
+function goalPlan(g) {
+  const left = Math.max(g.target - goalSaved(g), 0); if (!left) return '🎉 Reached!';
+  if (!g.date) return `${fmt(left)} to go`;
+  if (g.date <= today()) return `${fmt(left)} to go · target date passed`;
+  const n = paydaysUntil(g.date), months = Math.max((new Date(g.date + 'T12:00') - new Date(today() + 'T12:00')) / 864e5 / 30.44, 0.5);
+  return `${fmt(left)} to go · put aside ${n ? fmt(left / n) + ' each payday' : fmt(left / months) + ' a month'} to make it by ${niceDate(g.date)}`;
+}
+function goalsCard() {
+  const G = S.goals || []; if (!isPersonal() || !G.length) return '';
+  return `<div class="row between" style="margin-top:22px"><h3 style="margin:0">🎯 Goals</h3><button class="btn sec sm" onclick="goalForm()">+ Goal</button></div>
+    <div class="card" style="margin-top:8px">${G.map(g => { const sv = goalSaved(g), pc = g.target ? Math.min(sv / g.target, 1) : 0;
+      return `<div class="br" onclick="goalSheet('${g.id}')" style="cursor:pointer"><div class="row between"><span>${esc(g.name)}</span><b>${fmt(sv)} of ${fmt(g.target)}</b></div>
+        <div class="track"><div class="fill" style="width:${showNums ? Math.round(pc * 100) : 0}%;background:var(--accent)"></div></div><div class="mute" style="font-size:13px">${goalPlan(g)}</div></div>`; }).join('')}</div>`;
+}
+function goalForm(id) {
+  const g = (S.goals || []).find(x => x.id === id) || { name: '', target: '', date: '', start: '' };
+  form(id ? 'Edit goal' : 'Add a savings goal', [
+    { k: 'name', l: 'What are you saving for?', v: g.name, req: 1, ph: 'e.g. Mexico trip' },
+    { k: 'target', l: 'Amount needed ($)', t: 'money', v: g.target, req: 1, pos: 1, ph: '0.00' },
+    { k: 'date', l: 'By when? (optional)', t: 'date', v: g.date || '' },
+    { k: 'acct', l: 'Where is it kept?', t: 'select', v: g.acct || '', o: [['', 'I’ll add money to it here'], ...bankList().map(b => [b.id, 'Its own account: ' + acctName(b.id)])] },
+    { k: 'start', l: 'Already saved ($, if not its own account)', t: 'money', v: g.start || '', ph: '0.00' }
+  ], v => {
+    const data = { name: String(v.name).trim().slice(0, 40), target: round(v.target), ...(isDate(v.date) ? { date: v.date } : {}), ...(v.acct ? { acct: v.acct } : {}), ...(!v.acct && v.start > 0 ? { start: round(v.start) } : {}) };
+    if (id) { ['date', 'acct', 'start'].forEach(k => delete g[k]); Object.assign(g, data); } else (S.goals = S.goals || []).push({ id: uid(), ...data });
+  }, '<div class="mute">If the money sits in its own bank account (like a savings account), pick it and the goal follows that balance. Otherwise use “Add money” on the goal.</div>',
+    id ? () => { if (confirm(`Delete the goal “${g.name}”? Money already put aside stays in your Ledger.`)) { S.goals = S.goals.filter(x => x.id !== id); commit(); render(); } } : null);
+}
+function goalSheet(id) {
+  const g = (S.goals || []).find(x => x.id === id); if (!g) return; const m = $('#modal'); closeForm();
+  m.innerHTML = `<div class="sheet"><div class="row between"><h2 style="margin:0">🎯 ${esc(g.name)}</h2><button class="x" style="font-size:24px" onclick="closeForm()">✕</button></div>
+    <div class="big" style="margin:6px 0">${fmt(goalSaved(g))} <span class="mute" style="font-size:16px">of ${fmt(g.target)}</span></div><p>${goalPlan(g)}</p>
+    <div class="row">${g.acct ? `<button class="btn" onclick="closeForm();addMove(null, { from: 'cash', to: '${g.acct}' })">⇄ Move money in</button>` : `<button class="btn in" onclick="closeForm();goalMoney('${id}','out')">+ Add money</button><button class="btn sec" onclick="closeForm();goalMoney('${id}','in')">Take some out</button>`}<button class="btn sec" onclick="closeForm();goalForm('${id}')">Edit</button></div></div>`;
+  m.hidden = false; m.onclick = e => { if (e.target === m) closeForm(); };
+}
+function goalMoney(id, way) {
+  const g = (S.goals || []).find(x => x.id === id); if (!g) return; const add = way === 'out';
+  form(add ? `Put money toward ${g.name}` : `Take money out of ${g.name}`, [
+    { k: 'amount', l: 'Amount ($)', t: 'money', v: '', req: 1, pos: 1, ph: '0.00' }, acctField(bankList()[0].id, add ? 'Taken from' : 'Put back into', 1), { k: 'date', l: 'Date', t: 'date', v: today() }
+  ], v => { S.tx.push({ id: uid(), type: add ? 'out' : 'in', amount: round(v.amount), cat: 'Savings', note: (add ? 'Saved for ' : 'From savings: ') + g.name, acct: v.acct, gst: 0, date: v.date || today(), goal: g.id }); },
+    `<div class="mute">${add ? 'This shows as money set aside (category Savings).' : 'This shows as money back in.'}</div>`);
+}
+
+/* ---------- debt payoff plan: cards and debts I owe, highest interest first or smallest first ---------- */
+function planDebts() {
+  const ds = S.debts.filter(d => d.dir === 'owe' && bal(d) > 0).map(d => ({ name: d.name, bal: bal(d), rate: d.rate || 0, min: d.min || 0 }));
+  const cs = cardsShown().filter(c => owedOn(c.id) > 0).map(c => ({ name: cardName(c), bal: owedOn(c.id), rate: c.apr || 0, min: c.min || 0 }));
+  return [...cs, ...ds].map(x => ({ ...x, min: Math.min(x.min || Math.max(round(x.bal * 0.03), 25), x.bal) }));
+}
+function simulate(list, extra, how) {
+  const L = list.map(x => ({ ...x, paidOff: 0 })), order = [...L].sort(how === 'small' ? (a, b) => a.bal - b.bal : (a, b) => b.rate - a.rate || a.bal - b.bal);
+  let month = 0, interest = 0;
+  while (L.some(x => x.bal > 0.005) && month < 600) {
+    month++; let pot = extra;
+    for (const x of L) if (x.bal > 0.005) { const i = x.bal * x.rate / 1200; interest += i; x.bal += i; }
+    for (const x of L) if (x.bal > 0.005) { const p = Math.min(x.min, x.bal); x.bal -= p; } else pot += x.min;
+    for (const x of order) { if (pot <= 0) break; if (x.bal > 0.005) { const p = Math.min(pot, x.bal); x.bal -= p; pot -= p; } }
+    for (const x of L) if (x.bal <= 0.005 && !x.paidOff) x.paidOff = month;
+  }
+  return { months: month, interest: round(interest), order: order.map(x => [x.name, x.paidOff]), stuck: month >= 600 };
+}
+let planExtra = 100, planHow = 'rate';
+function planSheet() {
+  const list = planDebts(), m = $('#modal'); if (!list.length) return; closeForm();
+  const base = simulate(list, 0, planHow), r = simulate(list, +planExtra || 0, planHow), when = n => { const d = new Date(today() + 'T12:00'); d.setMonth(d.getMonth() + n); return d.toLocaleDateString('en-CA', { month: 'short', year: 'numeric' }); };
+  m.innerHTML = `<div class="sheet"><div class="row between"><h2 style="margin:0">📉 Payoff plan</h2><button class="x" style="font-size:24px" onclick="closeForm()">✕</button></div>
+    <p class="mute">Owing ${fmt(sum(list, x => x.bal))} on ${list.length} debt${list.length > 1 ? 's' : ''}. Minimum payments: ${fmt(sum(list, x => x.min))} a month.</p>
+    <label class="mute">Extra I can pay each month ($)</label><input class="f" type="number" inputmode="decimal" value="${+planExtra || 0}" onchange="planExtra=this.value;planSheet()" style="width:100%;margin-bottom:8px">
+    <select class="f" onchange="planHow=this.value;planSheet()" style="width:100%"><option value="rate" ${planHow === 'rate' ? 'selected' : ''}>Highest interest first (saves the most)</option><option value="small" ${planHow === 'small' ? 'selected' : ''}>Smallest balance first (quick wins)</option></select>
+    ${r.stuck ? '<div class="note">At this rate the debt keeps growing. Try a bigger extra payment.</div>' : `<div class="card" style="margin-top:10px"><b>Debt-free by ${when(r.months)}</b> (${r.months} months)<br>Interest paid: ${fmt(r.interest)}${base.stuck ? '' : `<br><span class="pos">Saves ${fmt(base.interest - r.interest)} and ${base.months - r.months} months</span> vs. minimums only`}</div>`}
+    <h3>Order to pay them off</h3><div class="list">${r.order.map(([n, mo], i) => `<div class="it"><div class="main"><div class="t">${i + 1}. ${esc(n)}</div><div class="mute">${mo ? 'paid off ' + when(mo) : 'not paid off'}</div></div></div>`).join('')}</div>
+    <p class="mute">Pay the minimum on everything, then put every extra dollar on #1. When it's gone, roll its payment onto #2. ${list.some(x => !x.rate) ? 'Add interest rates on cards (More) and debts (Owing → edit) for a truer plan.' : ''}</p></div>`;
+  m.hidden = false; m.onclick = e => { if (e.target === m) closeForm(); };
+}
+
+/* ---------- bills, paydays and card due dates into the phone's calendar (.ics file) ---------- */
+function calendarExport() {
+  const items = [], amt = confirm('Include amounts in the calendar events?\n\nOK = include amounts. Cancel = names only (better if your calendar syncs online).');
+  const dt = d => d.replace(/-/g, ''), md = d => d === 31 ? -1 : d, esc2 = x => String(x).replace(/[\\,;]/g, c => '\\' + c).replace(/\n/g, ' ');
+  const ev = (uid, title, start, rule) => items.push(['BEGIN:VEVENT', `UID:${uid}@stockpile`, `DTSTAMP:${dt(today())}T000000Z`, `DTSTART;VALUE=DATE:${dt(start)}`, `DTEND;VALUE=DATE:${dt(dayShift(start, 1))}`, `SUMMARY:${esc2(title)}`, ...(rule ? ['RRULE:' + rule] : []), 'BEGIN:VALARM', 'ACTION:DISPLAY', `DESCRIPTION:${esc2(title)}`, 'TRIGGER:-P1D', 'END:VALARM', 'END:VEVENT'].join('\r\n'));
+  for (const r of S.rec || []) {
+    const title = (r.type === 'in' ? '💵 Payday: ' : '🧾 Bill: ') + r.name + (amt ? ' ' + fmt(r.amount) : ''), first = recDates(r, today(), dayShift(today(), 70))[0]; if (!first) continue;
+    const rule = r.freq === 'weekly' ? 'FREQ=WEEKLY' : r.freq === 'biweekly' ? 'FREQ=WEEKLY;INTERVAL=2' : r.freq === 'semimonthly' ? `FREQ=MONTHLY;BYMONTHDAY=${md(r.day)},${md(r.d2 || 31)}` : `FREQ=MONTHLY;BYMONTHDAY=${md(r.day)}`;
+    ev('rec-' + r.id, title, first, rule);
+  }
+  for (const c of S.cards || []) if (c.due) ev('card-' + c.id, '💳 Card payment due: ' + cardName(c), cardDue(c), `FREQ=MONTHLY;BYMONTHDAY=${md(c.due)}`);
+  for (const d of S.debts) if (d.dir === 'owe' && d.due && bal(d) > 0 && d.due >= today()) ev('debt-' + d.id, '⏰ Pay ' + d.name + (amt ? ' ' + fmt(bal(d)) : ''), d.due);
+  if (!items.length) { alert('Nothing to add yet. Add recurring bills or paydays, card due days, or due dates on what you owe.'); return; }
+  const ics = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//StockPile//EN', 'CALSCALE:GREGORIAN', ...items, 'END:VCALENDAR'].join('\r\n'), name = 'stockpile-bills.ics';
+  const file = typeof File !== 'undefined' ? new File([ics], name, { type: 'text/calendar' }) : null;
+  try { if (file && navigator.canShare && navigator.canShare({ files: [file] })) { navigator.share({ files: [file], title: 'Bills and paydays' }).catch(() => {}); return; } } catch (e) {}
+  download(name, ics, 'text/calendar'); setTimeout(() => alert('Saved “' + name + '”. Open it from your Downloads and choose your calendar app to add the reminders (each one a day before).'), 300);
+}
+
+/* ---------- monthly report ---------- */
+function reportData(ym) {
+  const tx = S.tx.filter(t => t.date.startsWith(ym)), prev = monthShift(ym, -1), ins = tx.filter(t => t.type === 'in'), outs = tx.filter(t => t.type === 'out');
+  const now = catsIn(ym), before = catsIn(prev), B = S.budgets || {}, stores = {};
+  outs.forEach(t => { if (t.note) stores[t.note] = (stores[t.note] || 0) + t.amount; });
+  return { ym, inn: sum(ins, t => t.amount), out: sum(outs, t => t.amount), pin: sum(S.tx.filter(t => t.type === 'in' && t.date.startsWith(prev)), t => t.amount), pout: sum(Object.values(before), x => x),
+    cats: Object.keys({ ...now, ...B }).map(c => [c, now[c] || 0, B[c] || 0, before[c] || 0]).sort((a, b) => b[1] - a[1]), stores: Object.entries(stores).sort((a, b) => b[1] - a[1]).slice(0, 5),
+    house: (S.house || []).map(h => [h.name, paidIn(h.id, ym), h.share]) };
+}
+const ymName = ym => new Date(ym + '-15T12:00').toLocaleDateString('en-CA', { month: 'long', year: 'numeric' });
+function reportHTML(R) {
+  const diff = (a, b) => b ? `<span class="${a > b ? 'neg' : 'pos'}">${a > b ? '▲' : '▼'} ${fmt(Math.abs(a - b))}</span>` : '';
+  return `<h2 style="margin:0 0 6px">${ymName(R.ym)}</h2>
+    <div class="grid"><div class="card"><div class="lbl">In</div><div class="big pos">${fmt(R.inn)}</div></div><div class="card"><div class="lbl">Out</div><div class="big neg">${fmt(R.out)}</div><div class="mute">${diff(R.out, R.pout)} vs last month</div></div>
+      <div class="card"><div class="lbl">Left over</div><div class="big ${R.inn - R.out < 0 ? 'neg' : 'pos'}">${fmt(R.inn - R.out)}</div></div>${R.inn > 0 ? `<div class="card"><div class="lbl">Kept</div><div class="big">${Math.round((R.inn - R.out) / R.inn * 100)}%</div><div class="mute">of what came in</div></div>` : ''}</div>
+    <h3>By category</h3><div class="card">${R.cats.length ? R.cats.map(([c, v, b, p]) => `<div class="row between" style="padding:4px 0"><span>${catIcon(c)} ${esc(c)}</span><span><b class="${b && v > b ? 'neg' : ''}">${fmt(v)}</b>${b ? ` <span class="mute">/ ${fmt(b)}</span>` : ''} ${diff(v, p)}</span></div>`).join('') : '<div class="mute">Nothing spent.</div>'}</div>
+    ${R.stores.length ? `<h3>Top places</h3><div class="card">${R.stores.map(([n, v]) => `<div class="row between" style="padding:4px 0"><span>${esc(n)}</span><b>${fmt(v)}</b></div>`).join('')}</div>` : ''}
+    ${R.house.length ? `<h3>Household</h3><div class="card">${R.house.map(([n, p, sh]) => `<div class="row between" style="padding:4px 0"><span>${esc(n)}</span><b class="${p >= sh ? 'pos' : 'neg'}">${fmt(p)} of ${fmt(sh)}</b></div>`).join('')}</div>` : ''}`;
+}
+function reportText(R) {
+  return `StockPile — ${ymName(R.ym)}\nIn: ${cur(R.inn)}\nOut: ${cur(R.out)}\nLeft over: ${cur(R.inn - R.out)}\n\nBy category:\n` + R.cats.filter(c => c[1]).map(([c, v, b]) => `• ${c}: ${cur(v)}${b ? ' of ' + cur(b) : ''}`).join('\n');
+}
+function reportSheet(ym) {
+  const R = reportData(ym), m = $('#modal'); closeForm(); const was = showNums; showNums = true; const html = reportHTML(R); showNums = was;
+  const months = [...new Set(S.tx.map(t => t.date.slice(0, 7)))].sort().reverse();
+  m.innerHTML = `<div class="sheet"><div class="row between"><select class="f" onchange="reportSheet(this.value)">${months.map(x => `<option value="${x}" ${x === ym ? 'selected' : ''}>${ymName(x)}</option>`).join('') || `<option>${ymName(ym)}</option>`}</select><button class="x" style="font-size:24px" onclick="closeForm()">✕</button></div>
+    ${html}<div class="row" style="margin-top:12px"><button class="btn" onclick="reportPrint('${ym}')">🖨 Print / PDF</button><button class="btn sec" onclick="shareText('StockPile report', reportText(reportData('${ym}')))">Share</button></div></div>`;
+  m.hidden = false; m.onclick = e => { if (e.target === m) closeForm(); };
+}
+function reportPrint(ym) { const was = showNums; showNums = true; const h = reportHTML(reportData(ym)); showNums = was; printHTML(h); }
+// In the first week of a month, offer last month's report on Home.
+function reportNudge() {
+  if (!isPersonal() || +today().slice(8) > 7) return ''; const ym = monthShift(thisMonth(), -1);
+  if (!S.tx.some(t => t.date.startsWith(ym))) return '';
+  return `<div class="card" style="margin-top:14px;cursor:pointer" onclick="reportSheet('${ym}')">📊 <b>Your ${ymName(ym).split(' ')[0]} report is ready</b><div class="mute">Where it went, against your budgets and the month before. Tap to see it.</div></div>`;
+}
 
 /* ---------- receipt photos: stored on this phone, encrypted when a PIN is set ---------- */
 const DBN = (BETA ? 'beta_' : '') + 'stockpile_photos', OKID = /^[a-z0-9]{1,24}$/i;
@@ -1729,7 +1866,7 @@ const setupCard = () => `<div class="card" style="text-align:center;padding:26px
 const DKEY = (BETA ? 'beta_' : '') + 'stockpile_device', MKEY = (BETA ? 'beta_' : '') + 'stockpile_me';
 let DEV = (() => { try { let d = localStorage.getItem(DKEY); if (!/^[a-z0-9]{6,12}$/.test(d || '')) { d = (Date.now().toString(36) + Math.random().toString(36).slice(2)).slice(-8); localStorage.setItem(DKEY, d); } return d; } catch (e) { return 'd' + Math.random().toString(36).slice(2, 9); } })();
 const myName = () => { try { return (localStorage.getItem(MKEY) || '').slice(0, 30); } catch (e) { return ''; } };
-const SYNC_COLS = ['tx', 'items', 'debts', 'adj', 'rec', 'cards', 'banks', 'house'];
+const SYNC_COLS = ['tx', 'items', 'debts', 'adj', 'rec', 'cards', 'banks', 'house', 'goals'];
 let baseSnap = null;
 const sigOf = (r, col) => JSON.stringify(r, (k, v) => k === 'm' || (col === 'items' && (k === 'q' || k === 'qty')) ? undefined : v);
 const qtyOf = it => Object.values(it.q || {}).reduce((t, e) => t + (e.n || 0), 0);
@@ -1782,7 +1919,7 @@ function mergeInto(R) {
     for (const r of R[col] || []) { const l = m.get(r.id); if (!l) { if (!dead(r.id, r)) { m.set(r.id, r); if (col === 'tx') added++; } } else m.set(r.id, both ? both(l, r) : newer(l, r)); }
     S[col] = [...m.values()].filter(r => !dead(r.id, r));
   };
-  mergeCol('tx'); mergeCol('adj'); mergeCol('rec'); mergeCol('cards'); mergeCol('banks'); mergeCol('house');
+  mergeCol('tx'); mergeCol('adj'); mergeCol('rec'); mergeCol('cards'); mergeCol('banks'); mergeCol('house'); mergeCol('goals');
   mergeCol('items', (l, r) => {
     const w = { ...newer(l, r) }, q = { ...(l.q || {}) };
     for (const [dev, e] of Object.entries(r.q || {})) if (!q[dev] || (e.v || 0) > (q[dev].v || 0)) q[dev] = e;
@@ -2096,9 +2233,11 @@ function editDebt(id) { if (staffMode) return;
     { k: 'amount', l: 'Total amount ($)', t: 'money', v: d.amount, req: 1, pos: 1, ph: '0.00' },
     { k: 'note', l: 'Note (optional)', v: d.note, ph: 'What it was for' },
     { k: 'date', l: 'Date', t: 'date', v: d.date },
-    { k: 'due', l: 'Due date (optional)', t: 'date', v: d.due || '' }
+    { k: 'due', l: 'Due date (optional)', t: 'date', v: d.due || '' },
+    { k: 'rate', l: 'Interest rate % a year (if I owe it, optional)', t: 'number', v: d.rate || '', ph: 'e.g. 9.9' },
+    { k: 'min', l: 'Monthly payment ($, if I owe it, optional)', t: 'money', v: d.min || '', ph: 'e.g. 150' }
   ], v => {
-    const data = { dir: v.dir, name: v.name, amount: round(v.amount), note: v.note, date: v.date || today(), due: isDate(v.due) ? v.due : undefined };
+    const data = { dir: v.dir, name: v.name, amount: round(v.amount), note: v.note, date: v.date || today(), due: isDate(v.due) ? v.due : undefined, rate: v.rate > 0 && v.rate < 100 ? +v.rate : undefined, min: v.min > 0 ? round(v.min) : undefined };
     if (id) Object.assign(d, data); else S.debts.push({ id: uid(), payments: [], ...data });
   }, '', id ? () => delDebt(id) : null);
 }
@@ -2770,7 +2909,7 @@ const V = {
         ${staffMode ? '' : `<button class="btn sm sec" onclick="editDebt('${d.id}')">Edit</button><button class="btn sm sec" onclick="delDebt('${d.id}')">Delete</button>`}</div></div>`;
     const owe = open.filter(d => d.dir === 'owe'), owed = open.filter(d => d.dir === 'owed');
     return `<h2>Owing</h2>
-    <div class="row bar">${staffMode ? '' : '<button class="btn" onclick="editDebt()">+ Add a debt</button>'}${isPersonal() ? '' : '<button class="btn sec" onclick="customersSheet()">👥 Customers</button>'}${eye()}</div>
+    <div class="row bar">${staffMode ? '' : '<button class="btn" onclick="editDebt()">+ Add a debt</button>'}${isPersonal() ? '' : '<button class="btn sec" onclick="customersSheet()">👥 Customers</button>'}${!staffMode && planDebts().length ? '<button class="btn sec" onclick="planSheet()">📉 Payoff plan</button>' : ''}${eye()}</div>
     ${staffMode ? '' : `<h3>I owe (${fmt(sum(owe, bal))})</h3>${owe.length ? owe.map(card).join('') : '<div class="mute">Nothing owed. 👍</div>'}`}
     <h3>Owed to me (${fmt(sum(owed, bal))})</h3>${owed.length ? owed.map(card).join('') : '<div class="mute">Nobody owes you right now.</div>'}
     ${closed.filter(d => !staffMode || d.dir === 'owed').length ? `<h3>Paid off</h3>${closed.filter(d => !staffMode || d.dir === 'owed').map(card).join('')}` : ''}`;
@@ -2821,7 +2960,15 @@ const V = {
     <div class="card" style="margin-bottom:12px"><b>Recurring bills & paydays</b>
       <p class="mute">Bills and paycheques that repeat — monthly, twice a month, every 2 weeks or weekly — added to your Ledger automatically.</p>
       ${(S.rec || []).length ? `<div class="list" style="margin-bottom:10px">${[...S.rec].sort((a, b) => (a.type === 'in' ? 0 : 1) - (b.type === 'in' ? 0 : 1)).map(r => `<div class="it"><div class="main" onclick="recurForm('${r.id}')"><div class="t">${r.type === 'in' ? '💵 ' : ''}${esc(r.name)}</div><div class="mute">${recWhen(r)} · ${esc(acctName(r.acct))}</div></div><div class="amt ${r.type === 'in' ? 'pos' : ''}">${r.type === 'in' ? '+' : ''}${fmt(r.amount)}</div></div>`).join('')}</div>` : ''}
-      <div class="row"><button class="btn in" onclick="recurForm(null, { type: 'in', cat: '${isPersonal() ? 'Pay' : ''}', acct: '${bankList()[0].id}' })">+ Add payday</button><button class="btn" onclick="recurForm()">+ Add bill</button></div></div>
+      <div class="row"><button class="btn sec" onclick="calendarExport()">📅 Add to my phone calendar</button></div>
+      <div class="row" style="margin-top:8px"><button class="btn in" onclick="recurForm(null, { type: 'in', cat: '${isPersonal() ? 'Pay' : ''}', acct: '${bankList()[0].id}' })">+ Add payday</button><button class="btn" onclick="recurForm()">+ Add bill</button></div></div>
+    ${isPersonal() ? `<div class="card" style="margin-bottom:12px"><b>Savings goals</b>
+      <p class="mute">Save toward something — a trip, a car, an emergency fund. StockPile works out how much to put aside each payday.</p>
+      ${(S.goals || []).length ? `<div class="list" style="margin-bottom:10px">${S.goals.map(g => `<div class="it"><div class="main" onclick="goalSheet('${g.id}')"><div class="t">🎯 ${esc(g.name)}</div><div class="mute">${fmt(goalSaved(g))} of ${fmt(g.target)}${g.date ? ' by ' + niceDate(g.date) : ''}</div></div></div>`).join('')}</div>` : ''}
+      <button class="btn" onclick="goalForm()">+ Add a goal</button></div>` : ''}
+    <div class="card" style="margin-bottom:12px"><b>Monthly report</b>
+      <p class="mute">Where the money went in a month, compared to your budgets and the month before. Print or share it.</p>
+      <div class="row"><button class="btn" onclick="reportSheet(monthShift(thisMonth(), -1))">Last month</button><button class="btn sec" onclick="reportSheet(thisMonth())">This month so far</button></div></div>
     <div class="card" style="margin-bottom:12px"><b>Year summary</b>
       <p class="mute">${isPersonal() ? 'Money in and out for a year, by category, to print or download.' : 'Income, expenses and profit for a year, to print or download at tax time.'}</p>
       <button class="btn" onclick="yearSheet()">Open year summary</button></div>
