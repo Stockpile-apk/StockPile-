@@ -505,11 +505,11 @@ addProfile(); F('kind','business'); F('name','Shop Two'); SAVE(); await saveQ; c
 ok(KEYS[s2] && JSON.parse(store[keyFor(s2)]).enc===2,'new books get their own key straight away'); S.items.push({id:'z',name:'Zed',num:1,qty:1,cost:1,price:2}); save(); await saveQ;
 await lockNow(); $('#pinIn').value='owner-12'; await tryUnlock(); ok(P.current===s2 && S.items[0].name==='Zed','new books reopen after a lock'); await switchProfile('default');
 // staff
-staffForm(); F('who','Dana'); F('p1','owner-12'); PERMS.forEach(p=>FC('pm_'+p[0],false)); lastAlert=''; SAVE(); await wait(()=>lastAlert);
+staffForm(); F('who','Dana'); F('p1','owner-12'); PERMS.forEach(p=>FC('pm_'+p[0],false)); lastAlert=''; SAVE(); await wait(()=>/already in use/.test(lastAlert));
 ok(/already in use/.test(lastAlert) && !(S.staff||[]).length,'a staff PIN cannot match the owner PIN');
 F('p1','dana-1'); SAVE(); await wait(()=>(S.staff||[]).length===1); await saveQ;
 ok(S.staff[0].who==='Dana' && Object.keys(S.staff[0].perms).length===0 && SEC.staff.length===1 && SEC.staff[0].pid==='default' && SEC.ssalt,'a staff member is added with their own PIN');
-closeForm(); staffForm(); F('who','Eli'); F('p1','dana-1'); FC('pm_stock',true); FC('pm_stockEdit',true); FC('pm_owing',true); FC('pm_sales',true); FC('pm_refunds',true); lastAlert=''; SAVE(); await wait(()=>lastAlert);
+closeForm(); staffForm(); F('who','Eli'); F('p1','dana-1'); FC('pm_stock',true); FC('pm_stockEdit',true); FC('pm_owing',true); FC('pm_sales',true); FC('pm_refunds',true); lastAlert=''; SAVE(); await wait(()=>/already in use/.test(lastAlert));
 ok(/already in use/.test(lastAlert) && S.staff.length===1,'two staff cannot share a PIN');
 F('p1','eli-22'); SAVE(); await wait(()=>S.staff.length===2); await saveQ; closeForm();
 ok(/Staff: 2 people/.test(V.more()) && /Manage staff/.test(V.more()),'More shows the staff for this business');
@@ -542,7 +542,7 @@ $('#pinIn').value='owner-12'; await tryUnlock();
 await changePin('owner-12','owner-13'); await lockNow(); $('#pinIn').value='eli-22'; await tryUnlock(); ok(staffMode && staff.who==='Eli','staff PINs survive an owner PIN change'); await lockNow();
 // private PIN on the personal books
 $('#pinIn').value='owner-13'; await tryUnlock(); await switchProfile('hm'); ok(isPersonal() && !/Manage staff/.test(V.more()) && /Set a private PIN/.test(V.more()),'personal books offer a private PIN, not staff');
-privateForm(); F('p1','owner-13'); F('p2','owner-13'); lastAlert=''; SAVE(); await wait(()=>lastAlert); ok(/different from your main PIN/.test(lastAlert) && !isPriv('hm'),'the private PIN must differ from the main PIN');
+privateForm(); F('p1','owner-13'); F('p2','owner-13'); lastAlert=''; SAVE(); await wait(()=>/different from your main PIN/.test(lastAlert)); ok(/different from your main PIN/.test(lastAlert) && !isPriv('hm'),'the private PIN must differ from the main PIN');
 lastRec=''; F('p1','priv-1'); F('p2','priv-1'); SAVE(); await wait(()=>lastRec); await saveQ; const pcode=lastRec; closeForm();
 ok(isPriv('hm') && !KEYS.hm && SEC.priv.hm.rec && /^([0-9A-HJKMNP-TV-Z]{4}-){7}/.test(pcode) && !/"hm"/.test(await dec(DK,JSON.parse(store[PKEY]).body).then(b=>JSON.stringify(JSON.parse(b).keys))),'setting a private PIN takes that key out of the owner’s reach and gives its own recovery key');
 ok(S.tx[0].id==='homesecret' && /ON 🔒/.test(V.more()),'the books stay open for the rest of this session');
@@ -553,11 +553,11 @@ ok(await fails(dec(DK,JSON.parse(store[keyFor('hm')]))) && [...KR.keys()].join()
 S.tx.push({id:'junk',type:'in',amount:1,date:today()}); const hmBefore=store[keyFor('hm')]; save(); await saveQ; ok(store[keyFor('hm')]===hmBefore,'while shut, nothing can be saved over the private books'); S=fresh();
 ok(await fails(removeEnc('owner-13')) && SEC,'the main PIN cannot be removed while private books are shut');
 ok(await fails(openBackup(pbk)) && await fails(openBackup(pbk,'owner-13')) && (await openBackup(pbk,'priv-1')).tx[0].id==='homesecret' && (await openBackup(pbk,pcode)).tx[0].id==='homesecret','the private backup opens with the private PIN or its recovery key, not the main PIN');
-privUnlockForm(); F('pin','nope'); lastAlert=''; SAVE(); await wait(()=>lastAlert); ok(/wrong/.test(lastAlert) && needKey(),'a wrong private PIN is refused');
+privUnlockForm(); F('pin','nope'); lastAlert=''; SAVE(); await wait(()=>/wrong/.test(lastAlert)); ok(/wrong/.test(lastAlert) && needKey(),'a wrong private PIN is refused');
 F('pin','priv-1'); SAVE(); await wait(()=>!needKey()&&S.tx.length); ok(S.tx[0].id==='homesecret' && new Uint8Array((await photoLoad(hpic)).buf).join()==='4,4,4','the private PIN opens the books and their photos');
 await switchProfile('default'); await switchProfile('hm'); ok(!needKey() && S.tx[0].id==='homesecret','no need to re-enter it until the app locks');
 await lockNow(); $('#pinIn').value='owner-13'; await tryUnlock(); await switchProfile('default'); ok(S.tx.some(t=>t.id==='bizsecret') && !needKey(),'other books are unaffected'); await switchProfile('hm');
-privRecoverForm(); F('code','AAAA-BBBB-CCCC-DDDD-EEEE-FFFF-GGGG-HHHH'); F('p1','priv-2'); F('p2','priv-2'); lastAlert=''; SAVE(); await wait(()=>lastAlert); ok(/recovery key isn.t right/.test(lastAlert) && needKey(),'a wrong recovery key is refused');
+privRecoverForm(); F('code','AAAA-BBBB-CCCC-DDDD-EEEE-FFFF-GGGG-HHHH'); F('p1','priv-2'); F('p2','priv-2'); lastAlert=''; SAVE(); await wait(()=>/recovery key isn.t right/.test(lastAlert)); ok(/recovery key isn.t right/.test(lastAlert) && needKey(),'a wrong recovery key is refused');
 F('code',pcode.toLowerCase()); SAVE(); await wait(()=>!needKey()&&S.tx.length,4000); await saveQ; ok(S.tx.length===1 && S.tx[0].id==='homesecret','the books’ own recovery key resets the private PIN without losing anything');
 await lockNow(); $('#pinIn').value='owner-13'; await tryUnlock(); privUnlockForm(); F('pin','priv-1'); lastAlert=''; SAVE(); await wait(()=>lastAlert); ok(needKey(),'the old private PIN no longer works');
 F('pin','priv-2'); SAVE(); await wait(()=>!needKey()&&S.tx.length); ok(S.tx[0].id==='homesecret','the new private PIN does');
@@ -656,7 +656,7 @@ const wrong=JSON.stringify({...JSON.parse(f2),id:'other'}); lastAlert=''; await 
 lastAlert=''; await onShareFile('{"tx":[]}'); ok(/isn.t a StockPile sharing file/.test(lastAlert),'a backup file is not mistaken for a sharing file');
 // joining from the file on a third phone
 await saveQ; saveGen++; S=fresh(); P=defaultP(); baseSnap=null; DEV='phonec'; Object.keys(store).forEach(k=>delete store[k]); save();
-shareMode='join'; await onShareFile(f2); F('me','Kim'); F('pass','nope'); lastAlert=''; SAVE(); await wait(()=>lastAlert); ok(/password is wrong/.test(lastAlert) && P.list.length===1,'joining needs the right sharing password');
+shareMode='join'; await onShareFile(f2); F('me','Kim'); F('pass','nope'); lastAlert=''; SAVE(); await wait(()=>/password is wrong/.test(lastAlert)); ok(/password is wrong/.test(lastAlert) && P.list.length===1,'joining needs the right sharing password');
 F('pass','household'); SAVE(); await wait(()=>P.list.length===2); await tick(150);
 ok(P.list[1].share==='sh1' && P.current===P.list[1].id && S.share.id==='sh1' && S.items.length===4 && S.tx.some(t=>t.id==='viafile') && store[MKEY]==='Kim' && /⇄/.test((render(),$('#hdr').innerHTML)),'joining adds the shared books to the new phone as their own set');
 shareMode='join'; lastAlert=''; await onShareFile(f2); ok(/already have these shared books/.test(lastAlert),'the same books cannot be joined twice');
