@@ -137,7 +137,7 @@ body.dark .sheet .rc{color:var(--ink)}body.dark .sheet .rcs{color:var(--mute)}bo
 // The test copy (served from /beta/) keeps its data under separate names, so it can never touch the real app's data.
 const BETA = /\/beta\//.test((typeof location !== 'undefined' && location.pathname) || '');
 const KEY0 = (BETA ? 'beta_' : '') + 'money_inventory_tracker_v1', PKEY = (BETA ? 'beta_' : '') + 'stockpile_profiles';
-const VERSION = '3.20.0';
+const VERSION = '3.21.0';
 const okDark = v => v === true || v === false ? v : undefined;
 const fresh = () => ({ tx: [], items: [], debts: [], lastBackup: null, dirty: 0, auto: true, offRemind: true, lastSent: null, offSnooze: null, contacts: [], adj: [], rec: [], budgets: {}, staff: [], gone: {}, mm: {}, learn: {}, cards: [], banks: [], house: [], goals: [], open: {}, set: { gst: false, gstRate: 5 } });
 const defaultP = () => ({ list: [{ id: 'default', name: 'My business' }], current: 'default' });
@@ -365,7 +365,8 @@ function clean(d) {
   const st = d.set && typeof d.set === 'object' ? d.set : {};
   o.set = { gst: !!st.gst, gstRate: num(st.gstRate) || 5 };
   if (typeof st.pin === 'string' && /^[a-z0-9]{1,16}$/.test(st.pin)) o.set.pin = st.pin;
-  if (st.chart && typeof st.chart === 'object') { const c = st.chart, k = {}; if (['donut', 'list'].includes(c.spend)) k.spend = c.spend; if (['columns', 'line', 'off'].includes(c.trend)) k.trend = c.trend; if (typeof c.pace === 'boolean') k.pace = c.pace; if (typeof c.cal === 'boolean') k.cal = c.cal; o.set.chart = k; }
+  if (st.chart && typeof st.chart === 'object') { const c = st.chart, k = {}; if (['donut', 'list'].includes(c.spend)) k.spend = c.spend; if (['columns', 'line', 'off'].includes(c.trend)) k.trend = c.trend; if (typeof c.pace === 'boolean') k.pace = c.pace; if (typeof c.cal === 'boolean') k.cal = c.cal; if (typeof c.nw === 'boolean') k.nw = c.nw; o.set.chart = k; }
+  if (/^\d{4}-\d{2}$/.test(st.roll)) o.set.roll = st.roll;
   if (st.cats && typeof st.cats === 'object') { const c = st.cats, nm = v => str(v).trim().slice(0, 40), k = {
       own: arr(c.own).filter(x => Array.isArray(x) && nm(x[0])).slice(0, 80).map(x => [nm(x[0]), cleanIcon(x[1])]),
       hide: [...new Set((Array.isArray(c.hide) ? c.hide : []).map(nm).filter(Boolean))].slice(0, 120),
@@ -1339,7 +1340,7 @@ function posTotals() {
 }
 
 /* ---------- graphs: drawn on the phone as SVG, no internet needed ---------- */
-const chartSet = () => ({ spend: 'donut', trend: 'columns', pace: true, cal: true, ...(S.set.chart || {}) });
+const chartSet = () => ({ spend: 'donut', trend: 'columns', pace: true, cal: true, nw: true, ...(S.set.chart || {}) });
 function setChart(k, v) { S.set = { ...S.set, chart: { ...(S.set.chart || {}), [k]: v } }; save(); render(); }
 const CAP = {};
 function chartCap(k, i) {
@@ -1427,6 +1428,29 @@ function trendChart() {
   const xl = D.map((d, k) => `<text x="${cx(k)}" y="${H - 6}" text-anchor="middle"${d[0] === thisMonth() ? ' style="font-weight:700;fill:var(--ink)"' : ''}>${esc(monShort(d[0]))}</text>`).join('');
   const hit = D.map((d, k) => `<rect x="${L + step * k}" y="${T}" width="${step}" height="${ph + B}" fill="transparent" onclick="chartCap('trend',${k})" style="cursor:pointer"><title>${esc(CAP.trend[k])}</title></rect>`).join('');
   return `${head}<div class="card" style="margin-top:8px"><svg class="viz" id="viz_trend" viewBox="0 0 ${W} ${H}" role="img" aria-label="Money in and out, last 6 months">${grid}<line class="gl" x1="${L}" x2="${W - R}" y1="${y0}" y2="${y0}" style="stroke:var(--mute)"/>${marks}${xl}${hit}</svg><div class="cap" id="cap_trend">Tap a month for details.</div></div>`;
+}
+// Net worth at the end of a day: cash + bank accounts − what is owed on cards − what you owe + what you are owed.
+function netAt(d) {
+  const accts = ['cash', ...bankList().map(b => b.id), ...cardList().map(c => c.id)];
+  const money = sum(accts, a => ((S.open || {})[a] || 0) + sum(S.tx.filter(t => t.date <= d), t => delta(t, a)));
+  const debt = sum(S.debts.filter(x => x.date <= d), x => (x.dir === 'owe' ? -1 : 1) * Math.max(x.amount - sum((x.payments || []).filter(p => p.date <= d), p => p.amount), 0));
+  return round(money + debt);
+}
+function netChart() {
+  if (!isPersonal() || chartSet().nw === false) return '';
+  const head = `<div class="row between" style="margin-top:22px"><h3 style="margin:0">Net worth</h3><button class="btn sec sm" onclick="setChart('nw',false)">Hide</button></div>`;
+  if (!showNums) return head + hiddenGraph;
+  if (!S.tx.length && !S.debts.length && !Object.keys(S.open || {}).length) return '';
+  const D = [-5, -4, -3, -2, -1, 0].map(k => { const m = ymAdd(thisMonth(), k); return [m, netAt(k ? onDay(m, 31) : today())]; });
+  const W = 340, H = 170, L = 46, R = 8, T = 12, B = 22, pw = W - L - R, ph = H - T - B, lo = Math.min(0, ...D.map(d => d[1])), hi = Math.max(0, ...D.map(d => d[1]));
+  const top = niceMax(Math.max(hi, 1)), bot = lo < 0 ? -niceMax(-lo) : 0, y = v => T + (top - v) / (top - bot) * ph, step = pw / 6, cx = k => L + step * k + step / 2;
+  CAP.nw = D.map(([m, v], k) => `${ymName(m)}${m === thisMonth() ? ' (today)' : ' (end of month)'}: ${cur(v)}${k ? ` · ${v >= D[k - 1][1] ? 'up' : 'down'} ${cur(Math.abs(v - D[k - 1][1]))}` : ''}`);
+  const grid = [...new Set([top, (top + bot) / 2, bot, 0])].map(v => `<line class="gl" x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}"${v === 0 ? ' style="stroke:var(--mute)"' : ''}/><text x="${L - 5}" y="${y(v) + 4}" text-anchor="end">${esc(shortMoney(v))}</text>`).join('');
+  const line = `<polyline fill="none" stroke="var(--s1)" stroke-width="2.5" stroke-linejoin="round" points="${D.map((d, k) => `${cx(k)},${y(d[1])}`).join(' ')}"/>` + D.map((d, k) => `<circle data-i="${k}" cx="${cx(k)}" cy="${y(d[1])}" r="4" fill="${d[1] < 0 ? 'var(--red)' : 'var(--s1)'}" stroke="var(--card)" stroke-width="2"/>`).join('');
+  const xl = D.map((d, k) => `<text x="${cx(k)}" y="${H - 6}" text-anchor="middle"${d[0] === thisMonth() ? ' style="font-weight:700;fill:var(--ink)"' : ''}>${esc(monShort(d[0]))}</text>`).join('');
+  const hit = D.map((d, k) => `<rect x="${L + step * k}" y="${T}" width="${step}" height="${ph + B}" fill="transparent" onclick="chartCap('nw',${k})" style="cursor:pointer"><title>${esc(CAP.nw[k])}</title></rect>`).join('');
+  const now = D[5][1];
+  return `${head}<div class="card" style="margin-top:8px"><div class="lbl">Today</div><div class="big ${now < 0 ? 'neg' : ''}">${fmt(now)}</div><svg class="viz" id="viz_nw" viewBox="0 0 ${W} ${H}" role="img" aria-label="Net worth, last 6 months">${grid}${line}${xl}${hit}</svg><div class="cap" id="cap_nw">Cash and bank accounts, less what is owed on cards and what you owe, plus what you are owed. Tap a month for details.</div></div>`;
 }
 // Budget tab: spending in budgeted categories building up through the month, against an even pace.
 function paceChart() {
@@ -1609,6 +1633,7 @@ function personalHome(notes) {
       <div class="card" onclick="tab='debts';render()" style="cursor:pointer"><div class="lbl">I owe</div><div class="big ${showNums && iOwe ? 'neg' : ''}">${fmt(iOwe)}</div></div>
       ${owedMe ? `<div class="card" onclick="tab='debts';render()" style="cursor:pointer"><div class="lbl">Owed to me</div><div class="big pos">${fmt(owedMe)}</div></div>` : ''}
     </div>
+    ${netChart()}
     ${reportNudge()}${houseCard()}${goalsCard()}
     ${od.length ? `<h3>⚠️ Overdue</h3><div class="list">${od.map(d => `<div class="it"><div class="main" onclick="tab='debts';render()"><div class="t">${esc(d.name)}</div><div class="mute">${d.dir === 'owe' ? 'I owe them' : 'Owes me'} · was due ${niceDate(d.due)}</div></div><div class="amt neg">${fmt(bal(d))}</div></div>`).join('')}</div>` : ''}
     ${quickBtns().length ? `<div class="row between" style="margin-top:22px"><h3 style="margin:0">Quick add</h3><button class="btn sec sm" onclick="quickForm()">Edit</button></div><div class="cats" style="margin-top:8px">${quickBtns().slice(0, quickN).join('')}</div>${moreBtn(quickBtns().length, quickN, 'quickN', 6)}` : ''}
@@ -1653,7 +1678,17 @@ const daysIn = ym => new Date(+ym.slice(0, 4), +ym.slice(5, 7), 0).getDate();
 // In personal books, the Savings category is money set aside, not spending: it stays out of budgets, warnings and spending totals.
 const isSav = t => t.cat === 'Savings' && (t.type === 'in' || t.type === 'out') && isPersonal();
 const setAside = ym => round(sum(S.tx.filter(t => isSav(t) && t.date.startsWith(ym)), t => t.type === 'out' ? t.amount : -t.amount));
-const budgetsNow = () => { const B = { ...(S.budgets || {}) }; if (isPersonal()) delete B.Savings; return B; };
+// Rollover (off unless turned on): what was left of last month's budget is added to this month's, and an overspend is taken off.
+// S.set.roll is the month it was turned on, so only months after that carry anything. It never takes a budget below zero.
+const rollOn = () => isPersonal() && !!S.set.roll;
+function rollCarry(ym) {
+  ym = ym || thisMonth(); const prev = ymAdd(ym, -1), o = {};
+  if (!rollOn() || prev < S.set.roll) return o;
+  const sp = catsIn(prev); for (const [c, b] of Object.entries(S.budgets || {})) if (b > 0 && c !== 'Savings') { const d = round(b - (sp[c] || 0)); if (d) o[c] = d; }
+  return o;
+}
+function setRoll(on) { S.set = { ...S.set }; if (on) S.set.roll = S.set.roll || thisMonth(); else delete S.set.roll; save(); render(); }
+const budgetsNow = () => { const B = { ...(S.budgets || {}) }; if (isPersonal()) delete B.Savings; const C = rollCarry(); for (const c of Object.keys(B)) if (C[c]) B[c] = Math.max(round(B[c] + C[c]), 0); return B; };
 const catsIn = ym => { const o = {}; S.tx.forEach(t => { if (t.type === 'out' && !isSav(t) && t.date.startsWith(ym)) o[t.cat || 'Misc'] = (o[t.cat || 'Misc'] || 0) + t.amount; }); return o; };
 const up10 = n => Math.ceil(n / 10) * 10;
 // Averages over the last 3 months that have entries (this month not included).
@@ -1744,7 +1779,7 @@ function budgetOne(i) {
   const c = bCats[i]; if (!c) return; const B = S.budgets || {}, s = catsIn(thisMonth())[c] || 0, U = usual(), u = U.months ? U.cats[c] || 0 : 0;
   form(`${catIcon(c)} ${c}`, [{ k: 'b', l: 'Monthly budget ($)', t: 'money', v: B[c] || '', ph: 'no limit' }], v => {
     S.budgets = { ...(S.budgets || {}) }; if (v.b > 0) S.budgets[c] = round(v.b); else delete S.budgets[c];
-  }, `<div class="mute">Spent this month: ${cur(s)}${u ? ` · usual month: ${cur(u)}` : ''}. Leave it blank for no limit.</div>`);
+  }, `<div class="mute">Spent this month: ${cur(s)}${u ? ` · usual month: ${cur(u)}` : ''}.${rollCarry()[c] ? ` This month also has ${rollCarry()[c] > 0 ? '+' : '−'}${cur(Math.abs(rollCarry()[c]))} carried from last month.` : ''} Leave it blank for no limit.</div>`);
 }
 function useSugg() { const A = advice(); S.budgets = { ...(S.budgets || {}), ...A.sugg }; closeForm(); commit(); render(); }
 
@@ -3526,7 +3561,7 @@ const V = {
     const all = budgetCats(), shown = budgetAll ? all : all.filter(c => B[c] > 0 || now[c] > 0);
     shown.sort((a, b) => ((B[b] > 0) - (B[a] > 0)) || (now[b] || 0) - (now[a] || 0));
     bCats = shown;
-    const bb = billsBudget(ym), totB = sum(Object.values(B), x => x) + bb.tot, totS = sum(Object.keys(B), c => now[c] || 0) + bb.spent;
+    const RC = rollCarry(ym), bb = billsBudget(ym), totB = sum(Object.values(B), x => x) + bb.tot, totS = sum(Object.keys(B), c => now[c] || 0) + bb.spent;
     return `<h2>Budget</h2>
     <div class="row bar"><button class="btn" onclick="budgetsForm()">Set all budgets</button>${eye()}</div>
     ${totB ? `<div class="grid bar">
@@ -3536,9 +3571,10 @@ const V = {
     ${billsCard()}
     ${showNums && Object.keys(budgetSlots()).length ? `<h3>Spending against budget</h3><div class="card">${budgetDonut('bud')}</div>` : ''}
     ${paceChart()}
+    <label class="chk" style="margin-top:14px"><input type="checkbox" ${rollOn() ? 'checked' : ''} onchange="setRoll(this.checked)"> Roll over: add what's left of each budget to next month (an overspend is taken off)</label>
     <h3>Tap a category to set its budget</h3>
     <div class="card">${shown.length ? shown.slice(0, blistN).map((c, i) => { const s = now[c] || 0, b = B[c] || 0, over = b > 0 && s > b, u = U.months ? U.cats[c] || 0 : 0;
-      const sub = [b ? (over ? `${fmt(s - b)} over` : `${fmt(b - s)} left · about ${fmt((b - s) / left)} a day`) : bb.cats.has(c) ? 'set bill · counted under Bills' : 'no budget', u ? `usual month ${fmt(u)}` : ''].filter(Boolean).join(' · ');
+      const sub = [b ? (over ? `${fmt(s - b)} over` : `${fmt(b - s)} left · about ${fmt((b - s) / left)} a day`) : bb.cats.has(c) ? 'set bill · counted under Bills' : 'no budget', RC[c] ? `${RC[c] > 0 ? '+' : '−'}${fmt(Math.abs(RC[c]))} carried from last month` : '', u ? `usual month ${fmt(u)}` : ''].filter(Boolean).join(' · ');
       return `<div class="br" style="cursor:pointer" onclick="budgetOne(${i})"><div class="row between"><span>${catIcon(c)} ${esc(c)}</span><b class="${over && showNums ? 'neg' : ''}">${fmt(s)}${b ? ' of ' + fmt(b) : ''}</b></div>
         <div class="track"><div class="fill" style="width:${showNums && b ? Math.max(Math.min(s / b * 100, 100), s > 0 ? 2 : 0) : 0}%;background:${over ? 'var(--red)' : 'var(--accent)'}"></div></div><div class="mute" style="font-size:12px">${sub}</div></div>`; }).join('') : '<div class="empty">No budgets or spending yet this month.</div>'}${moreBtn(shown.length, blistN, 'blistN', 6)}
       <p style="margin:10px 0 0"><a href="#" onclick="event.preventDefault();budgetAll=!budgetAll;render()">${budgetAll ? 'Show only the ones in use' : 'Show all categories'}</a></p></div>
@@ -3652,7 +3688,8 @@ const V = {
       ${isPersonal() ? `<div class="row between" style="margin-top:10px"><span>Budget donut on Home</span><select class="f" style="width:auto" onchange="setChart('spend',this.value)"><option value="donut" ${chartSet().spend === 'donut' ? 'selected' : ''}>On</option><option value="list" ${chartSet().spend === 'list' ? 'selected' : ''}>Off (list only)</option></select></div>` : ''}
       <div class="row between" style="margin-top:10px"><span>Last 6 months</span><select class="f" style="width:auto" onchange="setChart('trend',this.value)">${[['columns', 'Columns'], ['line', 'Line'], ['off', 'Off']].map(([v, l]) => `<option value="${v}" ${chartSet().trend === v ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
       ${isPersonal() ? `<label class="chk"><input type="checkbox" ${chartSet().pace ? 'checked' : ''} onchange="setChart('pace',this.checked)"> Show the pace graph on the Budget tab</label>
-      <label class="chk"><input type="checkbox" ${chartSet().cal ? 'checked' : ''} onchange="setChart('cal',this.checked)"> Show the bill calendar on the Budget tab</label>` : ''}
+      <label class="chk"><input type="checkbox" ${chartSet().cal ? 'checked' : ''} onchange="setChart('cal',this.checked)"> Show the bill calendar on the Budget tab</label>
+      <label class="chk"><input type="checkbox" ${chartSet().nw ? 'checked' : ''} onchange="setChart('nw',this.checked)"> Show the net worth graph on Home</label>` : ''}
       <p class="mute">Graphs stay hidden until you tap Show.</p></div>
     <div class="card" style="margin-bottom:12px"><b>Appearance</b>
       <label class="chk"><input type="checkbox" ${isDark() ? 'checked' : ''} onchange="P.dark=this.checked;save();render()"> Dark mode</label></div>

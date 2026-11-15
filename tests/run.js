@@ -590,6 +590,22 @@ addTx('out',null,R1); ok(/Filled in from the photo/.test($('#modal').innerHTML) 
   setLockAfter(300); ok(P.lock===300 && JSON.parse(headerBody()).lock===300,'the chosen auto-lock time is remembered'); if(keepLock===undefined) delete P.lock; else P.lock=keepLock; save();
   privacySheet(); const pv=$('#modal').innerHTML; ok(/stay on this phone/.test(pv) && /Test it now/.test(pv) && /No ads/.test(pv) && /airplane mode/.test(pv) && html.includes("connect-src 'none'"),'the privacy screen says what is kept and what the app cannot do'); closeForm();
   ok(/How my records are kept private/.test(V.more()) && /Save to my cloud folder/.test(V.more()) && /Test a backup/.test(V.more()),'More offers the privacy screen, a cloud-folder backup and a backup test'); }
+// net worth graph; budget rollover (3.21.0)
+{ const keepTx=S.tx, keepB=S.budgets, keepSet=S.set, keepD=S.debts, keepO=S.open, keepSN=showNums, me=P.list.find(p=>p.id===P.current), keepK=me.kind; me.kind='personal'; showNums=true; S.set={...S.set}; delete S.set.roll; delete S.set.chart;
+  const ym=thisMonth(), pm=ymAdd(ym,-1), p1=pm+'-05';
+  S.tx=[{id:'n1',type:'in',amount:1000,cat:'Pay',acct:'bank',gst:0,date:p1},{id:'n2',type:'out',amount:300,cat:'Groceries',acct:'credit',gst:0,date:p1},{id:'n3',type:'out',amount:50,cat:'Eating out',acct:'cash',gst:0,date:today()}];
+  S.debts=[{id:'nd',name:'Mom',dir:'owe',amount:200,note:'',date:p1,payments:[{amount:50,date:today(),id:'np'}]}]; S.open={cash:100};
+  ok(netAt(onDay(ymAdd(ym,-2),31))===100 && netAt(onDay(pm,31))===100+1000-300-200 && netAt(today())===100+1000-300-50-150,'net worth adds accounts, takes off cards and what is owed, month by month');
+  let H=personalHome(''); ok(/Net worth/.test(H) && /id="viz_nw"/.test(H) && CAP.nw.length===6 && /\\(today\\)/.test(CAP.nw[5]),'the net worth graph shows on Home');
+  showNums=false; ok(/Net worth/.test(personalHome('')) && !/viz_nw/.test(personalHome('')),'…hidden until Show is tapped'); showNums=true;
+  setChart('nw',false); ok(!/Net worth/.test(personalHome('')) && /net worth graph on Home/.test(V.more()),'the net worth graph can be switched off'); setChart('nw',true);
+  S.budgets={Groceries:400,'Eating out':100};
+  ok(budgetsNow().Groceries===400 && !/carried from last month/.test(V.budget()) && /Roll over/.test(V.budget()),'rollover is off unless switched on');
+  setRoll(true); ok(S.set.roll===ym && budgetsNow().Groceries===400,'switching rollover on starts from this month, so nothing old carries in');
+  S.set.roll=pm; const B=budgetsNow(); ok(B.Groceries===500 && B['Eating out']===200 && /\\+\\$100\\.00 carried from last month/.test(V.budget()),'unspent budget carries into the next month');
+  S.tx.push({id:'n4',type:'out',amount:350,cat:'Eating out',acct:'cash',gst:0,date:p1}); ok(budgetsNow()['Eating out']===0 && clean(JSON.parse(JSON.stringify(S))).set.roll===pm,'an overspend is taken off next month, never below zero, and the setting is remembered');
+  setRoll(false); ok(!S.set.roll && budgetsNow().Groceries===400,'rollover can be switched off again');
+  if(keepK) me.kind=keepK; else delete me.kind; S.tx=keepTx; S.budgets=keepB; S.set=keepSet; S.debts=keepD; S.open=keepO; showNums=keepSN; closeUndo(); }
 { const keepTx=S.tx, keepB=S.budgets, keepSN=showNums, me=P.list.find(p=>p.id===P.current), keepK=me.kind; S.tx=[]; S.budgets={Groceries:200}; me.kind='personal';
   const d=today(); S.tx.push({id:'h1',type:'out',amount:80,cat:'Groceries',note:'Safeway',acct:'cash',gst:0,date:d},{id:'h2',type:'in',amount:900,cat:'Pay',note:'',acct:'cash',gst:0,date:d});
   tab='money'; render(); ok(tab==='home','personal books open the Ledger inside Home');
@@ -629,7 +645,7 @@ addTx('out',null,R1); ok(/Filled in from the photo/.test($('#modal').innerHTML) 
   S.budgets={}; H=V.home(); ok(/aria-label="Spending by category"/.test(H),'with no budgets the donut shows spending by category'); S.budgets={Groceries:300};
   let Bt=V.budget(); ok(/Spending against budget/.test(Bt),'the Budget tab has the budget donut too'); ok(/This month's pace/.test(Bt) && /aria-label="Spending this month against an even pace"/.test(Bt) && /\\$120\\.00 spent so far/.test(CAP.pace[0]),'the Budget tab shows the pace graph');
   setChart('trend','line'); H=V.home(); ok(/<polyline/.test(H.split('Last 6 months')[1]) && S.set.chart.trend==='line','the 6-month graph can be a line');
-  setChart('spend','list'); setChart('trend','off'); setChart('pace',false); H=V.home(); ok(!/<svg/.test(H) && !/This month's pace/.test(V.budget()) && /Graphs/.test(V.more()),'each graph can be changed or turned off under More');
+  setChart('spend','list'); setChart('trend','off'); setChart('pace',false); setChart('nw',false); H=V.home(); ok(!/<svg/.test(H) && !/This month's pace/.test(V.budget()) && /Graphs/.test(V.more()),'each graph can be changed or turned off under More');
   ok(clean(JSON.parse(JSON.stringify(S))).set.chart.trend==='off' && clean({set:{chart:{trend:'bad',pace:'x'}}}).set.chart.trend===undefined,'graph choices survive reload and are cleaned');
   ok(niceMax(1134)===1200 && niceMax(0)===100 && shortMoney(2500)==='$2.5k' && shortMoney(12000)==='$12k','graph axes use round numbers');
   me.kind=keepK; if(keepK===undefined) delete me.kind; S.tx=keepTx; S.budgets=keepB; S.set=keepSet; showNums=keepSN; }
