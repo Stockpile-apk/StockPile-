@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob: mediastream:; connect-src 'none'; manifest-src 'self'; worker-src 'self'; form-action 'none'; base-uri 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob: mediastream:; connect-src 'none'; manifest-src 'self'; worker-src 'self'; form-action 'none'; base-uri 'none'">
 <meta name="theme-color" content="#1d2433">
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="icon-192.png">
@@ -129,7 +129,7 @@ body.dark .sheet .rc{color:var(--ink)}body.dark .sheet .rcs{color:var(--mute)}bo
 // The test copy (served from /beta/) keeps its data under separate names, so it can never touch the real app's data.
 const BETA = /\/beta\//.test((typeof location !== 'undefined' && location.pathname) || '');
 const KEY0 = (BETA ? 'beta_' : '') + 'money_inventory_tracker_v1', PKEY = (BETA ? 'beta_' : '') + 'stockpile_profiles';
-const VERSION = '3.2.0';
+const VERSION = '3.3.0';
 const okDark = v => v === true || v === false ? v : undefined;
 const fresh = () => ({ tx: [], items: [], debts: [], lastBackup: null, dirty: 0, auto: true, offRemind: true, lastSent: null, offSnooze: null, contacts: [], adj: [], rec: [], budgets: {}, staff: [], gone: {}, mm: {}, set: { gst: false, gstRate: 5 } });
 const defaultP = () => ({ list: [{ id: 'default', name: 'My business' }], current: 'default' });
@@ -351,7 +351,7 @@ function addTx(type, t, preset) { if (staffMode) return;
     if (isIn) data.cust = v.cust;
     if (isEdit) Object.assign(t, data);
     else { if (pendingPics.length) { data.pics = pendingPics.slice(0, 6); pendingPics = []; } S.tx.push({ id: uid(), type, ...data }); }
-  }, `${preset && preset.read ? '<div class="note">Filled in from the photo. Check the amount before you save.</div>' : ''}<div class="strip" id="picStrip" data-tx="${isEdit ? t.id : ''}">${stripHTML(isEdit ? (t.pics || []) : pendingPics, isEdit ? t.id : '')}</div>`, isEdit ? () => delTx(t.id) : null);
+  }, `${preset && preset.read ? '<div class="note" id="ocrNote">Filled in from the photo. Check the amount before you save.</div>' : preset && preset.readFail ? `<div class="note" id="ocrNote">${esc(preset.readFail)}</div>` : preset && preset.tried ? '<div class="note" id="ocrNote">Couldn’t make out the receipt. Fill it in by hand, or retake a flatter, brighter photo and tap Read receipt.</div>' : '<div id="ocrNote"></div>'}<div class="strip" id="picStrip" data-tx="${isEdit ? t.id : ''}">${stripHTML(isEdit ? (t.pics || []) : pendingPics, isEdit ? t.id : '')}</div>`, isEdit ? () => delTx(t.id) : null);
   loadThumbs();
 }
 function addMove(t) { if (staffMode) return;
@@ -1092,13 +1092,13 @@ async function onSnapFile(e) {
     const id = await photoSave({ buf: await blob.arrayBuffer(), thumb: small.toDataURL('image/jpeg', 0.7), w: big.width, h: big.height });
     if (ctx.mode === 'tx') { const t = S.tx.find(x => x.id === ctx.txId); if (!t) { photoDel(id); return; } (t.pics = t.pics || []).push(id); commit(); refreshStrip(t.pics); render(); }
     else if (ctx.mode === 'pending') { pendingPics.push(id); refreshStrip(pendingPics); }
-    else { pendingPics = [id]; let g = null; try { g = await readReceipt(big); } catch (err) {} addTx('out', null, g || {}); }
+    else { pendingPics = [id]; let g = null; try { g = await readReceipt(big); } catch (err) { g = { readFail: ocrFailMsg() }; } addTx('out', null, { ...(g || {}), tried: 1 }); }
   } catch (err) { alert("That photo couldn't be saved. Try again, or pick a different picture."); }
 }
 function stripHTML(ids, txId) {
   return `${ids.map(id => `<img class="th" data-pic="${id}" ${txId ? `onclick="viewPic('${id}')"` : ''}>`).join('')}
     <button type="button" class="btn sm sec" onclick="snap(${txId ? `{mode:'tx',txId:'${txId}'}` : `{mode:'pending'}`})">📷 ${ids.length ? 'Add another' : 'Add receipt photo'}</button>
-    <button type="button" class="btn sm sec" onclick="snap(${txId ? `{mode:'tx',txId:'${txId}'}` : `{mode:'pending'}`},true)">🖼 Gallery</button>`;
+    <button type="button" class="btn sm sec" onclick="snap(${txId ? `{mode:'tx',txId:'${txId}'}` : `{mode:'pending'}`},true)">🖼 Gallery</button>${ids.length ? '<button type="button" class="btn sm" onclick="readIntoForm()">🔍 Read receipt</button>' : ''}`;
 }
 function refreshStrip(ids) { const el = $('#picStrip'); if (el && !$('#modal').hidden) { el.innerHTML = stripHTML(ids, el.dataset.tx || ''); loadThumbs(); } }
 async function viewPic(id) {
@@ -1108,7 +1108,7 @@ async function viewPic(id) {
     ${t ? `<p class="mute">${niceDate(t.date)} · ${esc(t.cat || '')}${t.note ? ' · ' + esc(t.note) : ''} · <b>${cur(t.amount)}</b></p>` : ''}
     <div style="overflow:auto;max-height:60vh;border-radius:10px;background:#000"><img id="bigPic" alt="Loading…" style="width:100%;display:block" onclick="this.style.width=this.style.width==='100%'?'250%':'100%'"></div>
     <p class="mute">Tap the photo to zoom in and out.</p>
-    <div class="row"><button class="btn" onclick="sharePic('${id}')">Save or send</button>${t ? `<button class="btn sec" onclick="closeForm();editTx('${t.id}')">Open entry</button>` : ''}<button class="btn out" onclick="removePic('${id}')">Delete photo</button></div></div>`;
+    <div class="row"><button class="btn" onclick="sharePic('${id}')">Save or send</button>${t ? `<button class="btn sec" onclick="closeForm();editTx('${t.id}')">Open entry</button><button class="btn sec" onclick="closeForm();editTx('${t.id}');readIntoForm()">🔍 Read receipt</button>` : ''}<button class="btn out" onclick="removePic('${id}')">Delete photo</button></div></div>`;
   m.hidden = false; m.onclick = null;
   try { const p = await photoLoad(id); if (!p) throw 0; bigURL = URL.createObjectURL(new Blob([p.buf], { type: 'image/jpeg' })); const im = $('#bigPic'); if (im) im.src = bigURL; }
   catch (e) { const im = $('#bigPic'); if (im) im.alt = "This photo isn't on this phone. It may be in a backup made with photos."; }
@@ -1152,12 +1152,63 @@ function parseReceipt(text) {
   if (out.amount !== undefined || out.note) out.read = true;
   return out;
 }
-async function readReceipt(canvas) {
-  if (typeof TextDetector === 'undefined') return null;
-  const blocks = await new TextDetector().detect(canvas); if (!blocks || !blocks.length) return null;
-  blocks.sort((a, b) => (a.boundingBox.y - b.boundingBox.y) || (a.boundingBox.x - b.boundingBox.x));
-  return parseReceipt(blocks.map(b => b.rawValue).join('\n'));
+// Text is read on the phone itself: first the browser's own reader if it has one, otherwise the app's
+// built-in reader (in the ocr folder, about 7 MB, fetched once from the app's own site and kept for offline use).
+const OCR_BASE = (() => { try { return new URL(BETA ? '../ocr/' : 'ocr/', location.href).href; } catch (e) { return 'ocr/'; } })();
+let ocrWorker = null, ocrIdle = 0, ocrProg = null;
+function ocrScript() {
+  if (typeof Tesseract !== 'undefined') return Promise.resolve();
+  return new Promise((ok, no) => { const sc = document.createElement('script'); sc.src = OCR_BASE + 'tesseract.min.js'; sc.onload = ok; sc.onerror = () => no(new Error('ocr load')); const h = document.head || document.body; if (!h) return no(new Error('ocr load')); h.appendChild(sc); });
 }
+async function ocrGet() {
+  if (!ocrWorker) {
+    await ocrScript();
+    ocrWorker = Tesseract.createWorker('eng', 1, { workerPath: OCR_BASE + 'worker.min.js', corePath: OCR_BASE + 'core', langPath: OCR_BASE.replace(/\/$/, ''), workerBlobURL: false, gzip: true,
+      logger: m => { if (ocrProg && m && typeof m.progress === 'number') ocrProg(m.status, m.progress); } });
+    ocrWorker.catch(() => { ocrWorker = null; });
+  }
+  return ocrWorker;
+}
+function ocrDone() { clearTimeout(ocrIdle); ocrIdle = setTimeout(() => { const w = ocrWorker; ocrWorker = null; if (w) w.then(x => x.terminate()).catch(() => {}); }, 90000); }
+// Greyed and capped in size: faster to read and still sharp enough for receipt print.
+function ocrCanvas(src) {
+  const sc = Math.min(1, 1800 / Math.max(src.width, src.height)), c = document.createElement('canvas');
+  c.width = Math.round(src.width * sc); c.height = Math.round(src.height * sc);
+  const g = c.getContext('2d'); g.filter = 'grayscale(1) contrast(1.4)'; g.drawImage(src, 0, 0, c.width, c.height); return c;
+}
+function ocrShow(on) {
+  let b = document.getElementById('ocrBox');
+  if (!on) { if (b) b.remove(); ocrProg = null; return; }
+  if (!b) { b = document.createElement('div'); b.id = 'ocrBox'; b.setAttribute('role', 'status'); b.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center'; document.body.appendChild(b); }
+  b.innerHTML = '<div class="card" style="max-width:300px;text-align:center"><b>🔍 Reading the receipt…</b><div class="mute" id="ocrMsg" style="margin-top:8px">Getting ready</div></div>';
+  ocrProg = (st, pr) => { const el = document.getElementById('ocrMsg'); if (el) el.textContent = /recogniz/i.test(st) ? `Reading ${Math.round(pr * 100)}%` : /load|initial/i.test(st) ? 'Getting the reader ready (first time can take a minute)' : 'Working…'; };
+}
+async function readReceipt(canvas) {
+  if (!canvas || !canvas.width) return null;
+  if (typeof TextDetector !== 'undefined') {
+    try { const blocks = await new TextDetector().detect(canvas);
+      if (blocks && blocks.length) { blocks.sort((a, b) => (a.boundingBox.y - b.boundingBox.y) || (a.boundingBox.x - b.boundingBox.x)); const r = parseReceipt(blocks.map(b => b.rawValue).join('\n')); if (r.read) return r; } } catch (e) {}
+  }
+  ocrShow(true);
+  try { const w = await ocrGet(), res = await w.recognize(ocrCanvas(canvas)); return parseReceipt(res && res.data ? res.data.text : ''); }
+  finally { ocrShow(false); ocrDone(); }
+}
+// The "Read receipt" button inside an entry: reads its newest photo and fills in the boxes.
+async function readIntoForm() {
+  const strip = $('#picStrip'); if (!strip) return;
+  const t = strip.dataset.tx ? S.tx.find(x => x.id === strip.dataset.tx) : null, ids = t ? (t.pics || []) : pendingPics, id = ids[ids.length - 1];
+  if (!id) { alert('Add a receipt photo first.'); return; }
+  let g = null;
+  try { const p = await photoLoad(id); if (!p) throw 0; const bmp = await createImageBitmap(new Blob([p.buf], { type: 'image/jpeg' })), c = document.createElement('canvas');
+    c.width = bmp.width; c.height = bmp.height; c.getContext('2d').drawImage(bmp, 0, 0); g = await readReceipt(c); }
+  catch (e) { alert(ocrFailMsg()); return; }
+  if (!g || !g.read) { alert("Couldn't make out the receipt. Try a flatter, brighter photo, or fill it in by hand."); return; }
+  const put = (k, v) => { const el = document.getElementById('f_' + k); if (el && v !== undefined && v !== '') { el.value = v; el.classList.remove('bad'); } };
+  if (g.amount !== undefined) put('amount', g.amount.toFixed(2)); put('date', g.date); put('note', g.note);
+  const ce = document.getElementById('f_cat'); if (ce && !ce.value && g.cat) ce.value = g.cat;
+  const n = $('#ocrNote'); if (n) n.outerHTML = '<div class="note" id="ocrNote">Filled in from the photo. Check the amount before you save.</div>';
+}
+const ocrFailMsg = () => navigator.onLine === false ? "The receipt reader isn't on this phone yet. Connect to the internet once and try again; after that it works offline." : "Couldn't read that photo. Try again, or fill it in by hand.";
 
 /* ---------- Receipts tab: every entry that has a photo, searchable ---------- */
 let rcQ = '', rcCat = '', rcMonth = '';

@@ -353,7 +353,9 @@ ok(R1.amount===8.48 && R1.date==='2026-11-12' && R1.note==='SAVE-ON-FOODS' && R1
 const R2=parseReceipt('PETRO-CANADA\\nNov 3, 2026\\nREGULAR 41.2 L\\nFUEL SALE $62.10\\nTOTAL\\n$62.10');
 ok(R2.amount===62.1 && R2.date==='2026-11-03' && R2.cat==='Fuel','a fuel receipt with the total on the next line reads correctly');
 const R3=parseReceipt('Corner Store\\nGUM 1.25\\nCHIPS 2.75\\nTAX 0.20\\nCASH 4.20'); ok(R3.amount===4.2 && !R3.cat && !R3.date,'with no TOTAL line it takes the largest amount and leaves the rest blank');
-ok(Object.keys(parseReceipt('')).length===0 && (await readReceipt({}))===null,'an unreadable photo fills in nothing');
+ok(Object.keys(parseReceipt('')).length===0 && (await readReceipt({}).catch(()=>null))===null,'an unreadable photo fills in nothing');
+ok(/Read receipt/.test(stripHTML(['a'],'')) && !/Read receipt/.test(stripHTML([],'')),'Read receipt button shows once there is a photo');
+ok(parseReceipt('SAVE-ON-FOODS\\n2026-11-12\\nSUBTOTAL 15.77\\nTOTAL 15.77').amount===15.77,'receipt total is picked over subtotal');
 ok(guessCat('BC HYDRO payment')==='Hydro' && guessCat('FortisBC')==='Natural gas' && guessCat('TELUS Mobility')==='Phone & internet' && guessCat('Tim Hortons #123')==='Eating out' && guessCat('random')==='','store names suggest a category');
 ok(guessCat('Espresso Bar')==='' && guessCat('Taco Bell')==='Eating out' && guessCat('Corona Flowers')==='' && guessCat('Canadian Tire')==='Household' && guessCat('ESSO 1234')==='Fuel','category guesses avoid look-alike words');
 addTx('out',null,R1); ok(/Filled in from the photo/.test($('#modal').innerHTML) && /value="8.48"/.test($('#modal').innerHTML) && /value="2026-11-12"/.test($('#modal').innerHTML),'a read receipt pre-fills the entry and asks you to check it'); closeForm();
