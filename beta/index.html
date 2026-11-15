@@ -48,6 +48,8 @@ h3{font-size:16px;margin:22px 0 8px;color:var(--mute);font-weight:600}
 .empty{padding:22px 0;text-align:center;color:var(--mute)}
 select.f,input.f{padding:8px;border-radius:8px;border:1px solid var(--line);font-size:15px;background:#fff}
 .br{padding:9px 0}.track{height:8px;background:#eef0f3;border-radius:6px;margin-top:5px;overflow:hidden}.fill{height:100%;border-radius:6px}
+#undo{position:fixed;left:50%;transform:translateX(-50%);bottom:18px;z-index:65;background:#1d2433;color:#fff;border-radius:12px;padding:8px 10px 8px 16px;display:flex;gap:14px;align-items:center;box-shadow:0 6px 20px rgba(0,0,0,.35);font-size:15px;white-space:nowrap}
+#undo[hidden]{display:none}#undo button{background:#fff;color:#1d2433;border:0;border-radius:8px;padding:8px 14px;font-size:15px;font-weight:700;cursor:pointer}
 #modal{position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:flex-end;justify-content:center;z-index:60}
 #modal[hidden],#lock[hidden]{display:none}
 .sheet{background:#fff;width:100%;max-width:520px;border-radius:16px 16px 0 0;padding:18px;max-height:92vh;overflow:auto}
@@ -114,6 +116,7 @@ body.dark .sheet .rc{color:var(--ink)}body.dark .sheet .rcs{color:var(--mute)}bo
 </nav>
 <main id="view"></main>
 <div id="modal" hidden></div>
+<div id="undo" hidden></div>
 <div id="lock" hidden>
   <div style="font-size:48px">📦</div>
   <div style="font-size:20px;font-weight:700;margin-top:6px">StockPile</div>
@@ -132,7 +135,7 @@ body.dark .sheet .rc{color:var(--ink)}body.dark .sheet .rcs{color:var(--mute)}bo
 // The test copy (served from /beta/) keeps its data under separate names, so it can never touch the real app's data.
 const BETA = /\/beta\//.test((typeof location !== 'undefined' && location.pathname) || '');
 const KEY0 = (BETA ? 'beta_' : '') + 'money_inventory_tracker_v1', PKEY = (BETA ? 'beta_' : '') + 'stockpile_profiles';
-const VERSION = '3.16.0';
+const VERSION = '3.17.0';
 const okDark = v => v === true || v === false ? v : undefined;
 const fresh = () => ({ tx: [], items: [], debts: [], lastBackup: null, dirty: 0, auto: true, offRemind: true, lastSent: null, offSnooze: null, contacts: [], adj: [], rec: [], budgets: {}, staff: [], gone: {}, mm: {}, learn: {}, cards: [], banks: [], house: [], goals: [], open: {}, set: { gst: false, gstRate: 5 } });
 const defaultP = () => ({ list: [{ id: 'default', name: 'My business' }], current: 'default' });
@@ -158,7 +161,7 @@ const headerBody = () => JSON.stringify({ list: P.list, current: P.current, dark
 const bizOn = () => P.biz !== false;
 const can = perm => !staffMode || !!(staff && staff.perms && staff.perms[perm]);
 async function loadProfile() {
-  S = fresh(); loadFailed = false; dataReady = false; baseSnap = null;   // until the books are actually loaded, nothing may be saved over them
+  S = fresh(); loadFailed = false; dataReady = false; baseSnap = null; lastGood = null; closeUndo();   // until the books are actually loaded, nothing may be saved over them
   if (needKey()) return;   // private books stay closed until their own PIN is entered
   try {
     const r = localStorage.getItem(keyFor(P.current));
@@ -174,6 +177,7 @@ async function loadProfile() {
   delete S.set.pin;
   const grew = !loadFailed && prepSync(); if (!loadFailed) takeSnap();
   if (applyRecurring() || grew) save();
+  if (!loadFailed && !lastGood) lastGood = { pid: P.current, json: JSON.stringify(S) };
 }
 // How full this browser's storage is. Browsers allow roughly 5 million characters per site; receipt photos are kept elsewhere and don't count.
 const STORE_CAP = 5e6;
@@ -195,18 +199,37 @@ function storageCard() {
     <div class="track"><div class="fill" style="width:${Math.max(u.pct, 1)}%;background:${u.pct >= 90 ? 'var(--red)' : 'var(--accent)'}"></div></div>
     ${u.pct >= 70 ? '<p class="mute">Getting full. Keep a backup off this phone.</p>' : ''}</div>`;
 }
+// Undo: the books as they stood at the last save, and (for about 6 seconds after a change) the copy to go back to.
+let lastGood = null, undoState = null, undoTimer = 0, picBin = [];
+function closeUndo() { clearTimeout(undoTimer); if (undoState) { undoState.bin.forEach(photoDel); undoState = null; } const el = $('#undo'); if (el) { el.hidden = true; el.innerHTML = ''; } }
+function offerUndo(prev, bin) {
+  closeUndo();
+  if (!prev || prev.pid !== P.current || staffMode || loadFailed) { bin.forEach(photoDel); return; }
+  undoState = { ...prev, bin };
+  const el = $('#undo'); el.innerHTML = '<span>Saved</span><button onclick="undoLast()">↶ Undo</button>'; el.hidden = false;
+  undoTimer = setTimeout(closeUndo, 6000); if (undoTimer && undoTimer.unref) undoTimer.unref();
+}
+function undoLast() {
+  const u = undoState; if (!u || staffMode || loadFailed || u.pid !== P.current) { closeUndo(); return; }
+  undoState = null; closeUndo();   // photos of deleted entries are kept: the entries are coming back
+  const R = clean(JSON.parse(u.json)), had = new Set(R.tx.flatMap(t => t.pics || []));
+  S.tx.flatMap(t => t.pics || []).filter(id => !had.has(id)).forEach(photoDel);   // photos of an entry that is being taken back out
+  const cur = new Map(S.items.map(i => [i.id, i])); R.items.forEach(i => { const c = cur.get(i.id); if (c && c.q) i.q = c.q; });   // stock counts shared with other tills keep moving forward
+  R.gone = S.gone; R.mm = S.mm; S = R; closeForm(); save(); render();
+}
 function save() {
   if (loadFailed) return;
   const pid = P.current;
   if (!SEC) {
     stampChanges();
-    try { localStorage.setItem(keyFor(pid), JSON.stringify(S)); localStorage.setItem(PKEY, JSON.stringify({ list: P.list, current: P.current, dark: P.dark, biz: P.biz, pin: LEGACY })); } catch (e) { storageOK = false; }
+    try { const txt = JSON.stringify(S); lastGood = { pid, json: txt }; localStorage.setItem(keyFor(pid), txt); localStorage.setItem(PKEY, JSON.stringify({ list: P.list, current: P.current, dark: P.dark, biz: P.biz, pin: LEGACY })); } catch (e) { storageOK = false; }
     linkNudge(); return;
   }
   const pk = dataReady ? KR.get(pid) : null, mk = DK, sec = SEC, body = mk && !staffMode ? headerBody() : null, gen = saveGen;
   if (!pk && !body) return;
   if (pk) stampChanges();
   const sText = pk ? JSON.stringify(S) : '';
+  if (pk) lastGood = { pid, json: sText };
   saveQ = saveQ.then(async () => {
     if (gen !== saveGen) return;   // everything was erased since this save was queued: don't write it back
     if (pk) localStorage.setItem(keyFor(pid), JSON.stringify({ enc: 2, ...await enc(await pk, sText) }));
@@ -269,6 +292,7 @@ const isDate = v => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v);
 const okDate = v => isDate(v) ? v : today();
 const okId = v => typeof v === 'string' && /^[a-z0-9]{1,24}$/i.test(v) ? v : uid();
 const arr = v => Array.isArray(v) ? v.filter(x => x && typeof x === 'object') : [];
+const cleanIcon = v => [...String(v == null ? '' : v).replace(/[<>&"'`\\\s]/g, '')].slice(0, 4).join('') || '•';
 function cleanQ(q) {
   if (!q || typeof q !== 'object') return null;
   const o = {}; Object.entries(q).slice(0, 60).forEach(([dev, e]) => { if (/^[a-z0-9]{1,12}$/i.test(dev) && e && typeof e === 'object') o[dev] = { n: Math.round(num(e.n)), v: Math.max(0, Math.round(num(e.v))) }; });
@@ -334,6 +358,11 @@ function clean(d) {
   o.set = { gst: !!st.gst, gstRate: num(st.gstRate) || 5 };
   if (typeof st.pin === 'string' && /^[a-z0-9]{1,16}$/.test(st.pin)) o.set.pin = st.pin;
   if (st.chart && typeof st.chart === 'object') { const c = st.chart, k = {}; if (['donut', 'list'].includes(c.spend)) k.spend = c.spend; if (['columns', 'line', 'off'].includes(c.trend)) k.trend = c.trend; if (typeof c.pace === 'boolean') k.pace = c.pace; o.set.chart = k; }
+  if (st.cats && typeof st.cats === 'object') { const c = st.cats, nm = v => str(v).trim().slice(0, 40), k = {
+      own: arr(c.own).filter(x => Array.isArray(x) && nm(x[0])).slice(0, 80).map(x => [nm(x[0]), cleanIcon(x[1])]),
+      hide: [...new Set((Array.isArray(c.hide) ? c.hide : []).map(nm).filter(Boolean))].slice(0, 120),
+      map: Object.fromEntries(Object.entries(c.map && typeof c.map === 'object' ? c.map : {}).slice(0, 200).map(([a, b]) => [nm(a), nm(b)]).filter(([a, b]) => a && b && a !== b)) };
+    if (k.own.length || k.hide.length || Object.keys(k.map).length) o.set.cats = k; }
   if (Array.isArray(st.quick)) o.set.quick = [...new Set(st.quick.filter(x => typeof x === 'string').map(x => x.slice(0, 40)))].slice(0, 60);
   return o;
 }
@@ -397,9 +426,10 @@ function fieldHTML(f) {
 const acctField = (v, l, noCredit) => ({ k: 'acct', l: l || 'Paid with', t: 'select', v: noCredit && isCard(v) ? 'cash' : v || 'cash', o: noCredit ? [['cash', 'Cash'], ...bankList().map(b => [b.id, (S.banks || []).length ? 'Debit / card → ' + cardName(b) : 'Debit / card (to bank)'])] : [['cash', 'Cash'], ...bankList().map(b => [b.id, cardName(b)]), ...cardList().map(c => [c.id, cardName(c)]), ...((isCard(v) || isBank(v)) && ![...cardList(), ...bankList()].some(c => c.id === v) ? [[v, acctName(v)]] : [])] });
 const gstField = def => S.set.gst ? { k: 'gstInc', l: `Amount includes GST (${S.set.gstRate}%)`, t: 'check', v: def } : null;
 function categories(type) {
-  const base = isPersonal() ? (type === 'in' ? PINCOME : PCATS.map(c => c[0])) : type === 'in' ? ['Sales', 'Job payment', 'Other income'] : ['Inventory', 'Supplies', 'Gas', 'Tools', 'Rent', 'Phone', 'Food', 'Other'];
+  const base = isPersonal() ? (type === 'in' ? PINCOME : catList().map(c => c[0])) : type === 'in' ? ['Sales', 'Job payment', 'Other income'] : ['Inventory', 'Supplies', 'Gas', 'Tools', 'Rent', 'Phone', 'Food', 'Other'];
   const used = S.tx.filter(t => t.type === type).map(t => t.cat).filter(Boolean);
-  return [...new Set([...used, ...base])];
+  const hid = catSet().hide;
+  return [...new Set([...used, ...base])].filter(c => !hid.includes(c));
 }
 const customers = () => [...new Set(S.tx.map(t => t.cust).filter(Boolean))];
 
@@ -421,7 +451,7 @@ function addTx(type, t, preset) { if (staffMode) return;
   ], v => {
     // Use the GST printed on the receipt when the amount still matches it; otherwise work it out.
     const amt = round(v.amount), rg = t.gst > 0 && amt === round(+t.amount) ? t.gst : ocrLast && ocrLast.gst > 0 && amt === ocrLast.amount ? ocrLast.gst : 0;
-    const data = { amount: amt, cat: v.cat, note: v.note, acct: v.acct, date: v.date || today(), gst: v.gstInc ? rg || gstOf(amt, true) : 0 };
+    const data = { amount: amt, cat: realCat(v.cat), note: v.note, acct: v.acct, date: v.date || today(), gst: v.gstInc ? rg || gstOf(amt, true) : 0 };
     if ('place' in v) { if (v.place) data.place = v.place.slice(0, 80); else delete t.place; }
     if (isIn) data.cust = v.cust;
     if (v.split) { splitCtx = { t: isEdit ? t : null, type, data, gstInc: v.gstInc }; setTimeout(splitForm, 30); return false; }
@@ -1164,7 +1194,7 @@ function recurForm(id, draft) {
   ], v => {
     v.freq = FREQS.some(x => x[0] === v.freq) ? v.freq : f; v.type = v.type === 'in' || v.type === 'out' ? v.type : isIn ? 'in' : 'out';
     const day = Math.min(Math.max(Math.round(v.day || 1), 1), 31), d2 = Math.min(Math.max(Math.round(v.d2 || 31), 1), 31), now = today(), ym = thisMonth();
-    const data = { name: v.name, amount: round(v.amount), cat: v.cat || v.name, acct: v.acct, day, ...(v.type === 'in' ? { type: 'in' } : {}), ...(v.freq !== 'monthly' ? { freq: v.freq } : {}) };
+    const data = { name: v.name, amount: round(v.amount), cat: realCat(v.cat || v.name), acct: v.acct, day, ...(v.type === 'in' ? { type: 'in' } : {}), ...(v.freq !== 'monthly' ? { freq: v.freq } : {}) };
     if (v.freq === 'semimonthly') data.d2 = d2;
     if (v.freq === 'weekly' || v.freq === 'biweekly') data.next = isDate(v.next) ? v.next : now;
     else if (v.freq === 'semimonthly') { const t = { ...data }, past = recDates(t, dayShift(now, -45), now).pop(); data.next = v.now && past ? past : semiAfter(t, now); if (id && base.freq === 'semimonthly' && isDate(base.next) && base.d2 === d2 && base.day === day) data.next = base.next; }
@@ -1402,8 +1432,66 @@ const isDark = () => P.dark === true || (P.dark == null && typeof matchMedia ===
 const PCATS = [['Groceries', '🛒'], ['Eating out', '🍔'], ['Fuel', '⛽'], ['Vehicle', '🚗'], ['Transportation', '🚌'], ['Hydro', '💡'], ['Natural gas', '🔥'], ['Phone & internet', '📱'], ['Rent or mortgage', '🏠'], ['Loans & credit cards', '💳'], ['Insurance', '🛡️'], ['Medical', '💊'], ['Pets', '🐾'], ['Household', '🧹'], ['Clothing', '👕'], ['Kids & family', '👪'], ['Entertainment', '🎬'], ['Subscriptions', '🔁'], ['Travel', '✈️'], ['Gifts & donations', '🎁'], ['Savings', '🏦'], ['Misc', '📦']];
 const PINCOME = ['Pay', 'Household', 'Side work', 'Benefits', 'Refunds', 'Other income'];
 const isPersonal = () => (P.list.find(p => p.id === P.current) || {}).kind === 'personal';
-const catIcon = c => (PCATS.find(x => x[0] === c) || [0, '•'])[1];
-function budgetCats() { return [...new Set([...PCATS.map(c => c[0]), ...S.tx.filter(t => t.type === 'out').map(t => t.cat).filter(Boolean), ...Object.keys(S.budgets || {})])].filter(c => !(c === 'Savings' && isPersonal())); }
+/* ---------- your own categories: rename, merge, hide, add ---------- */
+// S.set.cats = { own: [[name, icon]], hide: [names], map: { old: new } }. "map" sends anything still filed under an old name to the new one.
+const catSet = () => { const c = (S.set && S.set.cats) || {}; return { own: (c.own || []).map(x => [x[0], x[1]]), hide: [...(c.hide || [])], map: { ...(c.map || {}) } }; };
+function saveCats(C) { S.set = { ...S.set }; if (C.own.length || C.hide.length || Object.keys(C.map).length) S.set.cats = C; else delete S.set.cats; }
+const realCat = c => { const m = catSet().map; for (let i = 0; i < 6 && m[c]; i++) c = m[c]; return c; };
+const catIcon = c => { const o = ((S.set && S.set.cats && S.set.cats.own) || []).find(x => x[0] === c); return o ? esc(o[1]) : (PCATS.find(x => x[0] === c) || [0, '•'])[1]; };
+// The spending categories on offer: the built-in ones that aren't hidden, then your own.
+function catList() { const C = catSet(); return [...PCATS.filter(c => !C.hide.includes(c[0])).map(c => [c[0], catIcon(c[0])]), ...C.own.filter(x => !PCATS.some(p => p[0] === x[0]) && !C.hide.includes(x[0])).map(x => [x[0], esc(x[1])])]; }
+// Move everything filed under one category into another: entries, bills, the budget and what the receipt reader has learned.
+function mergeCat(a, b, icon) {
+  if (!a || !b || a === b) return;
+  const C = catSet(), ic = icon || catIcon(a), builtin = n => PCATS.some(p => p[0] === n);
+  S.tx.forEach(t => { if (t.cat === a) t.cat = b; });
+  (S.rec || []).forEach(r => { if (r.cat === a) r.cat = b; });
+  if (S.budgets && S.budgets[a] > 0) { S.budgets = { ...S.budgets, [b]: round((S.budgets[b] || 0) + S.budgets[a]) }; delete S.budgets[a]; }
+  Object.keys(S.learn || {}).forEach(k => { if (S.learn[k] === a) S.learn[k] = b; });
+  C.own = C.own.filter(x => x[0] !== a);
+  if (!builtin(b) && !C.own.some(x => x[0] === b)) C.own.push([b, cleanIcon(ic)]);
+  if (builtin(a) && !C.hide.includes(a)) C.hide.push(a); if (!builtin(a)) C.hide = C.hide.filter(x => x !== a);
+  C.hide = C.hide.filter(x => x !== b); delete C.map[b]; Object.keys(C.map).forEach(k => { if (C.map[k] === a) C.map[k] = b; }); C.map[a] = b;
+  if (Array.isArray(S.set.quick) && S.set.quick.includes(a)) S.set = { ...S.set, quick: [...new Set(S.set.quick.map(x => x === a ? b : x))] };
+  saveCats(C);
+}
+let catIdx = [];
+function catsSheet() { if (staffMode) return;
+  const C = catSet(), n = {}, B = S.budgets || {}; S.tx.forEach(t => { if (t.cat) n[t.cat] = (n[t.cat] || 0) + 1; });
+  catIdx = budgetCats().filter(c => !C.hide.includes(c));
+  const m = $('#modal'); closeForm();
+  m.innerHTML = `<div class="sheet"><div class="row between"><h2 style="margin:0">Categories</h2><button class="x" style="font-size:24px" onclick="closeForm()">✕</button></div>
+    <p class="mute">Tap a category to rename it, change its icon, merge it into another one, or hide it.</p>
+    <button class="btn" onclick="catForm(-1)">+ New category</button>
+    <div class="list" style="margin-top:12px">${catIdx.map((c, i) => `<div class="it"><div class="main" onclick="catForm(${i})"><div class="t">${catIcon(c)} ${esc(c)}</div><div class="mute">${n[c] ? n[c] + (n[c] > 1 ? ' entries' : ' entry') : 'not used yet'}${B[c] > 0 ? ' · budget ' + fmt(B[c]) : ''}</div></div><div class="mute">›</div></div>`).join('')}</div>
+    ${C.hide.length ? `<h3>Hidden</h3><div class="list">${C.hide.map((c, i) => `<div class="it"><div class="main"><div class="t">${catIcon(c)} ${esc(c)}</div>${C.map[c] ? `<div class="mute">merged into ${esc(C.map[c])}</div>` : ''}</div><button class="btn sec sm" onclick="catShow(${i})">Show again</button></div>`).join('')}</div>` : ''}</div>`;
+  m.hidden = false; m.onclick = e => { if (e.target === m) closeForm(); };
+}
+function catShow(i) { const C = catSet(), c = C.hide[i]; if (!c) return; C.hide.splice(i, 1); delete C.map[c]; saveCats(C); commit(); render(); catsSheet(); }
+function catForm(i) { if (staffMode) return;
+  const c = i >= 0 ? catIdx[i] : '', others = budgetCats().filter(x => x !== c && !catSet().hide.includes(x));
+  if (i >= 0 && !c) return;
+  form(c ? 'Edit category' : 'New category', [
+    { k: 'name', l: 'Name', v: c, req: 1, ph: 'e.g. Hobbies' },
+    { k: 'icon', l: 'Icon (one emoji from your keyboard)', v: c ? catIcon(c) : '', ph: 'e.g. 🎣' },
+    c ? { k: 'into', l: 'Merge it into another category?', t: 'select', v: '', o: [['', 'No, keep it on its own'], ...others.map(x => [x, 'Merge into ' + x])] } : null,
+    c ? { k: 'hide', l: 'Hide it from my lists (entries already in it stay)', t: 'check', v: false } : null
+  ], v => {
+    const nm = String(v.name).trim().slice(0, 40), icon = v.icon ? cleanIcon(v.icon) : ''; if (!nm) return false;
+    const into = c && others.includes(v.into) ? v.into : '', target = into || nm;
+    if (c && target !== c) { if (!into && others.includes(nm) && !confirm(`“${nm}” already exists. Merge “${c}” into it?`)) return false; mergeCat(c, target, into ? '' : icon); }
+    const C = catSet();
+    if (!into) {
+      if (!c && budgetCats().includes(nm) && !C.hide.includes(nm)) { alert(`You already have a category called “${nm}”.`); return false; }
+      const own = C.own.find(x => x[0] === nm), builtin = PCATS.find(p => p[0] === nm);
+      if (own) { if (icon) own[1] = icon; } else if (!builtin || (icon && icon !== builtin[1])) C.own.push([nm, icon || '•']);
+      C.hide = C.hide.filter(x => x !== nm); delete C.map[nm];
+      if (c && v.hide) C.hide.push(nm);
+    }
+    saveCats(C); setTimeout(catsSheet, 30);
+  }, c ? '<div class="mute">Renaming moves every entry, bill and budget to the new name. Merging does the same into the category you pick.</div>' : '<div class="mute">Your own category shows up everywhere the built-in ones do.</div>');
+}
+function budgetCats() { return [...new Set([...catList().map(c => c[0]), ...S.tx.filter(t => t.type === 'out').map(t => t.cat).filter(Boolean), ...Object.keys(S.budgets || {})])].filter(c => !(c === 'Savings' && isPersonal())); }
 function budgetsForm() {
   const cats = budgetCats();
   form('Monthly budgets', cats.map((c, i) => ({ k: 'b' + i, l: `${catIcon(c)} ${c}`, t: 'money', v: (S.budgets || {})[c] || '', ph: 'no limit' })), v => {
@@ -1411,12 +1499,16 @@ function budgetsForm() {
   }, '<div class="mute">Set a monthly limit for any category you want to keep an eye on. Leave the rest blank.</div>');
 }
 // Which category icons show under Quick add on Home (indexes into PCATS). Not set = all of them.
-const quickCats = () => PCATS.map((c, i) => i).filter(i => !Array.isArray(S.set.quick) || S.set.quick.includes(PCATS[i][0]));
+const quickCats = () => { const hid = catSet().hide; return PCATS.map((c, i) => i).filter(i => !hid.includes(PCATS[i][0]) && (!Array.isArray(S.set.quick) || S.set.quick.includes(PCATS[i][0]))); };
+// Your own categories (not the built-in ones), and the ones of those picked for Quick add.
+const ownCats = () => catList().filter(c => !PCATS.some(p => p[0] === c[0]));
+const quickOwn = () => ownCats().map((c, j) => j).filter(j => !Array.isArray(S.set.quick) || S.set.quick.includes(ownCats()[j][0]));
+const quickBtns = () => [...quickOwn().map(j => `<button class="cat" onclick="addTx('out',null,{cat:ownCats()[${j}][0]})"><span>${ownCats()[j][1]}</span>${esc(ownCats()[j][0])}</button>`), ...quickCats().map(i => `<button class="cat" onclick="addTx('out',null,{cat:PCATS[${i}][0]})"><span>${catIcon(PCATS[i][0])}</span>${esc(PCATS[i][0])}</button>`)];   // your own ones come first
 function quickForm() {
-  const on = quickCats();
-  form('Quick add icons on Home', PCATS.map((c, i) => ({ k: 'q' + i, l: `${c[1]} ${c[0]}`, t: 'check', v: on.includes(i) })), v => {
-    const pick = PCATS.filter((c, i) => v['q' + i]).map(c => c[0]);
-    S.set = { ...S.set }; if (pick.length === PCATS.length) delete S.set.quick; else S.set.quick = pick;
+  const on = quickCats(), hid = catSet().hide, own = ownCats(), onO = quickOwn();
+  form('Quick add icons on Home', [...PCATS.map((c, i) => hid.includes(c[0]) ? null : ({ k: 'q' + i, l: `${catIcon(c[0])} ${c[0]}`, t: 'check', v: on.includes(i) })), ...own.map((c, j) => ({ k: 'o' + j, l: `${c[1]} ${c[0]}`, t: 'check', v: onO.includes(j) }))], v => {
+    const pick = [...PCATS.filter((c, i) => v['q' + i]).map(c => c[0]), ...own.filter((c, j) => v['o' + j]).map(c => c[0])];
+    S.set = { ...S.set }; if (pick.length === PCATS.filter(c => !hid.includes(c[0])).length + own.length) delete S.set.quick; else S.set.quick = pick;
   }, '<div class="mute">Tick the ones you want on Home. Every category is still there when you tap − Out. Untick them all to hide Quick add.</div>');
 }
 function personalHome(notes) {
@@ -1455,7 +1547,7 @@ function personalHome(notes) {
     </div>
     ${reportNudge()}${houseCard()}${goalsCard()}
     ${od.length ? `<h3>⚠️ Overdue</h3><div class="list">${od.map(d => `<div class="it"><div class="main" onclick="tab='debts';render()"><div class="t">${esc(d.name)}</div><div class="mute">${d.dir === 'owe' ? 'I owe them' : 'Owes me'} · was due ${niceDate(d.due)}</div></div><div class="amt neg">${fmt(bal(d))}</div></div>`).join('')}</div>` : ''}
-    ${quickCats().length ? `<div class="row between" style="margin-top:22px"><h3 style="margin:0">Quick add</h3><button class="btn sec sm" onclick="quickForm()">Edit</button></div><div class="cats" style="margin-top:8px">${quickCats().slice(0, quickN).map(i => `<button class="cat" onclick="addTx('out',null,{cat:PCATS[${i}][0]})"><span>${PCATS[i][1]}</span>${esc(PCATS[i][0])}</button>`).join('')}</div>${moreBtn(quickCats().length, quickN, 'quickN', 6)}` : ''}
+    ${quickBtns().length ? `<div class="row between" style="margin-top:22px"><h3 style="margin:0">Quick add</h3><button class="btn sec sm" onclick="quickForm()">Edit</button></div><div class="cats" style="margin-top:8px">${quickBtns().slice(0, quickN).join('')}</div>${moreBtn(quickBtns().length, quickN, 'quickN', 6)}` : ''}
     ${V.money(true)}${verTag()}`;
 }
 
@@ -1758,7 +1850,8 @@ async function photoSave(p) {
   await PS.put(await packPhoto(key, { ...p, id, pid: P.current, date: p.date || today() })); if (p.thumb) thumbCache.set(id, p.thumb); return id; }
 async function photoLoad(id) { const r = await PS.get(id); return r ? unpackPhoto(r) : null; }
 function photoDel(id) { thumbCache.delete(id); return PS.del(id).catch(() => {}); }
-const dropPics = list => list.forEach(t => (t.pics || []).forEach(photoDel));
+// Photos of deleted entries wait until Undo is no longer on offer, then they are removed.
+const dropPics = list => list.forEach(t => (t.pics || []).forEach(id => picBin.push(id)));
 // When a PIN is set, re-save every photo under the key of the books it belongs to. A photo that fails is left as it was.
 async function photosResave() {
   for (const r of await PS.all()) { try { const p = await unpackPhoto(r), key = SEC ? await KR.get(p.pid) : null; if (SEC && !key) continue; await PS.put(await packPhoto(key, p)); } catch (e) {} }
@@ -2640,6 +2733,7 @@ async function lockNow() {
   if (!SEC && !LEGACY) return;
   linkClose();
   save(); await saveQ;
+  lastGood = null; closeUndo();
   if (SEC) { DK = null; KR = new Map(); KEYS = {}; staff = null; staffMode = false; S = fresh(); P = defaultP(); thumbCache.clear(); }
   resetView(); showLock(); render();
 }
@@ -2929,7 +3023,9 @@ async function backup(auto, plain, withPhotos) { if (staffMode) return;
   if (!auto) render();
 }
 function commit() {
+  const prev = lastGood, bin = picBin; picBin = [];
   S.dirty = (S.dirty || 0) + 1; save();
+  offerUndo(prev, bin);
   if (!staffMode && S.auto !== false && S.lastBackup !== today() && (S.tx.length || S.items.length || S.debts.length)) backup(true);
   try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {}); } catch (e) {}
 }
@@ -3262,8 +3358,11 @@ const V = {
         : bioOK() ? '<p class="mute">Unlock with your fingerprint instead of typing the PIN.</p><button class="btn" onclick="enableBio()">Turn on fingerprint unlock</button>'
         : '<p class="mute">Fingerprint unlock is available in the installed app version.</p>') : ''}</div>
     ${isPersonal() ? `<div class="card" style="margin-bottom:12px"><b>Quick add icons</b>
-      <p class="mute">Showing ${quickCats().length} of ${PCATS.length} category icons on Home.</p>
-      <button class="btn" onclick="quickForm()">Choose icons</button></div>` : ''}
+      <p class="mute">Showing ${quickBtns().length} of ${catList().length} category icons on Home.</p>
+      <button class="btn" onclick="quickForm()">Choose icons</button></div>
+    <div class="card" style="margin-bottom:12px"><b>Categories</b>
+      <p class="mute">Rename, merge or hide categories, or add your own with its own icon.</p>
+      <button class="btn" onclick="catsSheet()">Manage categories</button></div>` : ''}
     ${isPersonal() ? `<div class="card" style="margin-bottom:12px"><b>Household</b>
       <p class="mute">People who chip in toward bills each month. Home shows who has paid their share.</p>
       ${(S.house || []).length ? `<div class="list" style="margin-bottom:10px">${S.house.map(h => `<div class="it"><div class="main" onclick="houseForm('${h.id}')"><div class="t">${esc(h.name)}</div><div class="mute">${fmt(h.share)} a month</div></div></div>`).join('')}</div>` : ''}

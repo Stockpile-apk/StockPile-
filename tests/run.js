@@ -356,7 +356,9 @@ await lockNow(); ok(thumbCache.size===0,'locking clears photo previews from memo
 await removeEnc('pin-photo'); ok(!memPhotos.get(pid1).enc && new Uint8Array(memPhotos.get(pid1).buf).join()==='9,8,7,6,5','removing the PIN stores photos unlocked again');
 memPhotos.clear(); bko._photos.push({id:'<evil>',b64:'AAAA'},{id:'x9',b64:5},null); applyBackup(bko); await tick(50);
 ok(memPhotos.size===1 && (await photoLoad(pid1)) && new Uint8Array((await photoLoad(pid1)).buf).join()==='9,8,7,6,5' && /receipt photo/.test(lastAlert),'restoring a backup with photos brings the pictures back, and ignores bad ones');
-const ptx2=S.tx.find(t=>t.pics); delTx(ptx2.id); await tick(20); ok(!(await PS.get(pid1)) && rcAll().length===0,'deleting an entry deletes its photo');
+const ptx2=S.tx.find(t=>t.pics); delTx(ptx2.id); await tick(20); ok(!!(await PS.get(pid1)) && rcAll().length===0 && $('#undo').hidden===false,'a deleted entry keeps its photo while Undo is on offer');
+undoLast(); await tick(20); ok(S.tx.some(t=>t.id===ptx2.id&&t.pics) && !!(await PS.get(pid1)) && $('#undo').hidden===true,'Undo brings a deleted entry back, photo and all');
+delTx(ptx2.id); closeUndo(); await tick(20); ok(!(await PS.get(pid1)) && rcAll().length===0,'deleting an entry deletes its photo');
 // reading a receipt
 const R1=parseReceipt('SAVE-ON-FOODS\\nMaple Ridge BC\\n2026-11-12 14:32\\nMILK 4.99\\nBREAD 3.49\\nSUBTOTAL 8.48\\nGST 0.00\\nTOTAL 8.48\\nVISA 8.48');
 ok(R1.amount===8.48 && R1.date==='2026-11-12' && R1.note==='Save-On-Foods' && R1.cat==='Groceries' && R1.read===true,'a grocery receipt reads as store, date, total and category');
@@ -499,6 +501,29 @@ addTx('out',null,R1); ok(/Filled in from the photo/.test($('#modal').innerHTML) 
   donutPick(-2); hm=personalHome(''); ok(donutSel==='§bills' && /of \\$1,000 bills/.test(hm),'the Bills button on the donut shows bills alone'); donutPick(-1);
   showNums=false; ok(!/1,000|3,000/.test(personalHome('')),'Safe to spend and bills stay hidden until Show is tapped'); 
   if(keepK) me.kind=keepK; else delete me.kind; S.tx=keepTx; S.rec=keepR; S.budgets=keepB; showNums=keepSN; donutSel=''; }
+// categories: rename, merge, hide, add your own; Undo (3.17.0)
+{ const keepTx=S.tx, keepR=S.rec, keepB=S.budgets, keepSet=S.set, keepL=S.learn, me=P.list.find(p=>p.id===P.current), keepK=me.kind; me.kind='personal'; S.tx=[]; S.rec=[]; S.set={...S.set}; delete S.set.cats; delete S.set.quick;
+  S.tx.push({id:'m1',type:'out',amount:900,cat:'Rent',acct:'bank',gst:0,date:today()},{id:'m2',type:'out',amount:20,cat:'Rent or mortgage',acct:'bank',gst:0,date:today()});
+  S.rec.push({id:'mr',name:'Rent',amount:900,cat:'Rent',acct:'bank',day:1,last:thisMonth()}); S.budgets={Rent:900,'Rent or mortgage':100}; S.learn={landlord:'Rent'};
+  ok(/Manage categories/.test(V.more()),'personal More offers Manage categories'); catsSheet(); ok(/New category/.test($('#modal').innerHTML) && catIdx.includes('Rent') && /1 entry · budget/.test($('#modal').innerHTML),'the categories screen lists each one with how much it is used');
+  catForm(catIdx.indexOf('Rent')); F('name','Rent'); F('icon',''); F('into','Rent or mortgage'); FC('hide',false); SAVE();
+  ok(S.tx.every(t=>t.cat==='Rent or mortgage') && S.rec[0].cat==='Rent or mortgage' && S.budgets['Rent or mortgage']===1000 && !S.budgets.Rent && S.learn.landlord==='Rent or mortgage' && realCat('Rent')==='Rent or mortgage' && !budgetCats().includes('Rent'),'merging a category moves its entries, bills, budget and learned stores');
+  catsSheet(); catForm(catIdx.indexOf('Pets')); F('name','Dogs'); F('icon','🐕'); F('into',''); FC('hide',false); SAVE();
+  ok(catList().some(c=>c[0]==='Dogs'&&c[1]==='🐕') && !catList().some(c=>c[0]==='Pets') && catIcon('Dogs')==='🐕' && categories('out').includes('Dogs') && !categories('out').includes('Pets') && realCat('Pets')==='Dogs','a built-in category can be renamed and given a new icon');
+  catsSheet(); catForm(-1); F('name','Hobbies'); F('icon','🎣<'); SAVE();
+  ok(catIcon('Hobbies')==='🎣' && budgetCats().includes('Hobbies') && /ownCats\\(\\)\\[/.test(personalHome('')) && /🎣/.test(personalHome('')),'your own category shows in the lists and in Quick add');
+  catsSheet(); catForm(-1); F('name','Hobbies'); F('icon',''); lastAlert=''; SAVE(); ok(/already have/.test(lastAlert) && catSet().own.filter(x=>x[0]==='Hobbies').length===1,'the same category cannot be added twice'); closeForm();
+  catsSheet(); catForm(catIdx.indexOf('Travel')); F('name','Travel'); F('icon',catIcon('Travel')); F('into',''); FC('hide',true); SAVE();
+  ok(!categories('out').includes('Travel') && catSet().hide.includes('Travel') && !quickCats().some(i=>PCATS[i][0]==='Travel') && !catSet().own.some(x=>x[0]==='Travel'),'a category can be hidden');
+  catShow(catSet().hide.indexOf('Travel')); ok(categories('out').includes('Travel') && !catSet().hide.includes('Travel'),'…and shown again'); closeForm();
+  const c3=clean(JSON.parse(JSON.stringify(S))).set.cats; ok(c3.hide.includes('Pets') && c3.map.Pets==='Dogs' && c3.map.Rent==='Rent or mortgage' && c3.own.some(x=>x[0]==='Hobbies'&&x[1]==='🎣'),'category changes survive a reload');
+  ok(clean({set:{cats:{own:[['Bad','<img src=x onerror=alert(1)>']]}}}).set.cats.own[0][1]==='imgs','an icon cannot carry code');
+  save(); const nTx=S.tx.length; S.tx.push({id:'u1',type:'out',amount:7,cat:'Dogs',acct:'cash',gst:0,date:today()}); commit();
+  ok($('#undo').hidden===false && /Undo/.test($('#undo').innerHTML) && S.tx.length===nTx+1,'after a change an Undo bar shows');
+  undoLast(); ok(S.tx.length===nTx && !S.tx.some(t=>t.id==='u1') && $('#undo').hidden===true && catIcon('Dogs')==='🐕','Undo takes the last change back and leaves the rest alone');
+  S.tx.push({id:'u2',type:'out',amount:7,cat:'Dogs',acct:'cash',gst:0,date:today()}); commit(); closeUndo(); undoLast(); ok(S.tx.some(t=>t.id==='u2'),'once the Undo bar has gone the change stays');
+  staffMode=true; commit(); ok($('#undo').hidden===true,'staff are not offered Undo'); staffMode=false;
+  if(keepK) me.kind=keepK; else delete me.kind; S.tx=keepTx; S.rec=keepR; S.budgets=keepB; S.set=keepSet; S.learn=keepL; closeUndo(); }
 { const keepTx=S.tx, keepB=S.budgets, keepSN=showNums, me=P.list.find(p=>p.id===P.current), keepK=me.kind; S.tx=[]; S.budgets={Groceries:200}; me.kind='personal';
   const d=today(); S.tx.push({id:'h1',type:'out',amount:80,cat:'Groceries',note:'Safeway',acct:'cash',gst:0,date:d},{id:'h2',type:'in',amount:900,cat:'Pay',note:'',acct:'cash',gst:0,date:d});
   tab='money'; render(); ok(tab==='home','personal books open the Ledger inside Home');
