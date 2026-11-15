@@ -130,12 +130,13 @@ body.dark .sheet .rc{color:var(--ink)}body.dark .sheet .rcs{color:var(--mute)}bo
 <input type="file" id="pickFile" accept="image/*" hidden>
 <input type="file" id="shareFile" accept=".txt,.json,text/plain,application/json" hidden>
 <input type="file" id="restoreFile" accept=".json,.txt,application/json,text/plain" hidden>
+<input type="file" id="bankFile" accept=".csv,.txt,text/csv,text/comma-separated-values,text/plain" hidden>
 
 <script>
 // The test copy (served from /beta/) keeps its data under separate names, so it can never touch the real app's data.
 const BETA = /\/beta\//.test((typeof location !== 'undefined' && location.pathname) || '');
 const KEY0 = (BETA ? 'beta_' : '') + 'money_inventory_tracker_v1', PKEY = (BETA ? 'beta_' : '') + 'stockpile_profiles';
-const VERSION = '3.18.0';
+const VERSION = '3.19.0';
 const okDark = v => v === true || v === false ? v : undefined;
 const fresh = () => ({ tx: [], items: [], debts: [], lastBackup: null, dirty: 0, auto: true, offRemind: true, lastSent: null, offSnooze: null, contacts: [], adj: [], rec: [], budgets: {}, staff: [], gone: {}, mm: {}, learn: {}, cards: [], banks: [], house: [], goals: [], open: {}, set: { gst: false, gstRate: 5 } });
 const defaultP = () => ({ list: [{ id: 'default', name: 'My business' }], current: 'default' });
@@ -1532,7 +1533,7 @@ function catForm(i) { if (staffMode) return;
       C.hide = C.hide.filter(x => x !== nm); delete C.map[nm];
       if (c && v.hide) C.hide.push(nm);
     }
-    saveCats(C); setTimeout(catsSheet, 30);
+    saveCats(C); closeForm(); commit(); render(); catsSheet(); return false;   // straight back to the list
   }, c ? '<div class="mute">Renaming moves every entry, bill and budget to the new name. Merging does the same into the category you pick.</div>' : '<div class="mute">Your own category shows up everywhere the built-in ones do.</div>');
 }
 function budgetCats() { return [...new Set([...catList().map(c => c[0]), ...S.tx.filter(t => t.type === 'out').map(t => t.cat).filter(Boolean), ...Object.keys(S.budgets || {})])].filter(c => !(c === 'Savings' && isPersonal())); }
@@ -3133,12 +3134,129 @@ $('#restoreFile').onchange = e => {
 };
 const csvCell = v => { v = String(v ?? ''); return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; };
 const csv = rows => rows.map(r => r.map(csvCell).join(',')).join('\n');
-function exportMoney() {
-  const rows = [['Date', 'Type', 'Amount', 'Category', 'Customer', 'Account', 'GST included', 'Note', 'Place']].concat([...S.tx].sort((a, b) => a.date.localeCompare(b.date)).map(t =>
+const moneyRows = () => [['Date', 'Type', 'Amount', 'Category', 'Customer', 'Account', 'GST included', 'Note', 'Place']].concat([...S.tx].sort((a, b) => a.date.localeCompare(b.date)).map(t =>
     t.type === 'move' ? [t.date, 'Move', t.amount, '', '', moveName(t), '', t.note]
       : [t.date, t.type === 'in' ? 'In' : 'Out', t.amount, t.cat, t.cust, ACCT[acct(t)], t.gst || '', t.note, t.place || '']));
-  download(`stockpile-money-${today()}.csv`, csv(rows), 'text/csv');
+function exportMoney() { download(`stockpile-money-${today()}.csv`, csv(moneyRows()), 'text/csv'); }
+// Everything in these books in one spreadsheet file, one section after another, so your records are never trapped in the app.
+function allRows() {
+  const sec = (title, head, rows) => rows.length ? [[], [title], head, ...rows] : [], freq = r => (FREQS.find(f => f[0] === (r.freq || 'monthly')) || FREQS[0])[1];
+  return [['StockPile export', profName(), today()],
+    ...sec('LEDGER', moneyRows()[0], moneyRows().slice(1)),
+    ...sec('BILLS AND PAYDAYS', ['Name', 'In or out', 'Amount', 'How often', 'Category', 'Account', 'Paid how', 'Next date'], (S.rec || []).map(r => [r.name, r.type === 'in' ? 'In' : 'Out', r.amount, freq(r), r.cat, acctName(r.acct), r.type === 'in' ? '' : isMan(r) ? 'I pay it myself' : 'Auto-pay', recDates(r, today(), dayShift(today(), 370))[0] || ''])),
+    ...sec('BUDGETS', ['Category', 'Budget a month'], Object.entries(S.budgets || {}).map(([c, v]) => [c, v])),
+    ...sec('ACCOUNTS', ['Account', 'Balance now'], ['cash', ...bankList().map(b => b.id), ...cardList().map(c => c.id)].map(a => [acctName(a), acctBal(a)])),
+    ...sec('OWING', ['Name', 'Which way', 'Amount', 'Paid so far', 'Left', 'Due', 'Note'], S.debts.map(d => [d.name, d.dir === 'owe' ? 'I owe them' : 'Owes me', d.amount, paid(d), bal(d), d.due || '', d.note])),
+    ...sec('SAVINGS GOALS', ['Goal', 'Target', 'Saved so far', 'By'], (S.goals || []).map(g => [g.name, g.target, goalSaved(g), g.date || ''])),
+    ...sec('HOUSEHOLD', ['Name', 'Share a month'], (S.house || []).map(h => [h.name, h.share])),
+    ...sec('STOCK', ['Item #', 'Product', 'In stock', 'Cost each', 'Price each'], [...S.items].sort((a, b) => a.num - b.num).map(i => [i.num, i.name, i.qty, i.cost, i.price])),
+    ...sec('CUSTOMERS', ['Name', 'Phone', 'Email'], (S.contacts || []).map(c => [c.name, c.phone, c.email]))];
 }
+function exportAll() { if (staffMode) return; download(`stockpile-everything-${today()}.csv`, csv(allRows()), 'text/csv'); }
+
+/* ---------- bank statement import (.csv): no bank login, and the file is read on this phone only ---------- */
+function csvParse(text) {
+  text = String(text || '').replace(/^﻿/, '');
+  const top = text.split(/\r?\n/).slice(0, 6).join('\n'), delim = [',', ';', '\t'].map(d => [d, top.split(d).length]).sort((a, b) => b[1] - a[1])[0][0];
+  const rows = []; let row = [], cell = '', q = false;
+  const endRow = () => { row.push(cell); cell = ''; if (row.some(c => c.trim())) rows.push(row.map(c => c.trim())); row = []; };
+  for (let i = 0; i < text.length; i++) { const ch = text[i];
+    if (q) { if (ch === '"') { if (text[i + 1] === '"') { cell += '"'; i++; } else q = false; } else cell += ch; }
+    else if (ch === '"') q = true;
+    else if (ch === delim) { row.push(cell); cell = ''; }
+    else if (ch === '\n' || ch === '\r') { if (ch === '\r' && text[i + 1] === '\n') i++; endRow(); }
+    else cell += ch;
+  }
+  endRow(); return rows;
+}
+const MONTHS3 = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+// Banks write dates many ways. dmy = true when the file puts the day first (14/11/2026).
+function bankDate(v, dmy) {
+  v = String(v || '').trim(); let m;
+  const mk = (y, mo, d) => { y = +y; if (y < 100) y += 2000; mo = +mo; d = +d; const t = `${y}-${String(mo).padStart(2, '0')}-${String(d).padStart(2, '0')}`, dt = new Date(t + 'T12:00'); return y > 1990 && y < 2100 && mo >= 1 && mo <= 12 && d >= 1 && dt.getDate() === d && dt.getMonth() === mo - 1 ? t : ''; };
+  if ((m = v.match(/^(\d{4})[-\/.](\d{1,2})[-\/.](\d{1,2})(?!\d)/))) return mk(m[1], m[2], m[3]);
+  if ((m = v.match(/^(\d{4})(\d{2})(\d{2})$/))) return mk(m[1], m[2], m[3]);
+  if ((m = v.match(/^(\d{1,2})[-\/.](\d{1,2})[-\/.](\d{4}|\d{2})(?!\d)/))) return dmy ? mk(m[3], m[2], m[1]) : mk(m[3], m[1], m[2]);
+  if ((m = v.match(/^(\d{1,2})[-\s]([a-z]{3})[a-z]*\.?[-\s,]+(\d{4}|\d{2})(?!\d)/i)) && MONTHS3.includes(m[2].toLowerCase())) return mk(m[3], MONTHS3.indexOf(m[2].toLowerCase()) + 1, m[1]);
+  if ((m = v.match(/^([a-z]{3})[a-z]*\.?\s+(\d{1,2}),?\s+(\d{4})/i)) && MONTHS3.includes(m[1].toLowerCase())) return mk(m[3], MONTHS3.indexOf(m[1].toLowerCase()) + 1, m[2]);
+  return '';
+}
+function bankNum(v) {
+  v = String(v || '').trim().replace(/\b(CAD|USD)\b/gi, '').trim(); if (!/^[-+(]?\s*\$?\s*[-+]?[\d\s,.']*\d\)?\s*-?\s*(CR|DR)?$/i.test(v)) return NaN;
+  const neg = /^\(.*\)$/.test(v) || /^\s*\$?\s*-/.test(v) || /-\s*$/.test(v) || /DR$/i.test(v);
+  let d = v.replace(/[^\d.,]/g, ''); if (/,\d{1,2}$/.test(d) && !/\.\d/.test(d)) d = d.replace(/\./g, '').replace(',', '.'); d = d.replace(/,/g, '');
+  const n = parseFloat(d); return isFinite(n) ? (neg ? -n : n) : NaN;
+}
+// Work out which column is the date, the description and the money, from the heading row if there is one, otherwise from what is in each column.
+function bankParse(text) {
+  const R = csvParse(text), isHead = r => r.filter(c => /date|descri|amount|debit|credit|withdraw|deposit|memo|payee|details|balance/i.test(c) && isNaN(bankNum(c))).length >= 2 && !r.some(c => bankDate(c));
+  const hi = R.slice(0, 20).findIndex(isHead), head = hi >= 0 ? R[hi].map(c => c.toLowerCase()) : [], body = R.slice(hi + 1), nc = Math.max(0, ...body.map(r => r.length));
+  if (!body.length) return { rows: [], signed: false };
+  const cols = [...Array(nc).keys()], share = (i, f) => body.filter(r => f(r[i] || '')).length / body.length, find = re => cols.filter(i => re.test(head[i] || ''));
+  const dateCols = find(/date/), dc = dateCols.find(i => /trans/.test(head[i])) ?? dateCols[0] ?? cols.find(i => share(i, v => !!bankDate(v)) > 0.6);
+  if (dc === undefined) return { rows: [], signed: false };
+  const dmy = body.some(r => { const m = String(r[dc] || '').match(/^(\d{1,2})[-\/.](\d{1,2})[-\/.]\d{2,4}/); return m && +m[1] > 12; });
+  const numeric = i => i !== dc && share(i, v => v !== '' && !isNaN(bankNum(v))) > 0.15 && share(i, v => v !== '' && isNaN(bankNum(v))) < 0.1;
+  let deb = find(/debit|withdraw|paid out|money out|charges?$/)[0], cred = find(/credit|deposit|paid in|money in|payments?$/).filter(i => i !== deb)[0], amt = find(/amount|cad\$|^cad|^value/).filter(i => i !== deb && i !== cred && numeric(i))[0];
+  if (deb !== undefined && !numeric(deb)) deb = undefined; if (cred !== undefined && !numeric(cred)) cred = undefined;
+  if (deb === undefined && cred === undefined && amt === undefined) { const nums = cols.filter(i => numeric(i) && !/balance|number|cheque|card/.test(head[i] || '')); if (nums.length >= 2 && !head.length) { deb = nums[0]; cred = nums[1]; } else amt = nums[0]; }
+  if (deb === undefined && cred === undefined && amt === undefined) return { rows: [], signed: false };
+  const two = deb !== undefined || cred !== undefined, used = [dc, deb, cred, amt];
+  let ds = find(/descri|payee|memo|details|merchant|^name|^transaction$/).filter(i => !used.includes(i));
+  if (!ds.length) { const txt = cols.filter(i => !used.includes(i) && !numeric(i) && share(i, v => /[a-z]{3}/i.test(v)) > 0.5).sort((a, b) => sum(body, r => (r[b] || '').length) - sum(body, r => (r[a] || '').length)); ds = txt.slice(0, 1); }
+  // some banks give every amount as a plus and say Debit or Credit in another column
+  const tc = !two ? cols.find(i => !used.includes(i) && share(i, v => /^(debit|credit|dr|cr|withdrawal|deposit)$/i.test(v)) > 0.8) : undefined;
+  const rows = body.map(r => { const date = bankDate(r[dc], dmy); let v;
+    if (two) { const d = deb !== undefined ? bankNum(r[deb]) : NaN, c = cred !== undefined ? bankNum(r[cred]) : NaN; v = (isNaN(c) ? 0 : Math.abs(c)) - (isNaN(d) ? 0 : Math.abs(d)); }
+    else { v = bankNum(r[amt]); if (tc !== undefined && !isNaN(v)) v = /^(debit|dr|withdrawal)$/i.test(r[tc]) ? -Math.abs(v) : Math.abs(v); }
+    return { date, desc: ds.map(i => r[i] || '').filter(Boolean).join(' ').replace(/\s+/g, ' ').trim(), v: round(v) }; }).filter(r => r.date && r.v && isFinite(r.v));
+  return { rows: rows.slice(0, 2000), signed: !two && tc === undefined, more: Math.max(rows.length - 2000, 0) };
+}
+const tidyDesc = d => { d = String(d || '').replace(/^\[[A-Za-z]{1,3}\]\s*/, '').replace(/[#*]?\d{5,}/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60); return d && d === d.toUpperCase() ? d.toLowerCase().replace(/(^|[\s\-\/&.])([a-z])/g, (m, a, b) => a + b.toUpperCase()) : d; };
+let imp = null;   // the statement being looked over before anything is added
+// Work out in / out for each row, guess a category, and untick the ones that look like entries already in the Ledger.
+function bankMark() {
+  const I = imp, pool = S.tx.filter(t => t.type !== 'move' && acct(t) === I.acct).map(t => ({ t, used: false })), days = (a, b) => Math.abs(new Date(a + 'T12:00') - new Date(b + 'T12:00')) / 864e5;
+  for (const r of I.rows) {
+    let v = r.v; if (I.signed && isCard(I.acct)) v = -v; if (I.flip) v = -v;   // on a card statement a plain plus is a purchase
+    r.type = v > 0 ? 'in' : 'out'; r.amount = Math.abs(v);
+    const chain = findChain([r.desc]); r.note = chain ? chain.name : tidyDesc(r.desc) || 'Bank entry';
+    r.cat = realCat(r.type === 'in' ? (isPersonal() ? (/payroll|salary|wages|\bpay\b/i.test(r.desc) ? 'Pay' : 'Other income') : 'Other income') : (S.learn || {})[storeKey(r.note)] || bookCat(chain ? chain.cat : guessCat(r.desc)) || '');
+    r.xfer = /payment\s*-?\s*thank|payment received|pmt.*thank|\btfr\b|transfer (to|from)|online banking transfer/i.test(r.desc);
+    const hit = pool.find(p => !p.used && p.t.type === r.type && round(p.t.amount) === r.amount && p.t.date === r.date) || pool.find(p => !p.used && p.t.type === r.type && round(p.t.amount) === r.amount && days(p.t.date, r.date) <= 3);
+    r.dup = !!hit; if (hit) hit.used = true;
+    r.on = !r.dup && !r.xfer;
+  }
+}
+function bankOpen(text) { if (staffMode) return;
+  const p = bankParse(text);
+  if (!p.rows.length) { alert('Couldn’t find dated amounts in that file. Download the statement as a CSV (spreadsheet) file from your bank’s website and try again.'); return; }
+  imp = { ...p, acct: bankList()[0].id, flip: false }; bankMark(); bankSheet();
+}
+const impCount = () => imp ? imp.rows.filter(r => r.on).length : 0, impLabel = () => { const n = impCount(); return n ? `Add ${n} ${n === 1 ? 'entry' : 'entries'}` : 'Nothing ticked'; };
+function bankSheet() {
+  const I = imp; if (!I) return; const m = $('#modal'); closeForm();
+  const dups = I.rows.filter(r => r.dup).length, xf = I.rows.filter(r => r.xfer && !r.dup).length;
+  m.innerHTML = `<div class="sheet"><div class="row between"><h2 style="margin:0">Bank statement</h2><button class="x" style="font-size:24px" onclick="impCancel()">✕</button></div>
+    <p class="mute">${I.rows.length} ${I.rows.length === 1 ? 'row' : 'rows'} found${I.more ? ` (the first 2,000; ${I.more} more were left out)` : ''}.${dups ? ` ${dups} ${dups === 1 ? 'looks like an entry you already have, so it is' : 'look like entries you already have, so they are'} unticked.` : ''}${xf ? ` ${xf} ${xf === 1 ? 'looks like a transfer or card payment; add it' : 'look like transfers or card payments; add those'} with ⇄ Move instead.` : ''} Nothing is added until you tap Add.</p>
+    <label class="fl"><span>Which account is this statement for?</span><select id="impAcct" onchange="impSet(this.value)">${[...bankList(), ...cardList()].map(a => `<option value="${a.id}" ${a.id === I.acct ? 'selected' : ''}>${esc(acctName(a.id))}</option>`).join('')}</select></label>
+    <div class="row" style="margin:10px 0"><button class="btn sec sm" onclick="impFlip()">⇅ In and out are backwards</button><button class="btn sec sm" onclick="impAll(true)">Tick all</button><button class="btn sec sm" onclick="impAll(false)">Untick all</button></div>
+    <div class="list">${I.rows.map((r, i) => `<label class="it" style="cursor:pointer"><input type="checkbox" class="pk" ${r.on ? 'checked' : ''} onchange="impTog(${i},this.checked)"><div class="main"><div class="t">${esc(r.note)}</div><div class="mute">${niceDate(r.date)} · ${esc(r.cat || 'no category')}${r.dup ? ' · <span class="amber">already in your Ledger?</span>' : r.xfer ? ' · <span class="amber">transfer or card payment?</span>' : ''}</div></div><div class="amt ${r.type === 'in' ? 'pos' : ''}">${r.type === 'in' ? '+' : '−'}${cur(r.amount)}</div></label>`).join('')}</div>
+    <div class="row between" style="margin-top:14px;position:sticky;bottom:-18px;background:inherit;padding:10px 0"><button class="btn sec" onclick="impCancel()">Cancel</button><button class="btn" id="impGo" onclick="impAdd()">${impLabel()}</button></div></div>`;
+  m.hidden = false; m.onclick = null;
+}
+function impTog(i, on) { if (!imp || !imp.rows[i]) return; imp.rows[i].on = !!on; const b = $('#impGo'); if (b) b.textContent = impLabel(); }
+function impAll(on) { if (!imp) return; imp.rows.forEach(r => { r.on = on; }); bankSheet(); }
+function impSet(a) { if (!imp || okAcct(a) !== a) return; imp.acct = a; bankMark(); bankSheet(); }
+function impFlip() { if (!imp) return; imp.flip = !imp.flip; bankMark(); bankSheet(); }
+function impCancel() { imp = null; closeForm(); }
+function impAdd() { if (!imp || staffMode) return;
+  const add = imp.rows.filter(r => r.on); if (!add.length) return;
+  add.forEach(r => S.tx.push({ id: uid(), type: r.type, amount: r.amount, cat: r.cat, note: r.note, acct: imp.acct, gst: 0, date: r.date }));
+  imp = null; closeForm(); tab = isPersonal() ? 'home' : 'money'; commit(); render();
+}
+function bankPick() { if (staffMode) return; $('#bankFile').value = ''; $('#bankFile').click(); }
+$('#bankFile').onchange = e => { const f = e.target.files && e.target.files[0]; if (!f) return; const r = new FileReader(); r.onload = () => bankOpen(String(r.result)); r.readAsText(f); };
 function exportStock() {
   const rows = [['Item #', 'Product', 'In stock', 'Cost each', 'Price each', 'Stock value (cost)']].concat([...S.items].sort((a, b) => a.num - b.num).map(i => [i.num, i.name, i.qty, i.cost, i.price, round(i.qty * i.cost)]));
   download(`stockpile-stock-${today()}.csv`, csv(rows), 'text/csv');
@@ -3458,9 +3576,12 @@ const V = {
       <label class="chk"><input type="checkbox" ${S.set.gst ? 'checked' : ''} onchange="S.set.gst=this.checked;save();render()"> Track GST</label>
       ${S.set.gst ? `<div class="row"><span class="mute">Rate %</span><input class="f" type="number" step="0.1" min="0" style="width:90px" value="${S.set.gstRate}" onchange="S.set.gstRate=parseFloat(this.value)||5;save()"></div>
       <p class="mute">Entries get an “Amount includes GST” tick box. Totals show under Ledger → Breakdown.</p>` : '<p class="mute">Off. Turn it on if you ever need it.</p>'}</div>
+    <div class="card" style="margin-bottom:12px"><b>Bring in a bank statement</b>
+      <p class="mute">Download a statement as a .csv file from your bank’s website, then pick it here. There is no bank login: the file is read on this phone and goes nowhere. You look it over before anything is added.</p>
+      <button class="btn" onclick="bankPick()">Choose a statement file (.csv)</button></div>
     <div class="card" style="margin-bottom:12px"><b>Open in Excel</b>
-      <p class="mute">Download your lists as files that Excel or Google Sheets can open.</p>
-      <div class="row"><button class="btn sec" onclick="exportMoney()">Ledger (.csv)</button>${isPersonal() ? '' : '<button class="btn sec" onclick="exportStock()">Stock list (.csv)</button>'}</div></div>
+      <p class="mute">Download your records as files that Excel or Google Sheets can open. These files are not locked: anyone who opens one can read it.</p>
+      <div class="row"><button class="btn" onclick="exportAll()">Everything (.csv)</button><button class="btn sec" onclick="exportMoney()">Ledger (.csv)</button>${isPersonal() ? '' : '<button class="btn sec" onclick="exportStock()">Stock list (.csv)</button>'}</div></div>
     <div class="card"><b>Start over</b><p class="mute">Erases everything in the tracker.</p><button class="btn out" onclick="wipe()">Erase all data</button></div>
     <p class="mute" style="text-align:center;margin-top:18px">StockPile version ${VERSION}</p>`;
   }

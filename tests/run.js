@@ -541,6 +541,29 @@ addTx('out',null,R1); ok(/Filled in from the photo/.test($('#modal').innerHTML) 
   setChart('cal',false); ok(!/Bill calendar/.test(V.budget()) && clean(JSON.parse(JSON.stringify(S))).set.chart.cal===false && /bill calendar on the Budget tab/.test(V.more()),'the bill calendar can be hidden');
   setChart('cal',true); ok(/Bill calendar/.test(V.budget()),'…and shown again from More');
   if(keepK) me.kind=keepK; else delete me.kind; S.tx=keepTx; S.rec=keepR; S.budgets=keepB; S.set=keepSet; showNums=keepSN; calDay=''; closeUndo(); }
+// export everything; bank statement import (3.19.0)
+{ const keepTx=S.tx, keepR=S.rec, keepL=S.learn, me=P.list.find(p=>p.id===P.current), keepK=me.kind; me.kind='personal'; S.tx=[]; S.rec=[]; S.learn={};
+  const rbc='"Account Type","Account Number","Transaction Date","Cheque Number","Description 1","Description 2","CAD$","USD$"\\nChequing,07702-5012345,11/2/2026,,"SAVE ON FOODS #123","",-82.50,,\\nChequing,07702-5012345,11/3/2026,,"PAYROLL DEPOSIT","ACME LTD",2100.00,,\\nChequing,07702-5012345,11/14/2026,,"TIM HORTONS #4521","",-4.75,,\\n';
+  let bp=bankParse(rbc); ok(bp.rows.length===3 && bp.signed && bp.rows[0].date==='2026-11-02' && bp.rows[0].v===-82.5 && bp.rows[1].v===2100 && /PAYROLL DEPOSIT ACME LTD/.test(bp.rows[1].desc),'a bank statement with headings is read');
+  bp=bankParse('11/02/2026,SAVE ON FOODS #123,82.50,,1917.50\\n11/03/2026,PAYROLL ACME,,2100.00,4017.50\\n11/05/2026,SHELL C12345,60.00,,3957.50\\n');
+  ok(bp.rows.length===3 && !bp.signed && bp.rows[0].v===-82.5 && bp.rows[1].v===2100 && bp.rows[2].v===-60 && /SHELL/.test(bp.rows[2].desc),'a statement with no headings and separate out and in columns is read');
+  bp=bankParse('Date,Description,Type of Transaction,Amount\\n2026-11-02,Walmart,Debit,45.00\\n2026-11-03,Payroll,Credit,2100.00\\n');
+  ok(bp.rows.length===2 && !bp.signed && bp.rows[0].v===-45 && bp.rows[1].v===2100,'a statement that says Debit or Credit in its own column is read');
+  bp=bankParse('Date,Description,Amount\\n14/11/2026,Coffee,-4.50\\n02/11/2026,Rent,"-1,400.00"\\n');
+  ok(bp.rows.length===2 && bp.rows[0].date==='2026-11-14' && bp.rows[1].date==='2026-11-02' && bp.rows[1].v===-1400,'day-first dates are spotted');
+  ok(bankDate('20261105')==='2026-11-05' && bankDate('05-Nov-2026')==='2026-11-05' && bankDate('Nov 5, 2026')==='2026-11-05' && bankDate('31/02/2026',true)==='' && bankNum('(1,234.56)')===-1234.56 && bankNum('$45.00 CR')===45 && bankNum('1 234,56')===1234.56 && isNaN(bankNum('07702-501')) && isNaN(bankNum('Rent')),'dates and amounts in the usual bank styles are understood');
+  ok(csvParse('a,"b,1",c\\r\\n"x ""y""",2,3').join('|')==='a,b,1,c|x "y",2,3','quoted cells in a spreadsheet file are read properly');
+  S.tx.push({id:'ex1',type:'out',amount:82.5,cat:'Groceries',note:'Save-On',acct:'bank',gst:0,date:'2026-11-01'});
+  bankOpen(rbc); let mh=$('#modal').innerHTML;
+  ok(imp && imp.rows[0].dup && !imp.rows[0].on && imp.rows[1].type==='in' && imp.rows[1].cat==='Pay' && imp.rows[2].on && imp.rows[2].note==='Tim Hortons' && imp.rows[2].cat==='Eating out' && /Bank statement/.test(mh) && /Add 2 entries/.test(mh) && /already in your Ledger/.test(mh) && S.tx.length===1,'the statement is shown first: stores and categories are guessed, and entries already in the Ledger are unticked');
+  impTog(2,false); ok(impCount()===1,'rows can be unticked'); impTog(2,true);
+  impAdd(); ok(imp===null && S.tx.length===3 && S.tx.some(t=>t.note==='Tim Hortons'&&t.amount===4.75&&t.type==='out'&&t.acct==='bank'&&t.date==='2026-11-14') && S.tx.some(t=>t.type==='in'&&t.amount===2100) && $('#undo').hidden===false,'Add brings the ticked rows into the Ledger, with Undo on offer');
+  bankOpen(rbc); ok(impCount()===0 && imp.rows.every(r=>r.dup),'bringing in the same statement twice adds nothing');
+  impSet('credit'); ok(imp.acct==='credit' && imp.rows[0].type==='in' && imp.rows[1].type==='out','the statement can be pointed at another account'); impFlip(); ok(imp.rows[1].type==='in','in and out can be flipped if they are backwards'); impCancel();
+  bankOpen('Date,Description,Amount\\n2026-11-09,PAYMENT - THANK YOU,-500.00\\n2026-11-10,NETFLIX.COM,-18.99\\n'); ok(imp.rows[0].xfer && !imp.rows[0].on && imp.rows[1].on,'card payments and transfers are left unticked'); impCancel();
+  lastAlert=''; bankOpen('hello,world\\nno,dates'); ok(/find dated amounts/.test(lastAlert) && imp===null,'a file that is not a statement is refused');
+  const A=csv(allRows()); ok(/LEDGER/.test(A) && /Tim Hortons/.test(A) && /ACCOUNTS/.test(A) && /Everything \\(\\.csv\\)/.test(V.more()) && /Choose a statement file/.test(V.more()),'everything can be exported as one spreadsheet file');
+  if(keepK) me.kind=keepK; else delete me.kind; S.tx=keepTx; S.rec=keepR; S.learn=keepL; closeUndo(); }
 { const keepTx=S.tx, keepB=S.budgets, keepSN=showNums, me=P.list.find(p=>p.id===P.current), keepK=me.kind; S.tx=[]; S.budgets={Groceries:200}; me.kind='personal';
   const d=today(); S.tx.push({id:'h1',type:'out',amount:80,cat:'Groceries',note:'Safeway',acct:'cash',gst:0,date:d},{id:'h2',type:'in',amount:900,cat:'Pay',note:'',acct:'cash',gst:0,date:d});
   tab='money'; render(); ok(tab==='home','personal books open the Ledger inside Home');
