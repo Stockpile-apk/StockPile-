@@ -104,6 +104,7 @@ body.dark .sheet .rc{color:var(--ink)}body.dark .sheet .rcs{color:var(--mute)}bo
   <button data-t="home">Home</button>
   <button data-t="sell">Sell</button>
   <button data-t="money">Ledger</button>
+  <button data-t="budget">Budget</button>
   <button data-t="receipts">Receipts</button>
   <button data-t="stock">Stock</button>
   <button data-t="debts">Owing</button>
@@ -129,7 +130,7 @@ body.dark .sheet .rc{color:var(--ink)}body.dark .sheet .rcs{color:var(--mute)}bo
 // The test copy (served from /beta/) keeps its data under separate names, so it can never touch the real app's data.
 const BETA = /\/beta\//.test((typeof location !== 'undefined' && location.pathname) || '');
 const KEY0 = (BETA ? 'beta_' : '') + 'money_inventory_tracker_v1', PKEY = (BETA ? 'beta_' : '') + 'stockpile_profiles';
-const VERSION = '3.11.0';
+const VERSION = '3.12.0';
 const okDark = v => v === true || v === false ? v : undefined;
 const fresh = () => ({ tx: [], items: [], debts: [], lastBackup: null, dirty: 0, auto: true, offRemind: true, lastSent: null, offSnooze: null, contacts: [], adj: [], rec: [], budgets: {}, staff: [], gone: {}, mm: {}, learn: {}, cards: [], banks: [], house: [], goals: [], open: {}, set: { gst: false, gstRate: 5 } });
 const defaultP = () => ({ list: [{ id: 'default', name: 'My business' }], current: 'default' });
@@ -1189,7 +1190,7 @@ function testSheet() {
 const isDark = () => P.dark === true || (P.dark == null && typeof matchMedia === 'function' && matchMedia('(prefers-color-scheme: dark)').matches);
 
 /* ---------- personal profiles: categories and budgets ---------- */
-const PCATS = [['Groceries', '🛒'], ['Eating out', '🍔'], ['Fuel', '⛽'], ['Vehicle', '🚗'], ['Hydro', '💡'], ['Natural gas', '🔥'], ['Phone & internet', '📱'], ['Rent or mortgage', '🏠'], ['Loans & credit cards', '💳'], ['Insurance', '🛡️'], ['Medical', '💊'], ['Pets', '🐾'], ['Household', '🧹'], ['Clothing', '👕'], ['Kids & family', '👪'], ['Entertainment', '🎬'], ['Subscriptions', '🔁'], ['Travel', '✈️'], ['Gifts & donations', '🎁'], ['Savings', '🏦'], ['Misc', '📦']];
+const PCATS = [['Groceries', '🛒'], ['Eating out', '🍔'], ['Fuel', '⛽'], ['Vehicle', '🚗'], ['Transportation', '🚌'], ['Hydro', '💡'], ['Natural gas', '🔥'], ['Phone & internet', '📱'], ['Rent or mortgage', '🏠'], ['Loans & credit cards', '💳'], ['Insurance', '🛡️'], ['Medical', '💊'], ['Pets', '🐾'], ['Household', '🧹'], ['Clothing', '👕'], ['Kids & family', '👪'], ['Entertainment', '🎬'], ['Subscriptions', '🔁'], ['Travel', '✈️'], ['Gifts & donations', '🎁'], ['Savings', '🏦'], ['Misc', '📦']];
 const PINCOME = ['Pay', 'Household', 'Side work', 'Benefits', 'Refunds', 'Other income'];
 const isPersonal = () => (P.list.find(p => p.id === P.current) || {}).kind === 'personal';
 const catIcon = c => (PCATS.find(x => x[0] === c) || [0, '•'])[1];
@@ -1201,35 +1202,36 @@ function budgetsForm() {
   }, '<div class="mute">Set a monthly limit for any category you want to keep an eye on. Leave the rest blank.</div>');
 }
 function personalHome(notes) {
-  const ver = `${verTag()}`;
-  const quick = `<div class="row bar" style="justify-content:center"><button class="btn" onclick="snapNew()">📷 Snap a receipt</button><button class="btn out" onclick="addTx('out')">− Money Out</button><button class="btn in" onclick="addTx('in')">+ Money In</button></div>`;
-  const grid = `<h3>Quick add</h3><div class="cats">${PCATS.map((c, i) => `<button class="cat" onclick="addTx('out',null,{cat:PCATS[${i}][0]})"><span>${c[1]}</span>${esc(c[0])}</button>`).join('')}</div>`;
-  if (!showNums) return `${notes}<div class="card" style="text-align:center;padding:24px 16px;margin-top:10px"><div style="font-size:42px">📦</div>
-      <h2 style="margin:8px 0 4px">Welcome back</h2><div class="mute">${new Date().toLocaleDateString('en-CA', { weekday: 'long', month: 'long', day: 'numeric' })}</div></div>
-    ${quick}${grid}<div style="text-align:center;margin-top:18px"><button class="btn sec" onclick="showNums=true;render()">👁 Show my summary</button></div>${ver}`;
+  const tog = `<button class="btn sec" onclick="showNums=!showNums;render()">${showNums ? '🙈 Hide' : '👁 Show'}</button>`;
   const mt = S.tx.filter(t => t.date.startsWith(thisMonth())), mIn = sum(mt.filter(t => t.type === 'in' && !isSav(t)), t => t.amount), outs = mt.filter(t => t.type === 'out' && !isSav(t)), mOut = sum(outs, t => t.amount), aside = setAside(thisMonth());
-  const cash = acctBal('cash'), bank = bankTotal(), od = S.debts.filter(overdue), mn = new Date().toLocaleDateString('en-CA', { month: 'long' });
+  const cash = acctBal('cash'), od = S.debts.filter(overdue), mn = new Date().toLocaleDateString('en-CA', { month: 'long' });
   const iOwe = sum(S.debts.filter(d => d.dir === 'owe'), d => Math.max(bal(d), 0)), owedMe = sum(S.debts.filter(d => d.dir === 'owed'), d => Math.max(bal(d), 0));
-  const spent = Object.fromEntries(groupBy(outs, t => t.cat)), B = budgetsNow(), cats = [...new Set([...Object.keys(spent), ...Object.keys(B)])].sort((a, b) => (spent[b] || 0) - (spent[a] || 0)), top = Math.max(...Object.values(spent), 1);
-  return `${notes}<div class="row bar"><button class="btn" onclick="snapNew()">📷 Snap a receipt</button><button class="btn out" onclick="addTx('out')">− Out</button><button class="btn in" onclick="addTx('in')">+ In</button><button class="btn sec" onclick="showNums=false;render()">🙈 Hide</button></div>
+  const spent = Object.fromEntries(groupBy(outs, t => t.cat)), B = budgetsNow(), U = usual(), cats = [...new Set([...Object.keys(spent), ...Object.keys(B)])].sort((a, b) => (spent[b] || 0) - (spent[a] || 0)), top = Math.max(...Object.values(spent), 1);
+  return `${notes}<div class="row bar"><button class="btn" onclick="snapNew()">📷 Snap a receipt</button><button class="btn out" onclick="addTx('out')">− Out</button><button class="btn in" onclick="addTx('in')">+ In</button><button class="btn sec" onclick="addMove()">⇄ Move</button>${tog}</div>
+    <h3>${mn}</h3>
     <div class="grid">
-      <div class="card" onclick="acctSheet('cash')" style="cursor:pointer"><div class="lbl">Cash on hand</div><div class="big ${cash < 0 ? 'neg' : ''}">${fmt(cash)}</div></div>
+      <div class="card"><div class="lbl">In</div><div class="big pos">${fmt(mIn)}</div></div>
+      <div class="card"><div class="lbl">Out</div><div class="big neg">${fmt(mOut)}</div></div>
+      ${aside ? `<div class="card"><div class="lbl">${aside > 0 ? 'Set aside' : 'Taken from savings'}</div><div class="big">${fmt(Math.abs(aside))}</div></div>` : ''}
+      <div class="card"><div class="lbl">Left over</div><div class="big ${showNums && mIn - mOut - aside < 0 ? 'neg' : 'pos'}">${fmt(mIn - mOut - aside)}</div></div>
+    </div>
+    <div class="row between" style="margin-top:22px"><h3 style="margin:0">Spending habits</h3><button class="btn sec sm" onclick="tab='budget';render();window.scrollTo(0,0)">Budgets</button></div>
+    <div class="card" style="margin-top:8px">${cats.length ? cats.map(c => { const s = spent[c] || 0, b = B[c] || 0, over = b > 0 && s > b, u = U.months ? U.cats[c] || 0 : 0;
+      return `<div class="br"><div class="row between"><span>${catIcon(c)} ${esc(c)}</span><b class="${over && showNums ? 'neg' : ''}">${fmt(s)}${b ? ' of ' + fmt(b) : ''}</b></div>
+        <div class="track"><div class="fill" style="width:${showNums ? Math.max(Math.min((b ? s / b : s / top) * 100, 100), s > 0 ? 2 : 0) : 0}%;background:${over ? 'var(--red)' : 'var(--accent)'}"></div></div>${u ? `<div class="mute" style="font-size:12px">usual month ${fmt(u)}</div>` : ''}</div>`; }).join('') : '<div class="empty">Nothing spent yet this month.</div>'}</div>
+    ${adviceCard()}
+    <h3>Accounts</h3>
+    <div class="grid">
+      <div class="card" onclick="acctSheet('cash')" style="cursor:pointer"><div class="lbl">Cash on hand</div><div class="big ${showNums && cash < 0 ? 'neg' : ''}">${fmt(cash)}</div></div>
       ${bankTiles()}
       ${cardTiles()}
-      <div class="card"><div class="lbl">In – ${mn}</div><div class="big pos">${fmt(mIn)}</div></div>
-      <div class="card"><div class="lbl">Out – ${mn}</div><div class="big neg">${fmt(mOut)}</div></div>
-      ${aside ? `<div class="card"><div class="lbl">${aside > 0 ? 'Set aside' : 'Taken from savings'} – ${mn}</div><div class="big">${fmt(Math.abs(aside))}</div></div>` : ''}
-      <div class="card"><div class="lbl">Left over – ${mn}</div><div class="big ${mIn - mOut - aside < 0 ? 'neg' : 'pos'}">${fmt(mIn - mOut - aside)}</div></div>
-      <div class="card"><div class="lbl">I owe</div><div class="big ${iOwe ? 'neg' : ''}">${fmt(iOwe)}</div></div>
-      ${owedMe ? `<div class="card"><div class="lbl">Owed to me</div><div class="big pos">${fmt(owedMe)}</div></div>` : ''}
+      <div class="card" onclick="tab='debts';render()" style="cursor:pointer"><div class="lbl">I owe</div><div class="big ${showNums && iOwe ? 'neg' : ''}">${fmt(iOwe)}</div></div>
+      ${owedMe ? `<div class="card" onclick="tab='debts';render()" style="cursor:pointer"><div class="lbl">Owed to me</div><div class="big pos">${fmt(owedMe)}</div></div>` : ''}
     </div>
-    ${reportNudge()}${houseCard()}${goalsCard()}${adviceCard()}
-    <div class="row between" style="margin-top:22px"><h3 style="margin:0">Spending in ${mn}</h3><button class="btn sec sm" onclick="budgetsForm()">Set budgets</button></div>
-    <div class="card" style="margin-top:8px">${cats.length ? cats.map(c => { const s = spent[c] || 0, b = B[c] || 0, over = b > 0 && s > b;
-      return `<div class="br"><div class="row between"><span>${catIcon(c)} ${esc(c)}</span><b class="${over ? 'neg' : ''}">${fmt(s)}${b ? ' of ' + fmt(b) : ''}</b></div>
-        <div class="track"><div class="fill" style="width:${showNums ? Math.max(Math.min((b ? s / b : s / top) * 100, 100), s > 0 ? 2 : 0) : 0}%;background:${over ? 'var(--red)' : 'var(--accent)'}"></div></div></div>`; }).join('') : '<div class="empty">Nothing spent yet this month.</div>'}</div>
+    ${reportNudge()}${houseCard()}${goalsCard()}
     ${od.length ? `<h3>⚠️ Overdue</h3><div class="list">${od.map(d => `<div class="it"><div class="main" onclick="tab='debts';render()"><div class="t">${esc(d.name)}</div><div class="mute">${d.dir === 'owe' ? 'I owe them' : 'Owes me'} · was due ${niceDate(d.due)}</div></div><div class="amt neg">${fmt(bal(d))}</div></div>`).join('')}</div>` : ''}
-    <h3>Latest entries</h3><div class="list">${S.tx.length ? [...S.tx].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 6).map(txRow).join('') : '<div class="empty">Nothing yet. Tap a category above, or snap a receipt.</div>'}</div>${ver}`;
+    <h3>Quick add</h3><div class="cats">${PCATS.map((c, i) => `<button class="cat" onclick="addTx('out',null,{cat:PCATS[${i}][0]})"><span>${c[1]}</span>${esc(c[0])}</button>`).join('')}</div>
+    ${V.money(true)}${verTag()}`;
 }
 
 /* ---------- household: people who chip in a set amount toward bills each month ---------- */
@@ -1340,7 +1342,7 @@ function adviceCard() {
   if (!isPersonal()) return '';
   const A = advice(); if (!A.warn.length && !A.tips.length && !A.suggTip) return '';
   const show = [...A.warn.map(w => ['⚠️', w]), ...(A.suggTip ? [['💡', A.suggTip]] : []), ...A.tips.map(t => ['💡', t])].slice(0, 3);
-  return `<div class="row between" style="margin-top:22px"><h3 style="margin:0">Budget check</h3><button class="btn sec sm" onclick="adviceSheet()">See all</button></div>
+  return `<div class="row between" style="margin-top:22px"><h3 style="margin:0">Budget check</h3><button class="btn sec sm" onclick="tab='budget';render();window.scrollTo(0,0)">See all</button></div>
     <div class="card" style="margin-top:8px">${show.map(([i, x]) => `<div style="padding:6px 0">${i} ${x}</div>`).join('')}</div>`;
 }
 function adviceSheet() {
@@ -1353,6 +1355,13 @@ function adviceSheet() {
     ${A.tips.length ? `<h3>💡 Tips</h3>${A.tips.map(t => `<div class="card" style="margin-bottom:8px">${t}</div>`).join('')}` : ''}
     <p class="mute">Worked out on this phone from your own entries. The more you track, the better these get.</p></div>`;
   m.hidden = false; m.onclick = e => { if (e.target === m) closeForm(); };
+}
+let budgetAll = false, bCats = [];
+function budgetOne(i) {
+  const c = bCats[i]; if (!c) return; const B = S.budgets || {}, s = catsIn(thisMonth())[c] || 0, U = usual(), u = U.months ? U.cats[c] || 0 : 0;
+  form(`${catIcon(c)} ${c}`, [{ k: 'b', l: 'Monthly budget ($)', t: 'money', v: B[c] || '', ph: 'no limit' }], v => {
+    S.budgets = { ...(S.budgets || {}) }; if (v.b > 0) S.budgets[c] = round(v.b); else delete S.budgets[c];
+  }, `<div class="mute">Spent this month: ${cur(s)}${u ? ` · usual month: ${cur(u)}` : ''}. Leave it blank for no limit.</div>`);
 }
 function useSugg() { const A = advice(); S.budgets = { ...(S.budgets || {}), ...A.sugg }; closeForm(); commit(); render(); }
 
@@ -1590,11 +1599,12 @@ function removePic(id) {
 const CHAINS = `Costco Gas|Fuel|costcogas,costcogasoline;Save-On-Foods|Groceries|saveonfoods,saveon;Real Canadian Superstore|Groceries|superstore,realcanadian;Walmart|Groceries|walmart;Costco|Groceries|costco,costcowholesale;Safeway|Groceries|safeway;No Frills|Groceries|nofrills;FreshCo|Groceries|freshco;Thrifty Foods|Groceries|thriftyfoods,thrifty;IGA|Groceries|iga;Buy-Low Foods|Groceries|buylow;T&T Supermarket|Groceries|ttsupermarket;Loblaws|Groceries|loblaws;Sobeys|Groceries|sobeys;Whole Foods|Groceries|wholefoods;Nesters Market|Groceries|nesters;Choices Markets|Groceries|choicesmarket;Fresh St. Market|Groceries|freshstmarket;Urban Fare|Groceries|urbanfare;PriceSmart Foods|Groceries|pricesmart;Quality Foods|Groceries|qualityfoods;H Mart|Groceries|hmart;Your Independent Grocer|Groceries|independentgrocer;Giant Tiger|Groceries|gianttiger;7-Eleven|Groceries|7eleven,seveneleven;Petro-Canada|Fuel|petrocanada,petrocan;Shell|Fuel|shell;Esso|Fuel|esso;Chevron|Fuel|chevron;Husky|Fuel|husky;Co-op Gas|Fuel|coopgas,cooppetroleum;Mobil|Fuel|mobil;Fas Gas|Fuel|fasgas;Ultramar|Fuel|ultramar;Circle K|Fuel|circlek;Pioneer|Fuel|pioneer;Super Save Gas|Fuel|supersave;Canco|Fuel|canco;Tim Hortons|Eating out|timhortons,timhorton;McDonald's|Eating out|mcdonalds,mcdonald;Starbucks|Eating out|starbucks;A&W|Eating out|aw;Subway|Eating out|subway;Wendy's|Eating out|wendys;Taco Bell|Eating out|tacobell;Burger King|Eating out|burgerking;Dairy Queen|Eating out|dairyqueen;KFC|Eating out|kfc;Triple O's|Eating out|tripleos;White Spot|Eating out|whitespot;Boston Pizza|Eating out|bostonpizza;Pizza Hut|Eating out|pizzahut;Domino's|Eating out|dominos;Panago|Eating out|panago;Freshii|Eating out|freshii;Chipotle|Eating out|chipotle;Popeyes|Eating out|popeyes;Mary Brown's|Eating out|marybrowns;Denny's|Eating out|dennys;Earls|Eating out|earls;Cactus Club|Eating out|cactusclub;Browns Socialhouse|Eating out|brownssocial;The Keg|Eating out|thekeg;Milestones|Eating out|milestones;Moxie's|Eating out|moxies;JOEY|Eating out|joeyrestaurant;Old Spaghetti Factory|Eating out|oldspaghetti;Waves Coffee|Eating out|wavescoffee;Blenz|Eating out|blenz;JJ Bean|Eating out|jjbean;Booster Juice|Eating out|boosterjuice;Uber Eats|Eating out|ubereats;DoorDash|Eating out|doordash;SkipTheDishes|Eating out|skipthedishes;Church's Chicken|Eating out|churchschicken;Harvey's|Eating out|harveys;Five Guys|Eating out|fiveguys;Nando's|Eating out|nandos;Home Depot|Household|homedepot;RONA|Household|rona;Canadian Tire|Household|canadiantire;Lowe's|Household|lowes;Home Hardware|Household|homehardware;IKEA|Household|ikea;Dollarama|Household|dollarama;Dollar Tree|Household|dollartree;Staples|Household|staples;Best Buy|Household|bestbuy;HomeSense|Household|homesense;Michaels|Household|michaels;Windsor Plywood|Household|windsorplywood;Slegg Building Materials|Household|slegg;Dick's Lumber|Household|dickslumber;Princess Auto|Household|princessauto;Lee Valley|Household|leevalley;Amazon|Household|amazon;Shoppers Drug Mart|Medical|shoppersdrugmart,shoppersdrug;London Drugs|Medical|londondrugs;Rexall|Medical|rexall;Pharmasave|Medical|pharmasave;LifeLabs|Medical|lifelabs;PetSmart|Pets|petsmart;Pet Valu|Pets|petvalu;Bosley's|Pets|bosleys;Global Pet Foods|Pets|globalpet;Mud Bay|Pets|mudbay;Lordco|Vehicle|lordco;NAPA|Vehicle|napa;Kal Tire|Vehicle|kaltire;OK Tire|Vehicle|oktire;Fountain Tire|Vehicle|fountaintire;Mr. Lube|Vehicle|mrlube;Jiffy Lube|Vehicle|jiffylube;Midas|Vehicle|midas;ICBC|Vehicle|icbc;Impark|Vehicle|impark;EasyPark|Vehicle|easypark;Winners|Clothing|winners;Mark's|Clothing|markswork,marksw;Old Navy|Clothing|oldnavy;Sport Chek|Clothing|sportchek;H&M|Clothing|hm;Value Village|Clothing|valuevillage;Marshalls|Clothing|marshalls;Lululemon|Clothing|lululemon;Simons|Clothing|simons;Reitmans|Clothing|reitmans;TELUS|Phone & internet|telus;Rogers|Phone & internet|rogers;Bell|Phone & internet|bell;Shaw|Phone & internet|shaw;Freedom Mobile|Phone & internet|freedommobile;Koodo|Phone & internet|koodo;Fido|Phone & internet|fido;Virgin Plus|Phone & internet|virginplus;Public Mobile|Phone & internet|publicmobile;Chatr|Phone & internet|chatr;BC Hydro|Hydro|bchydro;FortisBC|Natural gas|fortisbc,fortis;Cineplex|Entertainment|cineplex;Landmark Cinemas|Entertainment|landmarkcinema;BC Liquor Store|Entertainment|bcliquor,liquorstore;Liquor Depot|Entertainment|liquordepot;Netflix|Subscriptions|netflix;Spotify|Subscriptions|spotify;Disney+|Subscriptions|disneyplus;BC Ferries|Travel|bcferries;Air Canada|Travel|aircanada;WestJet|Travel|westjet;Airbnb|Travel|airbnb;Expedia|Travel|expedia`.split(';').map(x => { const [name, cat, al] = x.split('|'); return { name, cat, al: al.split(',') }; });
 const CITIES = ['North Vancouver', 'West Vancouver', 'Vancouver', 'Port Coquitlam', 'Coquitlam', 'Port Moody', 'Maple Ridge', 'Pitt Meadows', 'New Westminster', 'Burnaby', 'Richmond', 'Surrey', 'Delta', 'Ladner', 'Tsawwassen', 'White Rock', 'Langley', 'Aldergrove', 'Abbotsford', 'Mission', 'Chilliwack', 'Agassiz', 'Harrison Hot Springs', 'Hope', 'Squamish', 'Whistler', 'Sechelt', 'Gibsons', 'West Kelowna', 'Kelowna', 'Penticton', 'Vernon', 'Kamloops', 'Salmon Arm', 'Merritt', 'Osoyoos', 'Oliver', 'Prince George', 'Nanaimo', 'Victoria', 'Langford', 'Duncan', 'Courtenay', 'Campbell River', 'Parksville', 'Cranbrook', 'Nelson', 'Fort St. John', 'Dawson Creek', 'Terrace', 'Prince Rupert', 'Williams Lake', 'Quesnel', 'Calgary', 'Edmonton', 'Red Deer', 'Lethbridge', 'Regina', 'Saskatoon', 'Winnipeg', 'Toronto', 'Ottawa', 'Montreal', 'Halifax', 'Bellingham', 'Blaine', 'Seattle'];
 const CAT_HINTS = [['Fuel', /petro|\bshell\b|\besso\b|chevron|husky|co-?op gas|\bmobil\b|fas gas|gas bar|\bfuel\b|unleaded|diesel/i],
-  ['Eating out', /tim hortons|mcdonald|starbucks|a&w|subway|wendy|taco bell|burger|pizza|restaurant|cafe|sushi|\bpub\b|grill|diner|dairy queen|\bkfc\b|triple o/i],
+  ['Eating out', /tim hortons|mcdonald|starbucks|a&w|subway|wendy|taco bell|burger|pizza|restaurant|cafe|sushi|\bpub\b|grill|diner|dairy queen|\bkfc\b|triple o|uber ?eats|doordash|skip ?the ?dishes/i],
   ['Groceries', /save.?on|superstore|walmart|costco|safeway|no frills|freshco|thrifty|\biga\b|grocer|buy.?low|t&t|loblaws|sobeys|produce/i],
   ['Hydro', /bc hydro|hydro one|\bhydro\b/i], ['Natural gas', /fortis/i], ['Phone & internet', /telus|rogers|\bbell\b|\bshaw\b|freedom mobile|koodo|\bfido\b|virgin plus/i],
   ['Medical', /pharma|shoppers drug|london drugs|rexall|clinic|dental|optical/i], ['Pets', /petsmart|pet ?valu|bosley|veterinar|\bvet\b|pet food/i],
-  ['Household', /home depot|\brona\b|canadian tire|\blowe'?s\b|home hardware|ikea|dollarama|hardware|lumber|plywood|building suppl/i], ['Vehicle', /auto ?parts|lordco|\bnapa\b|\btires?\b|oil change|icbc|car wash|parking/i],
+  ['Household', /home depot|\brona\b|canadian tire|\blowe'?s\b|home hardware|ikea|dollarama|hardware|lumber|plywood|building suppl/i], ['Vehicle', /auto ?parts|lordco|\bnapa\b|\btires?\b|oil change|icbc|car wash/i],
+  ['Transportation', /translink|compass card|skytrain|\bbus\b|\buber\b(?! ?eats)|\blyft\b|taxi|\bcab\b|parking|impark|easypark|paybyphone|bc ferries|\bferry\b|\btolls?\b|\bmodo\b|evo car/i],
   ['Clothing', /winners|\bmark'?s\b|old navy|sport ?chek|h&m|clothing/i], ['Insurance', /insurance/i], ['Subscriptions', /netflix|spotify|disney\+|prime video|subscription/i], ['Entertainment', /cineplex|theatre|bowling|\bgolf\b|liquor/i]];
 const guessCat = text => { const hit = CAT_HINTS.find(h => h[1].test(text)); return hit ? hit[0] : ''; };
 // Business books use their own category names.
@@ -2808,12 +2818,6 @@ const V = {
     if (isPersonal()) return personalHome(warn + backupNote + offNote);
     const quick = `<button class="btn in" onclick="addTx('in')">+ Money In</button><button class="btn out" onclick="addTx('out')">− Money Out</button>
       ${S.items.length ? `<button class="btn" onclick="tab='sell';render()">Sell</button>` : ''}`;
-    if (!showNums) return `${warn}${backupNote}${offNote}
-    <div class="card" style="text-align:center;padding:30px 16px;margin-top:10px"><div style="font-size:46px">📦</div>
-      <h2 style="margin:8px 0 4px">Welcome back</h2><div class="mute">${new Date().toLocaleDateString('en-CA', { weekday: 'long', month: 'long', day: 'numeric' })}</div></div>
-    <div class="row bar" style="justify-content:center">${quick}</div>
-    <div style="text-align:center;margin-top:18px"><button class="btn sec" onclick="showNums=true;render()">👁 Show my summary</button></div>
-    ${verTag()}`;
     const m = thisMonth(), mt = S.tx.filter(t => t.date.startsWith(m));
     const cash = acctBal('cash'), bank = bankTotal();
     const mIn = sum(mt.filter(t => t.type === 'in'), t => t.amount), mOut = sum(mt.filter(t => t.type === 'out'), t => t.amount);
@@ -2824,7 +2828,7 @@ const V = {
     const low = S.items.filter(i => i.low > 0 && i.qty <= i.low), od = S.debts.filter(overdue);
     const mn = new Date().toLocaleDateString('en-CA', { month: 'long' });
     return `${warn}${backupNote}${offNote}
-    <div class="row bar">${quick}<button class="btn sec" onclick="showNums=false;render()">🙈 Hide</button></div>
+    <div class="row bar">${quick}<button class="btn sec" onclick="showNums=!showNums;render()">${showNums ? '🙈 Hide' : '👁 Show'}</button></div>
     <div class="grid">
       <div class="card" onclick="acctSheet('cash')" style="cursor:pointer"><div class="lbl">Cash on hand</div><div class="big ${cash < 0 ? 'neg' : ''}">${fmt(cash)}</div></div>
       ${bankTiles()}
@@ -2892,7 +2896,7 @@ const V = {
       <span class="mute">${rcShown().length} of ${all.length}</span></div>` : ''}
     <div id="rcBody">${rcBodyHTML()}</div>`;
   },
-  money() {
+  money(inHome) {
     const months = [...new Set(S.tx.map(t => t.date.slice(0, 7)))].sort().reverse();
     let list = [...S.tx];
     if (moneyFilter === 'month') list = list.filter(t => t.date.startsWith(thisMonth()));
@@ -2926,21 +2930,49 @@ const V = {
         <div class="card"><div class="lbl">Paid on purchases</div><div class="big">${fmt(gp)}</div></div>
         <div class="card"><div class="lbl">${gc - gp >= 0 ? 'Owing' : 'Refund'}</div><div class="big">${fmt(Math.abs(gc - gp))}</div></div></div>` : ''}`;
     }
-    return `<h2>Ledger</h2>
-    <div class="row bar"><button class="btn in" onclick="addTx('in')">+ In</button><button class="btn out" onclick="addTx('out')">− Out</button><button class="btn sec" onclick="addMove()">⇄ Move</button>${isPersonal() ? '' : `<button class="btn sec" onclick="tab='receipts';render()">📎 Receipts</button>`}</div>
+    const head = inHome ? '<h3 style="margin-top:22px">Entries</h3>' : `<h2>Ledger</h2>
+    <div class="row bar"><button class="btn in" onclick="addTx('in')">+ In</button><button class="btn out" onclick="addTx('out')">− Out</button><button class="btn sec" onclick="addMove()">⇄ Move</button>${isPersonal() ? '' : `<button class="btn sec" onclick="tab='receipts';render()">📎 Receipts</button>`}</div>`;
+    return `${head}
     <div class="row bar"><select class="f" onchange="moneyFilter=this.value;render()">
       <option value="month" ${moneyFilter === 'month' ? 'selected' : ''}>This month</option>
       <option value="all" ${moneyFilter === 'all' ? 'selected' : ''}>Everything</option>
       ${months.filter(m => m !== thisMonth()).map(m => `<option value="${m}" ${moneyFilter === m ? 'selected' : ''}>${label(m)}</option>`).join('')}
     </select>
     ${accts.length > 2 || moneyAcct ? `<select class="f" onchange="moneyAcct=this.value;render()"><option value="">All accounts</option>${accts.map(a => `<option value="${a[0]}" ${moneyAcct === a[0] ? 'selected' : ''}>${esc(a[1])}</option>`).join('')}</select>` : ''}
-    ${moneyView === 'list' && !selMode && list.length ? '<button class="btn sec sm" onclick="selToggleMode()">☑ Select</button>' : ''}<button class="btn sec sm" onclick="selMode=false;sel.clear();moneyView=moneyView==='list'?'break':'list';render()">${moneyView === 'list' ? '📊 Breakdown' : '📋 Entries'}</button>${eye()}</div>
+    ${moneyView === 'list' && !selMode && list.length ? '<button class="btn sec sm" onclick="selToggleMode()">☑ Select</button>' : ''}<button class="btn sec sm" onclick="selMode=false;sel.clear();moneyView=moneyView==='list'?'break':'list';render()">${moneyView === 'list' ? '📊 Breakdown' : '📋 Entries'}</button>${inHome ? '' : eye()}</div>
     ${moneyView === 'list' ? `<div class="row bar">${searchBox('ledgerQ', ledgerQ, "ledgerQ=this.value;$('#ledgerBody').innerHTML=ledgerBodyHTML()", 'Search entries')}</div>` : ''}
-    <div class="grid bar">
+    ${inHome && moneyFilter === 'month' && !moneyAcct ? '' : `<div class="grid bar">
       <div class="card"><div class="lbl">In</div><div class="big pos">${fmt(i)}</div></div>
       <div class="card"><div class="lbl">Out</div><div class="big neg">${fmt(o)}</div></div>
       <div class="card"><div class="lbl">Difference</div><div class="big ${i - o < 0 ? 'neg' : 'pos'}">${fmt(i - o)}</div></div>
-    </div>${body}`;
+    </div>`}${body}`;
+  },
+  budget() {
+    if (!isPersonal()) return V.home();
+    const ym = thisMonth(), mn = new Date().toLocaleDateString('en-CA', { month: 'long' }), B = budgetsNow(), now = catsIn(ym), U = usual(), A = advice(), sg = Object.entries(A.sugg);
+    const day = +today().slice(8), left = daysIn(ym) - day + 1;
+    const all = budgetCats(), shown = budgetAll ? all : all.filter(c => B[c] > 0 || now[c] > 0);
+    shown.sort((a, b) => ((B[b] > 0) - (B[a] > 0)) || (now[b] || 0) - (now[a] || 0));
+    bCats = shown;
+    const totB = sum(Object.values(B), x => x), totS = sum(Object.keys(B), c => now[c] || 0);
+    return `<h2>Budget</h2>
+    <div class="row bar"><button class="btn" onclick="budgetsForm()">Set all budgets</button>${eye()}</div>
+    ${totB ? `<div class="grid bar">
+      <div class="card"><div class="lbl">Budgeted – ${mn}</div><div class="big">${fmt(totB)}</div></div>
+      <div class="card"><div class="lbl">Spent so far</div><div class="big ${showNums && totS > totB ? 'neg' : ''}">${fmt(totS)}</div></div>
+      <div class="card"><div class="lbl">${totS > totB ? 'Over by' : 'Left to spend'}</div><div class="big ${showNums && totS > totB ? 'neg' : 'pos'}">${fmt(Math.abs(totB - totS))}</div></div></div>` : ''}
+    <h3>Tap a category to set its budget</h3>
+    <div class="card">${shown.length ? shown.map((c, i) => { const s = now[c] || 0, b = B[c] || 0, over = b > 0 && s > b, u = U.months ? U.cats[c] || 0 : 0;
+      const sub = [b ? (over ? `${fmt(s - b)} over` : `${fmt(b - s)} left · about ${fmt((b - s) / left)} a day`) : 'no budget', u ? `usual month ${fmt(u)}` : ''].filter(Boolean).join(' · ');
+      return `<div class="br" style="cursor:pointer" onclick="budgetOne(${i})"><div class="row between"><span>${catIcon(c)} ${esc(c)}</span><b class="${over && showNums ? 'neg' : ''}">${fmt(s)}${b ? ' of ' + fmt(b) : ''}</b></div>
+        <div class="track"><div class="fill" style="width:${showNums && b ? Math.max(Math.min(s / b * 100, 100), s > 0 ? 2 : 0) : 0}%;background:${over ? 'var(--red)' : 'var(--accent)'}"></div></div><div class="mute" style="font-size:12px">${sub}</div></div>`; }).join('') : '<div class="empty">No budgets or spending yet this month.</div>'}
+      <p style="margin:10px 0 0"><a href="#" onclick="event.preventDefault();budgetAll=!budgetAll;render()">${budgetAll ? 'Show only the ones in use' : 'Show all categories'}</a></p></div>
+    ${sg.length ? `<h3>Suggested budgets</h3><div class="card"><p class="mute" style="margin-top:0">From your last ${U.months} month${U.months > 1 ? 's' : ''} of spending.</p>${sg.map(([c, v]) => `<div class="row between" style="padding:4px 0"><span>${catIcon(c)} ${esc(c)}</span><b>${fmt(v)}</b></div>`).join('')}
+      <button class="btn" style="margin-top:8px" onclick="useSugg()">Use these budgets</button></div>` : ''}
+    ${A.warn.length ? `<h3>⚠️ Warnings</h3>${A.warn.map(w => `<div class="note">${w}</div>`).join('')}` : ''}
+    ${A.tips.length ? `<h3>💡 Tips</h3>${A.tips.map(t => `<div class="card" style="margin-bottom:8px">${t}</div>`).join('')}` : ''}
+    ${goalsCard() || `<div class="row between" style="margin-top:22px"><h3 style="margin:0">🎯 Goals</h3><button class="btn sec sm" onclick="goalForm()">+ Goal</button></div><div class="card mute" style="margin-top:8px">Save toward something — a trip, a car, an emergency fund.</div>`}
+    <p class="mute">Worked out on this phone from your own entries. The more you track, the better these get.</p>`;
   },
   stock() {
     return `<h2>Stock</h2>
@@ -3050,10 +3082,10 @@ const V = {
 };
 function render() {
   if (recDay !== today()) { recDay = today(); if (applyRecurring()) save(); }
-  const pers = isPersonal(); if (pers && (tab === 'sell' || tab === 'stock')) tab = 'home';
+  const pers = isPersonal(); if (pers && (tab === 'sell' || tab === 'stock' || tab === 'money')) tab = 'home'; if (!pers && tab === 'budget') tab = 'home';
   if (staffMode && !staffTabs().includes(tab)) tab = 'sell';
   document.body.classList.toggle('dark', isDark()); document.body.classList.toggle('staff', staffMode);
-  document.querySelectorAll('#nav button').forEach(b => { const t = b.dataset.t; b.hidden = staffMode ? !staffTabs().includes(t) : pers ? (t === 'sell' || t === 'stock') : t === 'receipts'; b.classList.toggle('on', t === tab); });
+  document.querySelectorAll('#nav button').forEach(b => { const t = b.dataset.t; b.hidden = staffMode ? !staffTabs().includes(t) : pers ? (t === 'sell' || t === 'stock' || t === 'money') : (t === 'receipts' || t === 'budget'); b.classList.toggle('on', t === tab); });
   $('#hdr').innerHTML = `<span>📦 StockPile${BETA ? ' <span class="beta">TEST COPY</span>' : ''}${link && link.open ? ' 🔗' : ''}</span>` + (staffMode ? `<button onclick="lockNow()">🔒 ${esc(staff ? staff.who : 'Staff')} · Lock</button>` : `<select id="profSel" aria-label="Switch books" onchange="switchProfile(this.value)">${P.list.map(p => `<option value="${p.id}" ${p.id === P.current ? 'selected' : ''}>${isPriv(p.id) ? '🔒 ' : ''}${p.share ? '⇄ ' : ''}${esc(p.name)}${p.kind === 'personal' ? ' (personal)' : ''}</option>`).join('')}</select>`);
   document.body.classList.toggle('setup', firstRun);
   $('#view').innerHTML = firstRun ? setupCard() : needKey() ? privCard() : V[tab]();

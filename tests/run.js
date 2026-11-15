@@ -325,7 +325,7 @@ addTx('out',null,{cat:'Fuel'}); ok(/value="Fuel"/.test($('#modal').innerHTML) &&
 F('amount',120); F('cat','Groceries'); F('note','Save-On'); F('acct','bank'); F('date',today()); SAVE();
 S.tx.push({id:'pp2',type:'out',amount:40,cat:'Fuel',acct:'cash',gst:0,date:today()},{id:'pp3',type:'in',amount:900,cat:'Pay',acct:'bank',gst:0,date:today()});
 S.budgets={Groceries:100,Fuel:200}; showNums=true; ph=V.home();
-ok(/\\$120\\.00 of \\$100\\.00/.test(ph) && /\\$40\\.00 of \\$200\\.00/.test(ph) && /Spending in/.test(ph) && !/Profit on sales|Stock value/.test(ph),'personal summary shows spending against budgets, no business figures');
+ok(/\\$120\\.00 of \\$100\\.00/.test(ph) && /\\$40\\.00 of \\$200\\.00/.test(ph) && /Spending habits/.test(ph) && !/Profit on sales|Stock value/.test(ph),'personal summary shows spending against budgets, no business figures');
 ok(/class="neg">\\$120\\.00 of/.test(ph),'going over a budget is flagged');
 budgetsForm(); budgetCats().forEach((c,i)=>F('b'+i,c==='Pets'?75:'')); SAVE(); ok(Object.keys(S.budgets).length===1 && S.budgets.Pets===75,'budgets can be set per category');
 ok(clean(JSON.parse(JSON.stringify(S))).budgets.Pets===75 && Object.keys(clean({budgets:{'<x>':-5,ok:'3'}}).budgets).join()==='ok','budgets survive reload and are cleaned');
@@ -450,6 +450,20 @@ addTx('out',null,R1); ok(/Filled in from the photo/.test($('#modal').innerHTML) 
   ok(R.out>=50 && R.stores.some(x=>x[0]==='Safeway') && /By category/.test(reportHTML(R)) && /Left over/.test(reportText(R)),'the monthly report adds up the month');
   reportSheet(ym); ok(/Print/.test($('#modal').innerHTML),'the report can be printed or shared'); closeForm();
   S.tx=keepTx; S.rec=keepR; S.cards=keepC; S.debts=keepD; S.goals=keepG; S.open={}; showNums=keepSN; }
+// 3.12.0: Home and Ledger together, Budget tab, Transportation category
+{ const keepTx=S.tx, keepB=S.budgets, keepSN=showNums, me=P.list.find(p=>p.id===P.current), keepK=me.kind; S.tx=[]; S.budgets={Groceries:200}; me.kind='personal';
+  const d=today(); S.tx.push({id:'h1',type:'out',amount:80,cat:'Groceries',note:'Safeway',acct:'cash',gst:0,date:d},{id:'h2',type:'in',amount:900,cat:'Pay',note:'',acct:'cash',gst:0,date:d});
+  tab='money'; render(); ok(tab==='home','personal books open the Ledger inside Home');
+  showNums=false; let H=V.home(); ok(/Spending habits/.test(H) && /Entries/.test(H) && /Safeway/.test(H) && /👁 Show/.test(H) && !/\\$\\d/.test(H) && !/Welcome back/.test(H),'Home shows the full layout and entries with amounts hidden');
+  showNums=true; H=V.home(); ok(/\\$80\\.00 of \\$200\\.00/.test(H) && /🙈 Hide/.test(H) && H.indexOf('Spending habits')<H.indexOf('Entries') && /Breakdown/.test(H),'tapping Show reveals the numbers, habits come before the entries');
+  tab='budget'; render(); ok(tab==='budget','personal books have a Budget tab');
+  let Bt=V.budget(); ok(/Budgeted – /.test(Bt) && /\\$120\\.00 left/.test(Bt) && /Groceries/.test(Bt) && !/Pets/.test(Bt),'the Budget tab shows each budget with what is left');
+  budgetAll=true; Bt=V.budget(); ok(/Pets/.test(Bt) && /Transportation/.test(Bt),'all categories can be shown, including Transportation'); budgetAll=false;
+  V.budget(); budgetOne(bCats.indexOf('Groceries')); F('b',250); SAVE(); ok(S.budgets.Groceries===250,'tapping a category sets its budget');
+  V.budget(); budgetOne(bCats.indexOf('Groceries')); F('b',''); SAVE(); ok(S.budgets.Groceries===undefined,'clearing it removes the budget');
+  ok(guessCat('TRANSLINK COMPASS')==='Transportation' && guessCat('Impark parking')==='Transportation' && guessCat('Uber Eats')==='Eating out' && guessCat('Lordco auto parts')==='Vehicle','receipts sort transit, parking and ride shares into Transportation');
+  delete me.kind; tab='budget'; render(); ok(!isPersonal() && tab==='home','business books have no Budget tab'); me.kind=keepK; if(keepK===undefined) delete me.kind;
+  S.tx=keepTx; S.budgets=keepB; showNums=keepSN; tab='home'; }
 // savings are set aside, not spending; storage meter; hidden test checklist
 { const keepTx=S.tx, keepB=S.budgets, keepR=S.rec, keepG=S.goals, keepSN=showNums, me=P.list.find(p=>p.id===P.current), keepK=me.kind; showNums=true; S.tx=[]; S.rec=[]; S.goals=[]; S.budgets={Savings:100,Groceries:200};
   const ym=thisMonth(), d1=ym+'-01';
@@ -459,7 +473,7 @@ addTx('out',null,R1); ok(/Filled in from the photo/.test($('#modal').innerHTML) 
   ok(catsIn(ym).Savings===undefined && catsIn(ym).Groceries===80 && setAside(ym)===250 && budgetAlert('Savings',d1)==='' && !budgetCats().includes('Savings'),'savings are left out of spending and budgets');
   ok(R.out===80 && R.inn===1000 && R.aside===250 && !R.cats.some(c=>c[0]==='Savings') && /Set aside/.test(reportHTML(R)) && /Set aside: \\$250\\.00\\nLeft over: \\$670\\.00/.test(reportText(R)),'the monthly report shows savings as set aside, not spending');
   ok(!/Savings<\\/b> is over budget/.test(all) && /Set aside so far this month: <b>\\$250\\.00/.test(all),'the budget check does not warn about savings');
-  const H=personalHome(''); ok(/Set aside – /.test(H) && /\\$670\\.00/.test(H) && !/🏦 Savings/.test(H.split('Latest entries')[0].split('Spending in')[1]),'Home shows money set aside and leaves it out of spending');
+  const H=personalHome(''); ok(/Set aside</.test(H) && /\\$670\\.00/.test(H) && !/🏦 Savings/.test(H.split('Entries')[0].split('Spending habits')[1]),'Home shows money set aside and leaves it out of spending');
   me.kind=keepK; if(keepK===undefined) delete me.kind;
   ok(isPersonal() || catsIn(ym).Savings===300,'business books still count a Savings category as money out');
   const u=storageUse(); ok(u.used>0 && u.pct>=0 && u.pct<=100 && /Storage on this phone/.test(V.more()) && storageNote()==='','More shows how full storage is');
@@ -472,7 +486,7 @@ addTx('out',null,R1); ok(/Filled in from the photo/.test($('#modal').innerHTML) 
 // business books still get receipts
 P.current='default'; S=fresh(); S.tx.push({id:'bz',type:'out',amount:5,cat:'Supplies',acct:'cash',gst:0,date:today(),pics:['zz1']}); tab='money'; moneyFilter='all';
 ok(!isPersonal() && /📎 Receipts/.test(V.money()) && /Customers/.test(V.debts()),'business books get a Receipts button and keep Customers'); moneyFilter='month';
-showNums=false; ok(/Welcome back/.test(V.home()) && !/Quick add/.test(V.home()),'business Home is unchanged');
+showNums=false; ok(!/Welcome back/.test(V.home()) && !/Quick add/.test(V.home()) && /Stock value/.test(V.home()) && !/\\$\\d/.test(V.home()) && /👁 Show/.test(V.home()),'business Home keeps its layout with amounts hidden');
 allTabs(); V.receipts(); tab='home';
 
 // version 11.2: switch books from a drop-down at the top
