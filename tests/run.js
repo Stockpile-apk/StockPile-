@@ -410,6 +410,27 @@ addTx('out',null,R1); ok(/Filled in from the photo/.test($('#modal').innerHTML) 
   ok(clean({house:[{id:'mom',name:'Mom',share:500},{name:''}],tx:[{id:'x1',type:'in',amount:5,who:'mom',date:today()}]}).house.length===1 && clean({tx:[{id:'x1',type:'in',amount:5,who:'mom',date:today()}]}).tx[0].who==='mom','saved books keep household people and who paid');
   ok(/Budget check/.test(adviceCard()),'Home shows the budget check');
   S.tx=keepTx; S.budgets=keepB; S.rec=keepR; S.house=[]; showNums=keepSN; }
+// starting balances, card details, account history, split receipts, ledger account filter
+{ const keepTx=S.tx, keepC=S.cards, keepB=S.banks, keepO=S.open, keepSN=showNums; showNums=true; S.tx=[]; S.cards=[]; S.banks=[]; S.open={};
+  cardForm(null,'bank'); F('name','TD Chequing'); F('last4','1234'); F('bal',2500); SAVE();
+  ok(acctBal('bank')===2500 && S.open.bank===2500 && S.tx.length===0,'a bank account can start with its real balance, without adding an entry');
+  S.tx.push({id:'s1',type:'out',amount:100,acct:'bank',cat:'Groceries',note:'Costco',date:today()}); ok(acctBal('bank')===2400,'entries add and take away from the starting balance');
+  balForm('bank'); F('bal',2390.5); SAVE(); ok(acctBal('bank')===2390.5 && S.tx.length===1,'setting the balance later matches the real account');
+  cardForm(); F('name','RBC Visa'); F('last4','4417'); F('bal',800); F('limit',1000); F('due',+today().slice(8)===28?28:Math.min(+today().slice(8)+2,28)); F('apr',20); F('min',25); SAVE();
+  const c=S.cards[0]; ok(owedOn('credit')===800 && c.limit===1000 && c.apr===20 && c.min===25 && cardDue(c)>=today(),'a card keeps what is owed, limit, due day, interest and minimum');
+  const A=advice(), all=A.warn.join(' ')+A.tips.join(' '); ok(/payment due/.test(all) && /80% of its/.test(all) && /costs about \\$13\\.33 a month in interest/.test(all),'card payment due, near the limit and interest cost are flagged');
+  acctSheet('bank'); ok(/TD Chequing/.test($('#modal').innerHTML) && /after: \\$2,390\\.50|after: \\$2390\\.50/.test($('#modal').innerHTML) && /Set balance/.test($('#modal').innerHTML),'tapping a balance shows its entries with the running balance'); closeForm();
+  acctSheet('credit'); ok(/Pay it off/.test($('#modal').innerHTML) && /800\\.00 owed/.test($('#modal').innerHTML),'a card shows what is owed and a pay-off button'); closeForm();
+  const C=clean({open:{bank:5,zz:3,cash:0},cards:[{id:'credit',name:'V',limit:500,due:40,apr:150}],tx:[{id:'g',type:'out',amount:1,grp:'abc',date:today()}]});
+  ok(C.open.bank===5 && C.open.zz===undefined && C.cards[0].limit===500 && C.cards[0].due===undefined && C.cards[0].apr===undefined && C.tx[0].grp==='abc','saved books keep starting balances, card details and split groups');
+  // split
+  pendingPics=[]; addTx('out'); F('amount',150); F('cat','Groceries'); F('note','Costco'); F('acct','bank'); FC('split',true); SAVE(); await tick(60);
+  ok(/Split \\$150\\.00/.test($('#modal').innerHTML),'ticking split opens the split screen');
+  F('c0','Groceries'); F('a0',100); F('c1','Household'); F('a1',30); lastAlert=''; const yes=globalThis.confirm; globalThis.confirm=()=>true; SAVE(); globalThis.confirm=yes;
+  const parts=S.tx.filter(t=>t.note==='Costco'&&t.grp); ok(parts.length===2 && parts.find(t=>t.cat==='Groceries').amount===120 && parts.find(t=>t.cat==='Household').amount===30 && parts[0].grp===parts[1].grp,'a split receipt becomes one entry per category, leftovers on the first');
+  // ledger account filter
+  moneyFilter='all'; moneyAcct='credit'; let L=V.money(); ok(/All accounts/.test(L) && !/Costco/.test(L),'the Ledger can show one account'); moneyAcct='bank'; L=V.money(); ok(/Costco/.test(L),'…and that account’s entries'); moneyAcct=''; moneyFilter='month';
+  S.tx=keepTx; S.cards=keepC; S.banks=keepB; S.open=keepO; showNums=keepSN; }
 // business books still get receipts
 P.current='default'; S=fresh(); S.tx.push({id:'bz',type:'out',amount:5,cat:'Supplies',acct:'cash',gst:0,date:today(),pics:['zz1']}); tab='money'; moneyFilter='all';
 ok(!isPersonal() && /📎 Receipts/.test(V.money()) && /Customers/.test(V.debts()),'business books get a Receipts button and keep Customers'); moneyFilter='month';
