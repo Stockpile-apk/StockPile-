@@ -349,7 +349,7 @@ ok(memPhotos.size===1 && (await photoLoad(pid1)) && new Uint8Array((await photoL
 const ptx2=S.tx.find(t=>t.pics); delTx(ptx2.id); await tick(20); ok(!(await PS.get(pid1)) && rcAll().length===0,'deleting an entry deletes its photo');
 // reading a receipt
 const R1=parseReceipt('SAVE-ON-FOODS\\nMaple Ridge BC\\n2026-11-12 14:32\\nMILK 4.99\\nBREAD 3.49\\nSUBTOTAL 8.48\\nGST 0.00\\nTOTAL 8.48\\nVISA 8.48');
-ok(R1.amount===8.48 && R1.date==='2026-11-12' && R1.note==='SAVE-ON-FOODS' && R1.cat==='Groceries' && R1.read===true,'a grocery receipt reads as store, date, total and category');
+ok(R1.amount===8.48 && R1.date==='2026-11-12' && R1.note==='Save-On-Foods' && R1.cat==='Groceries' && R1.read===true,'a grocery receipt reads as store, date, total and category');
 const R2=parseReceipt('PETRO-CANADA\\nNov 3, 2026\\nREGULAR 41.2 L\\nFUEL SALE $62.10\\nTOTAL\\n$62.10');
 ok(R2.amount===62.1 && R2.date==='2026-11-03' && R2.cat==='Fuel','a fuel receipt with the total on the next line reads correctly');
 const R3=parseReceipt('Corner Store\\nGUM 1.25\\nCHIPS 2.75\\nTAX 0.20\\nCASH 4.20'); ok(R3.amount===4.2 && !R3.cat && !R3.date,'with no TOTAL line it takes the largest amount and leaves the rest blank');
@@ -358,6 +358,18 @@ ok(/Read receipt/.test(stripHTML(['a'],'')) && !/Read receipt/.test(stripHTML([]
 ok(parseReceipt('SAVE-ON-FOODS\\n2026-11-12\\nSUBTOTAL 15.77\\nTOTAL 15.77').amount===15.77,'receipt total is picked over subtotal');
 ok(guessCat('BC HYDRO payment')==='Hydro' && guessCat('FortisBC')==='Natural gas' && guessCat('TELUS Mobility')==='Phone & internet' && guessCat('Tim Hortons #123')==='Eating out' && guessCat('random')==='','store names suggest a category');
 ok(guessCat('Espresso Bar')==='' && guessCat('Taco Bell')==='Eating out' && guessCat('Corona Flowers')==='' && guessCat('Canadian Tire')==='Household' && guessCat('ESSO 1234')==='Fuel','category guesses avoid look-alike words');
+ok(R1.place==='Maple Ridge, BC' && R1.acct==='credit' && !R1.gst && R1.lines.length===9,'a receipt also gives the city, card paid with, and the lines it read');
+ok(parseReceipt('PETR0-CANADA\\n22540 Lougheed Hwy\\nMaple Ridge BC\\nTOTAL 40.00\\nINTERAC 40.00').note==='Petro-Canada' && parseReceipt('PETR0-CANADA\\n22540 Lougheed Hwy\\nMaple Ridge BC\\nTOTAL 40.00\\nINTERAC 40.00').place==='22540 Lougheed Hwy, Maple Ridge, BC','a chain name with a reader mistake is still found, with street and city');
+ok(parseReceipt('Shop\\nVISA DEBIT 5.00').acct==='bank' && R3.acct==='cash' && parseReceipt('x\\nMASTERCARD 9.99').acct==='credit','debit, credit card and cash are told apart');
+ok(parseReceipt('Thrifty Foods\\nSUBTOTAL 15.00\\nGST 0.75\\nTOTAL 15.75').gst===0.75 && !parseReceipt('Thrifty Foods\\nGST# 12345 RT0001\\nTOTAL 15.75').gst,'the GST amount is read, but not the GST number');
+ok(findDate('Date: 14-Mar-2026')==='2026-03-14' && findDate('03/14/26 10:22')==='2026-03-14' && findDate('14/03/2026')==='2026-03-14' && findDate('2099-01-01')==='' && findDate('ref 4521-88-12')==='','dates in many layouts are read, and impossible ones ignored');
+ok(parseReceipt('NHS A 7 PLR\\nTOTAL 5.00').note===undefined && parseReceipt('Thank you\\nCorner Store\\nTOTAL 5.00').note==='Corner Store','a garbled top line is not used as the store name');
+S.learn={}; S.learn[storeKey('Corner Store')]='Snacks'; ok(parseReceipt('Corner Store\\nTOTAL 5.00').cat==='Snacks','a store you categorised before gets the same category'); S.learn={};
+{ const keep=S.tx; S.tx=[{id:'c1',type:'out',amount:50,acct:'credit',cat:'x',note:'',date:today()},{id:'c2',type:'move',amount:20,from:'bank',to:'credit',note:'',date:today()},{id:'c3',type:'move',amount:5,from:'cash',note:'',date:today()}];
+  ok(acctBal('credit')===-30 && acctBal('bank')===-15 && acctBal('cash')===-5 && usesCredit() && moveName(S.tx[1])==='Paid credit card from Debit (bank)','credit card spending and paying it off add up; old Cash → Bank moves still work');
+  const C=clean({tx:[...S.tx,{id:'c4',type:'out',amount:1,acct:'weird',place:'Maple Ridge',date:today()}],learn:{costco:'Groceries','BAD KEY':'x'}});
+  ok(C.tx[0].acct==='credit' && C.tx[1].to==='credit' && !C.tx[2].to && C.tx[3].acct==='cash' && C.tx[3].place==='Maple Ridge' && C.learn.costco==='Groceries' && !C.learn['BAD KEY'],'saved books keep credit card, payoff moves, places and learned categories');
+  S.tx=keep; }
 addTx('out',null,R1); ok(/Filled in from the photo/.test($('#modal').innerHTML) && /value="8.48"/.test($('#modal').innerHTML) && /value="2026-11-12"/.test($('#modal').innerHTML),'a read receipt pre-fills the entry and asks you to check it'); closeForm();
 // business books still get receipts
 P.current='default'; S=fresh(); S.tx.push({id:'bz',type:'out',amount:5,cat:'Supplies',acct:'cash',gst:0,date:today(),pics:['zz1']}); tab='money'; moneyFilter='all';

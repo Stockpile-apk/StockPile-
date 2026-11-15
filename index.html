@@ -129,9 +129,9 @@ body.dark .sheet .rc{color:var(--ink)}body.dark .sheet .rcs{color:var(--mute)}bo
 // The test copy (served from /beta/) keeps its data under separate names, so it can never touch the real app's data.
 const BETA = /\/beta\//.test((typeof location !== 'undefined' && location.pathname) || '');
 const KEY0 = (BETA ? 'beta_' : '') + 'money_inventory_tracker_v1', PKEY = (BETA ? 'beta_' : '') + 'stockpile_profiles';
-const VERSION = '3.3.0';
+const VERSION = '3.4.0';
 const okDark = v => v === true || v === false ? v : undefined;
-const fresh = () => ({ tx: [], items: [], debts: [], lastBackup: null, dirty: 0, auto: true, offRemind: true, lastSent: null, offSnooze: null, contacts: [], adj: [], rec: [], budgets: {}, staff: [], gone: {}, mm: {}, set: { gst: false, gstRate: 5 } });
+const fresh = () => ({ tx: [], items: [], debts: [], lastBackup: null, dirty: 0, auto: true, offRemind: true, lastSent: null, offSnooze: null, contacts: [], adj: [], rec: [], budgets: {}, staff: [], gone: {}, mm: {}, learn: {}, set: { gst: false, gstRate: 5 } });
 const defaultP = () => ({ list: [{ id: 'default', name: 'My business' }], current: 'default' });
 const CAN = !!(globalThis.crypto && crypto.subtle);
 let S = fresh(), P = defaultP(), storageOK = true, loadFailed = false;
@@ -206,9 +206,16 @@ const stamp = () => { const d = new Date(); return today() + '-' + String(d.getH
 const sum = (a, f) => a.reduce((t, x) => t + (f(x) || 0), 0);
 const round = n => Math.round(n * 100) / 100;
 const niceDate = d => { try { return new Date(d + 'T12:00').toLocaleDateString('en-CA', { month: 'short', day: 'numeric', year: 'numeric' }); } catch (e) { return d; } };
-const ACCT = { cash: 'Cash', bank: 'Bank' };
+const ACCT = { cash: 'Cash', bank: 'Debit (bank)', credit: 'Credit card' };
+const ACCTS = Object.keys(ACCT), okAcct = a => ACCTS.includes(a) ? a : 'cash';
 const acct = t => t.acct || 'cash';
-const acctBal = a => sum(S.tx, t => t.type === 'move' ? (t.from === a ? -t.amount : t.amount) : acct(t) !== a ? 0 : t.type === 'in' ? t.amount : -t.amount);
+// A move shifts money between two accounts. Older moves only stored "from" (Cash ↔ Bank).
+const moveTo = t => t.to || (t.from === 'cash' ? 'bank' : 'cash');
+const MOVES = [['cash>bank', 'Cash → Debit (bank deposit)'], ['bank>cash', 'Debit (bank) → Cash (withdrawal)'], ['bank>credit', 'Pay credit card from Debit (bank)'], ['cash>credit', 'Pay credit card with Cash']];
+const moveName = t => t.to === 'credit' || moveTo(t) === 'credit' ? `Paid credit card from ${ACCT[t.from]}` : `Moved ${ACCT[t.from]} → ${ACCT[moveTo(t)]}`;
+// For Credit card the balance is negative while you owe on it.
+const acctBal = a => sum(S.tx, t => t.type === 'move' ? (t.from === a ? -t.amount : moveTo(t) === a ? t.amount : 0) : acct(t) !== a ? 0 : t.type === 'in' ? t.amount : -t.amount);
+const usesCredit = () => S.tx.some(t => t.acct === 'credit' || t.to === 'credit') || (S.rec || []).some(r => r.acct === 'credit');
 const gstOf = (amount, inc) => S.set.gst && inc ? round(amount * S.set.gstRate / (100 + S.set.gstRate)) : 0;
 const eye = () => staffMode ? '' : `<button class="btn sec sm" onclick="showNums=!showNums;render()">${showNums ? '🙈 Hide amounts' : '👁 Show amounts'}</button>`;
 
@@ -229,9 +236,10 @@ function clean(d) {
   o.tx = arr(d.tx).filter(t => ['in', 'out', 'move'].includes(t.type)).map(t => {
     const r = { id: okId(t.id), type: t.type, amount: num(t.amount), note: str(t.note), date: okDate(t.date) };
     if (num(t.m) > 0) r.m = num(t.m);
-    if (t.type === 'move') r.from = t.from === 'bank' ? 'bank' : 'cash';
+    if (t.type === 'move') { r.from = t.from === 'bank' ? 'bank' : 'cash'; if (ACCTS.includes(t.to) && t.to !== r.from) r.to = t.to; }
     else {
-      r.cat = str(t.cat); r.acct = t.acct === 'bank' ? 'bank' : 'cash'; r.gst = num(t.gst);
+      r.cat = str(t.cat); r.acct = okAcct(t.acct); r.gst = num(t.gst);
+      if (t.place) r.place = str(t.place).slice(0, 80);
       if (t.cust) r.cust = str(t.cust);
       if (t.cogs !== undefined) r.cogs = num(t.cogs);
       if (t.itemId) r.itemId = okId(t.itemId);
@@ -255,12 +263,13 @@ function clean(d) {
   o.dirty = Math.max(0, Math.round(num(d.dirty))); o.auto = d.auto !== false;
   o.contacts = arr(d.contacts).map(c => ({ key: ckey(str(c.name)), name: str(c.name).trim(), phone: cleanPhone(c.phone), email: EMAIL_OK.test(str(c.email).trim()) ? str(c.email).trim().slice(0, 120) : '', promo: !!c.promo, ...(num(c.m) > 0 ? { m: num(c.m) } : {}) })).filter(c => c.key);
   o.adj = arr(d.adj).map(a => ({ id: okId(a.id), date: okDate(a.date), itemId: okId(a.itemId), name: str(a.name), qty: Math.round(num(a.qty)), why: str(a.why), note: str(a.note), value: num(a.value), ...(num(a.m) > 0 ? { m: num(a.m) } : {}) }));
-  o.rec = arr(d.rec).map(r => ({ id: okId(r.id), name: str(r.name), amount: num(r.amount), cat: str(r.cat), acct: r.acct === 'bank' ? 'bank' : 'cash', day: Math.min(Math.max(Math.round(num(r.day)) || 1, 1), 28), last: /^\d{4}-\d{2}$/.test(r.last) ? r.last : today().slice(0, 7), ...(num(r.m) > 0 ? { m: num(r.m) } : {}) }));
+  o.rec = arr(d.rec).map(r => ({ id: okId(r.id), name: str(r.name), amount: num(r.amount), cat: str(r.cat), acct: okAcct(r.acct), day: Math.min(Math.max(Math.round(num(r.day)) || 1, 1), 28), last: /^\d{4}-\d{2}$/.test(r.last) ? r.last : today().slice(0, 7), ...(num(r.m) > 0 ? { m: num(r.m) } : {}) }));
   if (d.budgets && typeof d.budgets === 'object') Object.entries(d.budgets).slice(0, 80).forEach(([k, v]) => { if (num(v) > 0 && str(k)) o.budgets[str(k).slice(0, 60)] = num(v); });
   o.staff = arr(d.staff).map(x => ({ id: okId(x.id), who: str(x.who).slice(0, 40), perms: Object.fromEntries(['stock', 'stockEdit', 'owing', 'sales', 'refunds'].filter(k => x.perms && x.perms[k]).map(k => [k, true])) }));
   if (d.gone && typeof d.gone === 'object') Object.entries(d.gone).slice(0, 6000).forEach(([k, v]) => { if (/^[a-z0-9:. _@&'()+,-]{1,90}$/i.test(k) && num(v) > 0) o.gone[k] = num(v); });
   if (d.mm && typeof d.mm === 'object') ['budgets', 'set'].forEach(k => { if (num(d.mm[k]) > 0) o.mm[k] = num(d.mm[k]); });
   if (d.share && typeof d.share === 'object' && typeof d.share.id === 'string' && /^[a-z0-9]{1,24}$/i.test(d.share.id) && typeof d.share.pass === 'string' && d.share.pass) o.share = { id: d.share.id, pass: d.share.pass.slice(0, 200) };
+  if (d.learn && typeof d.learn === 'object') Object.entries(d.learn).slice(0, 500).forEach(([k, v]) => { if (/^[a-z0-9]{2,40}$/.test(k) && str(v).trim()) o.learn[k] = str(v).trim().slice(0, 40); });
   if (isDate(d.lastSync)) o.lastSync = d.lastSync;
   o.offRemind = d.offRemind !== false; o.lastSent = isDate(d.lastSent) ? d.lastSent : null; o.offSnooze = isDate(d.offSnooze) ? d.offSnooze : null;
   const st = d.set && typeof d.set === 'object' ? d.set : {};
@@ -324,7 +333,8 @@ function fieldHTML(f) {
   if (f.list) { list = `<datalist id="dl_${f.k}">${f.list.map(x => `<option value="${esc(x)}">`).join('')}</datalist>`; attrs += ` list="dl_${f.k}"`; }
   return `<label class="fl"><span>${esc(f.l)}</span><input id="${id}" ${attrs} value="${esc(val)}" placeholder="${esc(f.ph || '')}">${list}</label>`;
 }
-const acctField = (v, l) => ({ k: 'acct', l: l || 'Cash or bank?', t: 'select', v: v || 'cash', o: [['cash', 'Cash'], ['bank', 'Bank']] });
+// Credit card is for money you spend; sales are paid to you in cash or into the bank.
+const acctField = (v, l, noCredit) => ({ k: 'acct', l: l || 'Paid with', t: 'select', v: noCredit && v === 'credit' ? 'cash' : v || 'cash', o: noCredit ? [['cash', 'Cash'], ['bank', 'Debit / card (to bank)']] : ACCTS.map(a => [a, ACCT[a]]) });
 const gstField = def => S.set.gst ? { k: 'gstInc', l: `Amount includes GST (${S.set.gstRate}%)`, t: 'check', v: def } : null;
 function categories(type) {
   const base = isPersonal() ? (type === 'in' ? PINCOME : PCATS.map(c => c[0])) : type === 'in' ? ['Sales', 'Job payment', 'Other income'] : ['Inventory', 'Supplies', 'Gas', 'Tools', 'Rent', 'Phone', 'Food', 'Other'];
@@ -342,30 +352,37 @@ function addTx(type, t, preset) { if (staffMode) return;
     { k: 'amount', l: 'Amount ($)', t: 'money', v: t.amount, req: 1, pos: 1, ph: '0.00' },
     { k: 'cat', l: 'Category', v: t.cat, list: categories(type), ph: isIn ? 'e.g. Sales' : 'e.g. Supplies' },
     isIn && !isPersonal() ? { k: 'cust', l: 'Customer (optional)', v: t.cust, list: customers() } : null,
-    { k: 'note', l: isPersonal() ? 'Where or what (optional)' : 'Note (optional)', v: t.note, ph: isPersonal() ? 'e.g. the store name' : 'What was it for?' },
-    acctField(acct(t)),
-    gstField(isEdit ? !!t.gst : false),
+    { k: 'note', l: isPersonal() ? 'Store, or what it was (optional)' : 'Note or store (optional)', v: t.note, ph: isPersonal() ? 'e.g. the store name' : 'What was it for?' },
+    t.sale || t.ret ? null : { k: 'place', l: 'Place (optional)', v: t.place || '', ph: 'e.g. Maple Ridge' },
+    acctField(acct(t), null, !!(t.sale || t.ret)),
+    gstField(!!(t.gst > 0)),
     { k: 'date', l: 'Date', t: 'date', v: t.date }
   ], v => {
-    const data = { amount: round(v.amount), cat: v.cat, note: v.note, acct: v.acct, date: v.date || today(), gst: gstOf(round(v.amount), v.gstInc) };
+    // Use the GST printed on the receipt when the amount still matches it; otherwise work it out.
+    const amt = round(v.amount), rg = t.gst > 0 && amt === round(+t.amount) ? t.gst : ocrLast && ocrLast.gst > 0 && amt === ocrLast.amount ? ocrLast.gst : 0;
+    const data = { amount: amt, cat: v.cat, note: v.note, acct: v.acct, date: v.date || today(), gst: v.gstInc ? rg || gstOf(amt, true) : 0 };
+    if ('place' in v) { if (v.place) data.place = v.place.slice(0, 80); else delete t.place; }
     if (isIn) data.cust = v.cust;
+    // Remember the category picked for a store, so its next receipt gets it automatically.
+    if (!isIn && v.note && v.cat && (isEdit ? (t.pics || []).length : pendingPics.length || (preset && preset.read))) (S.learn = S.learn || {})[storeKey(v.note)] = String(v.cat).slice(0, 40);
     if (isEdit) Object.assign(t, data);
     else { if (pendingPics.length) { data.pics = pendingPics.slice(0, 6); pendingPics = []; } S.tx.push({ id: uid(), type, ...data }); }
-  }, `${preset && preset.read ? '<div class="note" id="ocrNote">Filled in from the photo. Check the amount before you save.</div>' : preset && preset.readFail ? `<div class="note" id="ocrNote">${esc(preset.readFail)}</div>` : preset && preset.tried ? '<div class="note" id="ocrNote">Couldn’t make out the receipt. Fill it in by hand, or retake a flatter, brighter photo and tap Read receipt.</div>' : '<div id="ocrNote"></div>'}<div class="strip" id="picStrip" data-tx="${isEdit ? t.id : ''}">${stripHTML(isEdit ? (t.pics || []) : pendingPics, isEdit ? t.id : '')}</div>`, isEdit ? () => delTx(t.id) : null);
+  }, `${preset && preset.read ? '<div class="note" id="ocrNote">Filled in from the photo. Check the amount before you save.</div>' : preset && preset.readFail ? `<div class="note" id="ocrNote">${esc(preset.readFail)}</div>` : preset && preset.tried ? '<div class="note" id="ocrNote">Couldn’t make out the receipt. Fill it in by hand, or retake a flatter, brighter photo and tap Read receipt.</div>' : '<div id="ocrNote"></div>'}<div class="strip" id="picStrip" data-tx="${isEdit ? t.id : ''}">${stripHTML(isEdit ? (t.pics || []) : pendingPics, isEdit ? t.id : '')}</div><div id="ocrLines">${ocrLinesHTML(preset && preset.lines)}</div>`, isEdit ? () => delTx(t.id) : null);
+  ocrLast = preset && preset.read ? { amount: preset.amount, gst: preset.gst } : null;
   loadThumbs();
 }
-function addMove(t) { if (staffMode) return;
+function addMove(t, preset) { if (staffMode) return;
   const isEdit = !!t;
-  t = t || { date: today(), amount: '', from: 'cash', note: '' };
+  t = t || { date: today(), amount: '', from: 'cash', note: '', ...(preset || {}) };
   form(isEdit ? 'Edit move' : 'Move money', [
-    { k: 'from', l: 'Which way?', t: 'select', v: t.from, o: [['cash', 'Cash → Bank (deposit)'], ['bank', 'Bank → Cash (withdrawal)']] },
+    { k: 'way', l: 'Which way?', t: 'select', v: t.from + '>' + moveTo(t), o: MOVES },
     { k: 'amount', l: 'Amount ($)', t: 'money', v: t.amount, req: 1, pos: 1, ph: '0.00' },
     { k: 'note', l: 'Note (optional)', v: t.note },
     { k: 'date', l: 'Date', t: 'date', v: t.date }
   ], v => {
-    const data = { from: v.from, amount: round(v.amount), note: v.note, date: v.date || today() };
+    const [from, to] = String(v.way || 'cash>bank').split('>'), data = { from, to, amount: round(v.amount), note: v.note, date: v.date || today() };
     if (isEdit) Object.assign(t, data); else S.tx.push({ id: uid(), type: 'move', ...data });
-  }, '<div class="mute">For deposits and withdrawals. It shifts money between Cash and Bank without counting as income or spending.</div>', isEdit ? () => delTx(t.id) : null);
+  }, `<div class="mute">For deposits, withdrawals and paying off your credit card. It shifts money between your accounts without counting as income or spending.${usesCredit() ? ` Credit card owed now: <b>${fmt(Math.max(-acctBal('credit'), 0))}</b>.` : ''}</div>`, isEdit ? () => delTx(t.id) : null);
 }
 function editTx(id) { if (staffMode) return; const t = S.tx.find(x => x.id === id); if (t) t.type === 'move' ? addMove(t) : addTx(t.type, t); }
 function delTx(id) { if (staffMode) return;
@@ -428,7 +445,7 @@ function sell(id) { if (staffMode) return;
     { k: 'cust', l: 'Customer (optional)', v: '', list: customers() },
     { k: 'pay', l: 'Payment', t: 'select', v: 'full', o: PAYOPTS },
     { k: 'paidNow', l: 'Amount paid now (only for part payment)', t: 'money', v: '', ph: '0.00' },
-    acctField('cash', 'Paid by'),
+    acctField('cash', 'Paid by', 1),
     gstField(true),
     { k: 'date', l: 'Date', t: 'date', v: today() }
   ], v => {
@@ -849,7 +866,7 @@ function returnForm(id) { if (!can('refunds')) return;
   form('Return items', [
     ...lines.map((l, i) => ({ k: 'q' + i, l: `${l.name}: how many came back? (up to ${l.left})`, t: 'number', v: '', ph: '0' })),
     { k: 'back', l: 'Put the returned items back in stock', t: 'check', v: true },
-    acctField('cash', 'Refund paid from')
+    acctField('cash', 'Refund paid from', 1)
   ], v => {
     const picks = lines.map((l, i) => ({ ...l, q: Math.min(Math.max(Math.round(v['q' + i]) || 0, 0), l.left) })).filter(l => l.q > 0);
     if (!picks.length) { alert('Enter how many of at least one item came back.'); return false; }
@@ -1019,7 +1036,8 @@ function personalHome(notes) {
   return `${notes}<div class="row bar"><button class="btn" onclick="snapNew()">📷 Snap a receipt</button><button class="btn out" onclick="addTx('out')">− Out</button><button class="btn in" onclick="addTx('in')">+ In</button><button class="btn sec" onclick="showNums=false;render()">🙈 Hide</button></div>
     <div class="grid">
       <div class="card"><div class="lbl">Cash on hand</div><div class="big ${cash < 0 ? 'neg' : ''}">${fmt(cash)}</div></div>
-      <div class="card"><div class="lbl">In the bank</div><div class="big ${bank < 0 ? 'neg' : ''}">${fmt(bank)}</div></div>
+      <div class="card"><div class="lbl">In the bank (debit)</div><div class="big ${bank < 0 ? 'neg' : ''}">${fmt(bank)}</div></div>
+      ${usesCredit() ? `<div class="card" onclick="addMove(null, { from: 'bank', to: 'credit' })" style="cursor:pointer"><div class="lbl">Credit card owed</div><div class="big ${acctBal('credit') < 0 ? 'neg' : ''}">${fmt(Math.max(-acctBal('credit'), 0))}</div><div class="mute">tap to pay it off</div></div>` : ''}
       <div class="card"><div class="lbl">In – ${mn}</div><div class="big pos">${fmt(mIn)}</div></div>
       <div class="card"><div class="lbl">Out – ${mn}</div><div class="big neg">${fmt(mOut)}</div></div>
       <div class="card"><div class="lbl">Left over – ${mn}</div><div class="big ${mIn - mOut < 0 ? 'neg' : 'pos'}">${fmt(mIn - mOut)}</div></div>
@@ -1127,28 +1145,93 @@ function removePic(id) {
   pendingPics = pendingPics.filter(x => x !== id); photoDel(id); closeForm(); commit(); render();
 }
 
-/* ---------- reading a receipt photo (only on phones whose browser can read text in pictures) ---------- */
+/* ---------- reading a receipt photo (on the phone; nothing is sent anywhere) ---------- */
+// Known chains: "Shown name|Category|search words" (search words: letters and digits only, lower case).
+const CHAINS = `Costco Gas|Fuel|costcogas,costcogasoline;Save-On-Foods|Groceries|saveonfoods,saveon;Real Canadian Superstore|Groceries|superstore,realcanadian;Walmart|Groceries|walmart;Costco|Groceries|costco,costcowholesale;Safeway|Groceries|safeway;No Frills|Groceries|nofrills;FreshCo|Groceries|freshco;Thrifty Foods|Groceries|thriftyfoods,thrifty;IGA|Groceries|iga;Buy-Low Foods|Groceries|buylow;T&T Supermarket|Groceries|ttsupermarket;Loblaws|Groceries|loblaws;Sobeys|Groceries|sobeys;Whole Foods|Groceries|wholefoods;Nesters Market|Groceries|nesters;Choices Markets|Groceries|choicesmarket;Fresh St. Market|Groceries|freshstmarket;Urban Fare|Groceries|urbanfare;PriceSmart Foods|Groceries|pricesmart;Quality Foods|Groceries|qualityfoods;H Mart|Groceries|hmart;Your Independent Grocer|Groceries|independentgrocer;Giant Tiger|Groceries|gianttiger;7-Eleven|Groceries|7eleven,seveneleven;Petro-Canada|Fuel|petrocanada,petrocan;Shell|Fuel|shell;Esso|Fuel|esso;Chevron|Fuel|chevron;Husky|Fuel|husky;Co-op Gas|Fuel|coopgas,cooppetroleum;Mobil|Fuel|mobil;Fas Gas|Fuel|fasgas;Ultramar|Fuel|ultramar;Circle K|Fuel|circlek;Pioneer|Fuel|pioneer;Super Save Gas|Fuel|supersave;Canco|Fuel|canco;Tim Hortons|Eating out|timhortons,timhorton;McDonald's|Eating out|mcdonalds,mcdonald;Starbucks|Eating out|starbucks;A&W|Eating out|aw;Subway|Eating out|subway;Wendy's|Eating out|wendys;Taco Bell|Eating out|tacobell;Burger King|Eating out|burgerking;Dairy Queen|Eating out|dairyqueen;KFC|Eating out|kfc;Triple O's|Eating out|tripleos;White Spot|Eating out|whitespot;Boston Pizza|Eating out|bostonpizza;Pizza Hut|Eating out|pizzahut;Domino's|Eating out|dominos;Panago|Eating out|panago;Freshii|Eating out|freshii;Chipotle|Eating out|chipotle;Popeyes|Eating out|popeyes;Mary Brown's|Eating out|marybrowns;Denny's|Eating out|dennys;Earls|Eating out|earls;Cactus Club|Eating out|cactusclub;Browns Socialhouse|Eating out|brownssocial;The Keg|Eating out|thekeg;Milestones|Eating out|milestones;Moxie's|Eating out|moxies;JOEY|Eating out|joeyrestaurant;Old Spaghetti Factory|Eating out|oldspaghetti;Waves Coffee|Eating out|wavescoffee;Blenz|Eating out|blenz;JJ Bean|Eating out|jjbean;Booster Juice|Eating out|boosterjuice;Uber Eats|Eating out|ubereats;DoorDash|Eating out|doordash;SkipTheDishes|Eating out|skipthedishes;Church's Chicken|Eating out|churchschicken;Harvey's|Eating out|harveys;Five Guys|Eating out|fiveguys;Nando's|Eating out|nandos;Home Depot|Household|homedepot;RONA|Household|rona;Canadian Tire|Household|canadiantire;Lowe's|Household|lowes;Home Hardware|Household|homehardware;IKEA|Household|ikea;Dollarama|Household|dollarama;Dollar Tree|Household|dollartree;Staples|Household|staples;Best Buy|Household|bestbuy;HomeSense|Household|homesense;Michaels|Household|michaels;Windsor Plywood|Household|windsorplywood;Slegg Building Materials|Household|slegg;Dick's Lumber|Household|dickslumber;Princess Auto|Household|princessauto;Lee Valley|Household|leevalley;Amazon|Household|amazon;Shoppers Drug Mart|Medical|shoppersdrugmart,shoppersdrug;London Drugs|Medical|londondrugs;Rexall|Medical|rexall;Pharmasave|Medical|pharmasave;LifeLabs|Medical|lifelabs;PetSmart|Pets|petsmart;Pet Valu|Pets|petvalu;Bosley's|Pets|bosleys;Global Pet Foods|Pets|globalpet;Mud Bay|Pets|mudbay;Lordco|Vehicle|lordco;NAPA|Vehicle|napa;Kal Tire|Vehicle|kaltire;OK Tire|Vehicle|oktire;Fountain Tire|Vehicle|fountaintire;Mr. Lube|Vehicle|mrlube;Jiffy Lube|Vehicle|jiffylube;Midas|Vehicle|midas;ICBC|Vehicle|icbc;Impark|Vehicle|impark;EasyPark|Vehicle|easypark;Winners|Clothing|winners;Mark's|Clothing|markswork,marksw;Old Navy|Clothing|oldnavy;Sport Chek|Clothing|sportchek;H&M|Clothing|hm;Value Village|Clothing|valuevillage;Marshalls|Clothing|marshalls;Lululemon|Clothing|lululemon;Simons|Clothing|simons;Reitmans|Clothing|reitmans;TELUS|Phone & internet|telus;Rogers|Phone & internet|rogers;Bell|Phone & internet|bell;Shaw|Phone & internet|shaw;Freedom Mobile|Phone & internet|freedommobile;Koodo|Phone & internet|koodo;Fido|Phone & internet|fido;Virgin Plus|Phone & internet|virginplus;Public Mobile|Phone & internet|publicmobile;Chatr|Phone & internet|chatr;BC Hydro|Hydro|bchydro;FortisBC|Natural gas|fortisbc,fortis;Cineplex|Entertainment|cineplex;Landmark Cinemas|Entertainment|landmarkcinema;BC Liquor Store|Entertainment|bcliquor,liquorstore;Liquor Depot|Entertainment|liquordepot;Netflix|Subscriptions|netflix;Spotify|Subscriptions|spotify;Disney+|Subscriptions|disneyplus;BC Ferries|Travel|bcferries;Air Canada|Travel|aircanada;WestJet|Travel|westjet;Airbnb|Travel|airbnb;Expedia|Travel|expedia`.split(';').map(x => { const [name, cat, al] = x.split('|'); return { name, cat, al: al.split(',') }; });
+const CITIES = ['North Vancouver', 'West Vancouver', 'Vancouver', 'Port Coquitlam', 'Coquitlam', 'Port Moody', 'Maple Ridge', 'Pitt Meadows', 'New Westminster', 'Burnaby', 'Richmond', 'Surrey', 'Delta', 'Ladner', 'Tsawwassen', 'White Rock', 'Langley', 'Aldergrove', 'Abbotsford', 'Mission', 'Chilliwack', 'Agassiz', 'Harrison Hot Springs', 'Hope', 'Squamish', 'Whistler', 'Sechelt', 'Gibsons', 'West Kelowna', 'Kelowna', 'Penticton', 'Vernon', 'Kamloops', 'Salmon Arm', 'Merritt', 'Osoyoos', 'Oliver', 'Prince George', 'Nanaimo', 'Victoria', 'Langford', 'Duncan', 'Courtenay', 'Campbell River', 'Parksville', 'Cranbrook', 'Nelson', 'Fort St. John', 'Dawson Creek', 'Terrace', 'Prince Rupert', 'Williams Lake', 'Quesnel', 'Calgary', 'Edmonton', 'Red Deer', 'Lethbridge', 'Regina', 'Saskatoon', 'Winnipeg', 'Toronto', 'Ottawa', 'Montreal', 'Halifax', 'Bellingham', 'Blaine', 'Seattle'];
 const CAT_HINTS = [['Fuel', /petro|\bshell\b|\besso\b|chevron|husky|co-?op gas|\bmobil\b|fas gas|gas bar|\bfuel\b|unleaded|diesel/i],
   ['Eating out', /tim hortons|mcdonald|starbucks|a&w|subway|wendy|taco bell|burger|pizza|restaurant|cafe|sushi|\bpub\b|grill|diner|dairy queen|\bkfc\b|triple o/i],
   ['Groceries', /save.?on|superstore|walmart|costco|safeway|no frills|freshco|thrifty|\biga\b|grocer|buy.?low|t&t|loblaws|sobeys|produce/i],
   ['Hydro', /bc hydro|hydro one|\bhydro\b/i], ['Natural gas', /fortis/i], ['Phone & internet', /telus|rogers|\bbell\b|\bshaw\b|freedom mobile|koodo|\bfido\b|virgin plus/i],
   ['Medical', /pharma|shoppers drug|london drugs|rexall|clinic|dental|optical/i], ['Pets', /petsmart|pet ?valu|bosley|veterinar|\bvet\b|pet food/i],
-  ['Household', /home depot|\brona\b|canadian tire|\blowe'?s\b|home hardware|ikea|dollarama|hardware/i], ['Vehicle', /auto ?parts|lordco|\bnapa\b|\btires?\b|oil change|icbc|car wash|parking/i],
-  ['Clothing', /winners|\bmark'?s\b|old navy|sport ?chek|h&m|clothing/i], ['Insurance', /insurance/i], ['Subscriptions', /netflix|spotify|disney\+|prime video|subscription/i], ['Entertainment', /cineplex|theatre|bowling|\bgolf\b/i]];
+  ['Household', /home depot|\brona\b|canadian tire|\blowe'?s\b|home hardware|ikea|dollarama|hardware|lumber|plywood|building suppl/i], ['Vehicle', /auto ?parts|lordco|\bnapa\b|\btires?\b|oil change|icbc|car wash|parking/i],
+  ['Clothing', /winners|\bmark'?s\b|old navy|sport ?chek|h&m|clothing/i], ['Insurance', /insurance/i], ['Subscriptions', /netflix|spotify|disney\+|prime video|subscription/i], ['Entertainment', /cineplex|theatre|bowling|\bgolf\b|liquor/i]];
 const guessCat = text => { const hit = CAT_HINTS.find(h => h[1].test(text)); return hit ? hit[0] : ''; };
+// Business books use their own category names.
+const BIZCAT = { Fuel: 'Gas', Vehicle: 'Gas', 'Eating out': 'Food', Groceries: 'Food', 'Phone & internet': 'Phone', Household: 'Supplies' };
+const bookCat = c => c && !isPersonal() ? BIZCAT[c] || c : c;
+const normT = x => String(x || '').toLowerCase().replace(/&/g, '').replace(/[^a-z0-9]/g, '');
+const storeKey = x => normT(x).slice(0, 40);
+// Is pattern p in text t with at most k typing mistakes? (reader mistakes like 0 for o, rn for m)
+function nearIn(t, p, k) {
+  if (!k) return t.includes(p);
+  let prev = new Array(p.length + 1).fill(0).map((_, i) => i);
+  for (let j = 1; j <= t.length; j++) {
+    const cur = [0];
+    for (let i = 1; i <= p.length; i++) cur[i] = Math.min(prev[i] + 1, cur[i - 1] + 1, prev[i - 1] + (p[i - 1] === t[j - 1] ? 0 : 1));
+    if (cur[p.length] <= k) return true; prev = cur;
+  }
+  return false;
+}
+const slack = n => n >= 10 ? 2 : n >= 7 ? 1 : 0;
+// Short names (IGA, KFC, Bell) must stand alone as a word; longer ones may have a reader mistake or two.
+const chainIn = (l, c) => { const n = normT(l), w = ' ' + l.toLowerCase().replace(/&/g, '').replace(/[^a-z0-9]+/g, ' ') + ' ';
+  return c.al.some(a => a.length < 5 ? w.includes(' ' + a + ' ') : nearIn(n, a, slack(a.length))); };
+// Store names sit at the top; "thanks for shopping at…" at the bottom.
+function findChain(lines) {
+  const order = [...lines.slice(0, 10), ...lines.slice(-6), ...lines.slice(10, -6)];
+  for (const l of order) { const c = CHAINS.find(c => chainIn(l, c)); if (c) return c; }
+  return null;
+}
+function findPlace(lines) {
+  const ADDR = /^\s*#?\d{1,6}[a-z]?[\s-]+(\d+\s*)?[a-z][a-z .'-]*\b(st|street|ave|avenue|rd|road|hwy|highway|blvd|boulevard|dr|drive|way|cres|crescent|pl|place|lane|ln|pkwy|parkway|ct|court|sq|square|mall|centre|center)\b\.?/i;
+  let city = '', addr = '';
+  for (const l of lines.slice(0, 15)) {
+    if (!addr) { const m = l.match(ADDR); if (m) addr = m[0].replace(/\s+/g, ' ').trim(); }
+    if (!city) { const n = normT(l), c = CITIES.find(c => nearIn(n, normT(c), slack(normT(c).length))); if (c) { const pv = l.match(/\b(BC|AB|SK|MB|ON|QC|NS|WA)\b/); city = c + (pv ? ', ' + pv[1] : ''); } }
+  }
+  return [addr, city].filter(Boolean).join(', ').slice(0, 80);
+}
+const MONS = 'janfebmaraprmayjunjulaugsepoctnovdec';
+function findDate(text) {
+  const t = String(text), now = new Date(today() + 'T12:00'), cands = [];
+  const add = (y, m, d) => { y = +y; if (y < 100) y += 2000; m = +m; d = +d; if (m < 1 || m > 12 || d < 1 || d > 31) return; const dt = new Date(y, m - 1, d, 12); if (dt.getMonth() !== m - 1) return;
+    const diff = (now - dt) / 864e5; if (diff >= -1 && diff <= 1100) cands.push([Math.abs(diff), `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`]); };
+  for (const m of t.matchAll(/\b(20\d{2})[-\/.](\d{1,2})[-\/.](\d{1,2})\b/g)) add(m[1], m[2], m[3]);
+  for (const m of t.matchAll(/\b(\d{1,2})[-\/.](\d{1,2})[-\/.](20\d{2}|\d{2})\b/g)) { add(m[3], m[1], m[2]); add(m[3], m[2], m[1]); }
+  for (const m of t.matchAll(/\b(\d{1,2})[-\s.]?(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?[-\s,.]*(20\d{2}|\d{2})\b/gi)) add(m[3], MONS.indexOf(m[2].toLowerCase()) / 3 + 1, m[1]);
+  for (const m of t.matchAll(/\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?[-\s.]*(\d{1,2})(?!\d),?[-\s.]*(20\d{2}|\d{2})\b/gi)) add(m[3], MONS.indexOf(m[1].toLowerCase()) / 3 + 1, m[2]);
+  cands.sort((a, b) => a[0] - b[0]); return cands.length ? cands[0][1] : '';
+}
+// How it was paid: debit wins over a card name (VISA DEBIT), then credit, then cash.
+function findPay(text) {
+  const t = String(text).toLowerCase();
+  if (/\b(debit|interac|chequing|flash)\b/.test(t)) return 'bank';
+  if (/\b(visa|master ?card|mastercard|amex|american express|credit card|credit)\b/.test(t)) return 'credit';
+  if (/\bcash\b/.test(t) || /\bchange\b/.test(t)) return 'cash';
+  return '';
+}
+const NOT_STORE = /receipt|invoice|welcome|thank|cashier|server|table|order|phone|tel\b|www|\.com|gst|hst|reg(istration)?\s*#|store\s*#|trans|date|time|\d{3}[-. ]\d{3}[-. ]\d{4}/i;
 function parseReceipt(text) {
-  const lines = String(text || '').split(/\r?\n/).map(l => l.trim()).filter(Boolean), money = /(\d{1,5})[.,](\d{2})(?!\d)/g, out = {};
+  const lines = String(text || '').split(/\r?\n/).map(l => l.replace(/\s+/g, ' ').trim()).filter(l => l.length > 1), money = /(\d{1,5})\s?[.,]\s?(\d{2})(?!\d)/g, out = {};
   const amts = l => [...l.matchAll(money)].map(m => parseFloat(m[1] + '.' + m[2]));
+  const TOT = /t[o0]t[a4][l1i]|amount due|balance due|to pay|montant/i, NOTTOT = /sub\s*-?\s*t[o0]t|savings|saved|points|discount|items|tax\s*t[o0]t/i;
   for (let i = lines.length - 1; i >= 0 && out.amount === undefined; i--) {
-    if (/total|amount due|balance due/i.test(lines[i]) && !/sub\s*-?total|savings|points/i.test(lines[i])) { const a = amts(lines[i]).concat(amts(lines[i + 1] || '')); if (a.length) out.amount = a[0]; }
+    if (TOT.test(lines[i]) && !NOTTOT.test(lines[i])) { const a = amts(lines[i]).concat(amts(lines[i + 1] || '')); if (a.length) out.amount = a[0]; }
   }
   if (out.amount === undefined) { const all = lines.flatMap(amts); if (all.length) out.amount = Math.max(...all); }
-  const iso = text.match(/\b(20\d{2})[-\/.](\d{1,2})[-\/.](\d{1,2})\b/), mon = text.match(/\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(\d{1,2}),?\s+(20\d{2})\b/i);
-  if (iso && +iso[2] <= 12 && +iso[3] <= 31) out.date = `${iso[1]}-${iso[2].padStart(2, '0')}-${iso[3].padStart(2, '0')}`;
-  else if (mon) out.date = `${mon[3]}-${String('janfebmaraprmayjunjulaugsepoctnovdec'.indexOf(mon[1].toLowerCase()) / 3 + 1).padStart(2, '0')}-${mon[2].padStart(2, '0')}`;
-  const store = lines.find(l => /[a-z]{3}/i.test(l) && !/receipt|invoice|welcome|thank/i.test(l));
-  if (store) out.note = store.replace(/\s+/g, ' ').slice(0, 40);
-  const cat = guessCat(text); if (cat) out.cat = cat;
+  const date = findDate(text); if (date) out.date = date;
+  const chain = findChain(lines);
+  if (chain) out.note = chain.name;
+  else { const st = lines.slice(0, 6).find(l => /[a-z]{4,}/i.test(l) && /[aeiouy]/i.test(l) && (l.match(/[a-z]/gi) || []).length >= l.replace(/\s/g, '').length * 0.6 && !NOT_STORE.test(l) && !amts(l).length);
+    if (st) out.note = st.replace(/^[^a-z0-9]+|[^a-z0-9.')]+$/gi, '').slice(0, 40); }
+  const place = findPlace(lines); if (place) out.place = place;
+  const learned = out.note && S.learn ? S.learn[storeKey(out.note)] : '';
+  const cat = learned || bookCat(chain ? chain.cat : guessCat(text)); if (cat) out.cat = cat;
+  const pay = findPay(text); if (pay) out.acct = pay;
+  const gl = lines.find(l => /\b(g\.?s\.?t|h\.?s\.?t)\b/i.test(l) && !/pst|#|reg|no\.|number/i.test(l) && amts(l).length);
+  if (gl) { const g = amts(gl).pop(); if (g > 0 && (out.amount === undefined || g < out.amount)) out.gst = g; }
+  if (lines.length) out.lines = lines.slice(0, 60);
   if (out.amount !== undefined || out.note) out.read = true;
   return out;
 }
@@ -1165,6 +1248,7 @@ async function ocrGet() {
     await ocrScript();
     ocrWorker = Tesseract.createWorker('eng', 1, { workerPath: OCR_BASE + 'worker.min.js', corePath: OCR_BASE + 'core', langPath: OCR_BASE.replace(/\/$/, ''), workerBlobURL: false, gzip: true,
       logger: m => { if (ocrProg && m && typeof m.progress === 'number') ocrProg(m.status, m.progress); } });
+    ocrWorker = ocrWorker.then(async w => { try { await w.setParameters({ tessedit_pageseg_mode: '4', preserve_interword_spaces: '1' }); } catch (e) {} return w; });
     ocrWorker.catch(() => { ocrWorker = null; });
   }
   return ocrWorker;
@@ -1172,7 +1256,8 @@ async function ocrGet() {
 function ocrDone() { clearTimeout(ocrIdle); ocrIdle = setTimeout(() => { const w = ocrWorker; ocrWorker = null; if (w) w.then(x => x.terminate()).catch(() => {}); }, 90000); }
 // Greyed and capped in size: faster to read and still sharp enough for receipt print.
 function ocrCanvas(src) {
-  const sc = Math.min(1, 1800 / Math.max(src.width, src.height)), c = document.createElement('canvas');
+  // Receipts are tall and narrow: size by width so the small print stays big enough to read.
+  const sc = Math.min(1600 / src.width, 3200 / src.height, 2), c = document.createElement('canvas');
   c.width = Math.round(src.width * sc); c.height = Math.round(src.height * sc);
   const g = c.getContext('2d'); g.filter = 'grayscale(1) contrast(1.4)'; g.drawImage(src, 0, 0, c.width, c.height); return c;
 }
@@ -1204,20 +1289,39 @@ async function readIntoForm() {
   catch (e) { alert(ocrFailMsg()); return; }
   if (!g || !g.read) { alert("Couldn't make out the receipt. Try a flatter, brighter photo, or fill it in by hand."); return; }
   const put = (k, v) => { const el = document.getElementById('f_' + k); if (el && v !== undefined && v !== '') { el.value = v; el.classList.remove('bad'); } };
-  if (g.amount !== undefined) put('amount', g.amount.toFixed(2)); put('date', g.date); put('note', g.note);
-  const ce = document.getElementById('f_cat'); if (ce && !ce.value && g.cat) ce.value = g.cat;
+  if (g.amount !== undefined) put('amount', g.amount.toFixed(2)); put('date', g.date); put('note', g.note); put('place', g.place);
+  const ce = document.getElementById('f_cat'); if (ce && g.cat && (!ce.value || (S.learn || {})[storeKey(g.note)])) ce.value = g.cat;
+  const ae = document.getElementById('f_acct'); if (ae && g.acct && [...ae.options].some(o => o.value === g.acct)) ae.value = g.acct;
+  const ge = document.getElementById('f_gstInc'); if (ge && g.gst > 0) ge.checked = true;
+  ocrLast = { amount: g.amount, gst: g.gst };
+  const ol = $('#ocrLines'); if (ol) ol.innerHTML = ocrLinesHTML(g.lines);
   const n = $('#ocrNote'); if (n) n.outerHTML = '<div class="note" id="ocrNote">Filled in from the photo. Check the amount before you save.</div>';
+}
+// "What the reader saw": tap a line to use it as the store, the place, or an amount.
+let ocrLast = null, ocrSeen = [];
+function ocrLinesHTML(lines) {
+  ocrSeen = Array.isArray(lines) ? lines.slice(0, 60) : [];
+  if (!ocrSeen.length) return '';
+  const money = /(\d{1,5})\s?[.,]\s?(\d{2})(?!\d)/g;
+  return `<details class="card" style="margin:8px 0"><summary><b>What the reader saw</b> <span class="mute">· tap a line to use it</span></summary><div style="margin-top:6px">${ocrSeen.map((l, i) => {
+    const am = [...l.matchAll(money)].map(m => m[1] + '.' + m[2]);
+    return `<div style="padding:6px 0;border-top:1px solid rgba(127,127,127,.2)"><div style="font-family:monospace;font-size:13px;word-break:break-word">${esc(l)}</div><div class="row" style="gap:6px;margin-top:4px"><button type="button" class="btn sm sec" onclick="useLine(${i},'note')">Store</button><button type="button" class="btn sm sec" onclick="useLine(${i},'place')">Place</button>${am.map(a => `<button type="button" class="btn sm sec" onclick="useLine(${i},'amount','${a}')">$${a}</button>`).join('')}</div></div>`; }).join('')}</div></details>`;
+}
+function useLine(i, k, a) {
+  const el = document.getElementById('f_' + k), l = ocrSeen[i]; if (!el || l === undefined) return;
+  el.value = k === 'amount' ? a : l.replace(/^[^a-z0-9#]+|[^a-z0-9.')]+$/gi, '').slice(0, k === 'place' ? 80 : 40); el.classList.remove('bad');
+  if (k === 'note') { const c = (S.learn || {})[storeKey(el.value)] || bookCat(guessCat(el.value)), ce = document.getElementById('f_cat'); if (c && ce) ce.value = c; }
 }
 const ocrFailMsg = () => navigator.onLine === false ? "The receipt reader isn't on this phone yet. Connect to the internet once and try again; after that it works offline." : "Couldn't read that photo. Try again, or fill it in by hand.";
 
 /* ---------- Receipts tab: every entry that has a photo, searchable ---------- */
 let rcQ = '', rcCat = '', rcMonth = '';
 const rcAll = () => S.tx.filter(t => t.pics && t.pics.length).sort((a, b) => b.date.localeCompare(a.date));
-const rcShown = () => rcAll().filter(t => (!rcCat || t.cat === rcCat) && (!rcMonth || t.date.startsWith(rcMonth)) && (!rcQ.trim() || hasQ(rcQ, t.note, t.cat, t.date, niceDate(t.date), t.amount)));
+const rcShown = () => rcAll().filter(t => (!rcCat || t.cat === rcCat) && (!rcMonth || t.date.startsWith(rcMonth)) && (!rcQ.trim() || hasQ(rcQ, t.note, t.cat, t.place, t.date, niceDate(t.date), t.amount)));
 function rcBodyHTML() {
   const list = rcShown();
   return list.length ? `<div class="list">${list.map(t => `<div class="it"><img class="th" data-pic="${t.pics[0]}" onclick="viewPic('${t.pics[0]}')">
-      <div class="main" onclick="viewPic('${t.pics[0]}')"><div class="t">${esc(t.note || t.cat || 'Receipt')}</div><div class="mute">${niceDate(t.date)}${t.cat ? ' · ' + esc(t.cat) : ''}${t.pics.length > 1 ? ` · ${t.pics.length} photos` : ''}</div></div>
+      <div class="main" onclick="viewPic('${t.pics[0]}')"><div class="t">${esc(t.note || t.cat || 'Receipt')}</div><div class="mute">${niceDate(t.date)}${t.cat ? ' · ' + esc(t.cat) : ''}${t.place ? ' · ' + esc(t.place) : ''}${t.pics.length > 1 ? ` · ${t.pics.length} photos` : ''}</div></div>
       <div class="amt ${t.type === 'in' ? 'pos' : ''}">${fmt(t.amount)}</div></div>`).join('')}</div>`
     : `<div class="card empty">${rcAll().length ? 'No receipts match.' : 'No receipt photos yet. Tap “Snap a receipt” to add your first one.'}</div>`;
 }
@@ -1429,6 +1533,7 @@ function mergeInto(R) {
   // two phones may have added different products under the same item number: move the newer one to a free number
   const used = new Set(), now = Date.now();
   [...S.items].sort((a, b) => (a.m || 0) - (b.m || 0)).forEach(it => { if (used.has(it.num)) { let n = 1; while (used.has(n)) n++; it.num = n; it.m = now; } used.add(it.num); });
+  S.learn = { ...(R.learn || {}), ...(S.learn || {}) };
   S.gone = gone; takeSnap();
   return added;
 }
@@ -2191,9 +2296,9 @@ $('#restoreFile').onchange = e => {
 const csvCell = v => { v = String(v ?? ''); return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; };
 const csv = rows => rows.map(r => r.map(csvCell).join(',')).join('\n');
 function exportMoney() {
-  const rows = [['Date', 'Type', 'Amount', 'Category', 'Customer', 'Account', 'GST included', 'Note']].concat([...S.tx].sort((a, b) => a.date.localeCompare(b.date)).map(t =>
-    t.type === 'move' ? [t.date, 'Move', t.amount, '', '', t.from === 'cash' ? 'Cash to Bank' : 'Bank to Cash', '', t.note]
-      : [t.date, t.type === 'in' ? 'In' : 'Out', t.amount, t.cat, t.cust, ACCT[acct(t)], t.gst || '', t.note]));
+  const rows = [['Date', 'Type', 'Amount', 'Category', 'Customer', 'Account', 'GST included', 'Note', 'Place']].concat([...S.tx].sort((a, b) => a.date.localeCompare(b.date)).map(t =>
+    t.type === 'move' ? [t.date, 'Move', t.amount, '', '', moveName(t), '', t.note]
+      : [t.date, t.type === 'in' ? 'In' : 'Out', t.amount, t.cat, t.cust, ACCT[acct(t)], t.gst || '', t.note, t.place || '']));
   download(`stockpile-money-${today()}.csv`, csv(rows), 'text/csv');
 }
 function exportStock() {
@@ -2211,11 +2316,11 @@ function todaySalesHTML(todays) {
 }
 function txRow(t) {
   const pick = selMode ? `<input type="checkbox" class="pk" ${sel.has(t.id) ? 'checked' : ''} onclick="event.stopPropagation();togSel('${t.id}')">` : '', tap = selMode ? `togSel('${t.id}')` : staffMode ? (t.sale || t.ret ? `receipt('${t.sale || t.ret}')` : '') : `editTx('${t.id}')`;
-  if (t.type === 'move') return `<div class="it">${pick}<div class="main" onclick="${tap}"><div class="t">${t.from === 'cash' ? 'Moved Cash → Bank' : 'Moved Bank → Cash'}</div>
+  if (t.type === 'move') return `<div class="it">${pick}<div class="main" onclick="${tap}"><div class="t">${esc(moveName(t))}</div>
     <div class="mute">${niceDate(t.date)}${t.note ? ' · ' + esc(t.note) : ''}</div></div>
     <div class="amt mute">⇄ ${fmt(t.amount)}</div>${staffMode ? '' : `<button class="x" title="Delete" onclick="delTx('${t.id}')">×</button>`}</div>`;
   const part = t.saleAmt !== undefined && t.saleAmt !== t.amount;
-  const bits = [niceDate(t.date), t.note && t.cat ? esc(t.cat) : '', t.cust ? esc(t.cust) : '', t.by ? 'by ' + esc(t.by) : '', part ? `sale ${fmt(t.saleAmt)}, ${t.amount > 0 ? 'part paid' : 'on account'}` : ACCT[acct(t)]].filter(Boolean).join(' · ');
+  const bits = [niceDate(t.date), t.note && t.cat ? esc(t.cat) : '', t.place ? '📍 ' + esc(t.place) : '', t.cust ? esc(t.cust) : '', t.by ? 'by ' + esc(t.by) : '', part ? `sale ${fmt(t.saleAmt)}, ${t.amount > 0 ? 'part paid' : 'on account'}` : ACCT[acct(t)]].filter(Boolean).join(' · ');
   return `<div class="it">${pick}<div class="main" onclick="${tap}"><div class="t">${esc(t.note || t.cat || (t.type === 'in' ? 'Money in' : 'Money out'))}</div>
     <div class="mute">${bits}</div></div>
     <div class="amt ${t.type === 'in' ? 'pos' : 'neg'}">${t.type === 'in' ? '+' : '−'}${fmt(t.amount)}</div>
@@ -2261,7 +2366,8 @@ const V = {
     <div class="row bar">${quick}<button class="btn sec" onclick="showNums=false;render()">🙈 Hide</button></div>
     <div class="grid">
       <div class="card"><div class="lbl">Cash on hand</div><div class="big ${cash < 0 ? 'neg' : ''}">${fmt(cash)}</div></div>
-      <div class="card"><div class="lbl">In the bank</div><div class="big ${bank < 0 ? 'neg' : ''}">${fmt(bank)}</div></div>
+      <div class="card"><div class="lbl">In the bank (debit)</div><div class="big ${bank < 0 ? 'neg' : ''}">${fmt(bank)}</div></div>
+      ${usesCredit() ? `<div class="card" onclick="addMove(null, { from: 'bank', to: 'credit' })" style="cursor:pointer"><div class="lbl">Credit card owed</div><div class="big ${acctBal('credit') < 0 ? 'neg' : ''}">${fmt(Math.max(-acctBal('credit'), 0))}</div><div class="mute">tap to pay it off</div></div>` : ''}
       <div class="card"><div class="lbl">Total money</div><div class="big ${cash + bank < 0 ? 'neg' : ''}">${fmt(cash + bank)}</div></div>
       <div class="card"><div class="lbl">In – ${mn}</div><div class="big pos">${fmt(mIn)}</div></div>
       <div class="card"><div class="lbl">Out – ${mn}</div><div class="big neg">${fmt(mOut)}</div></div>
@@ -2305,7 +2411,7 @@ const V = {
         <select class="f" onchange="posPay=this.value;render()">${PAYOPTS.map(p => `<option value="${p[0]}" ${posPay === p[0] ? 'selected' : ''}>${p[1]}</option>`).join('')}</select></div>
       <div class="row" style="margin-bottom:10px">
         ${posPay === 'part' ? `<input class="f" style="flex:1;min-width:140px" type="number" step="0.01" min="0" inputmode="decimal" value="${esc(posPaid)}" oninput="posPaid=this.value;posOwing()" placeholder="Amount paid now ($)">` : ''}
-        ${posPay !== 'later' ? `<select class="f" onchange="posAcct=this.value"><option value="cash" ${posAcct === 'cash' ? 'selected' : ''}>Paid cash</option><option value="bank" ${posAcct === 'bank' ? 'selected' : ''}>Paid to bank</option></select>` : ''}</div>
+        ${posPay !== 'later' ? `<select class="f" onchange="posAcct=this.value"><option value="cash" ${posAcct === 'cash' ? 'selected' : ''}>Paid cash</option><option value="bank" ${posAcct === 'bank' ? 'selected' : ''}>Paid by debit / card</option></select>` : ''}</div>
       ${posPay !== 'full' ? `<label class="pf" style="margin-bottom:10px"><span>Due date for the amount owing (optional)</span><input class="f" type="date" value="${esc(posDue)}" oninput="posDue=this.value"></label>` : ''}
       ${posPay !== 'full' ? `<div class="note" id="posOwe">${posPay === 'later' ? cur(total) : cur(round(total - Math.min(round(parseFloat(posPaid) || 0), total)))} will be added to Owing → Owed to me.${posCust.trim() ? '' : ' Customer name needed.'}</div>` : ''}
       ${S.set.gst ? `<label class="chk"><input type="checkbox" ${posGst ? 'checked' : ''} onchange="posGst=this.checked"> Prices include GST (${S.set.gstRate}%)</label>` : ''}
