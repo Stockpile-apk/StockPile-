@@ -26,7 +26,7 @@ h3{font-size:16px;margin:22px 0 8px;color:var(--mute);font-weight:600}
 .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px}
 .lbl{font-size:13px;color:var(--mute)}
 .big{font-size:23px;font-weight:700;margin-top:4px}
-.pos{color:var(--green)}.neg{color:var(--red)}.mute{color:var(--mute);font-size:14px}
+.pos{color:var(--green)}.neg{color:var(--red)}.amber{color:#b45309}.btn.paid{background:#dcfce7;color:var(--green)}.mute{color:var(--mute);font-size:14px}
 .btn{border:0;border-radius:10px;padding:12px 16px;font-size:16px;font-weight:600;background:var(--accent);color:#fff;cursor:pointer}
 .btn.in{background:var(--green)}.btn.out{background:var(--red)}
 .btn.sec{background:#e5e7eb;color:var(--ink)}
@@ -85,7 +85,7 @@ body.setup nav,body.setup header select{display:none}
 body.dark{--s1:#3987e5;--s2:#d95926;--s3:#199e70;--s4:#c98500;--s5:#d55181;--s6:#0ca30c;--s7:#9085e9;--s8:#e66767;--bg:#0f1420;--card:#1a2233;--ink:#e6e9ef;--mute:#9aa3b2;--line:#2b3548;--green:#34d399;--red:#f87171;--accent:#2dd4bf}
 body.dark header,body.dark #lock{background:#0b0f18}
 body.dark nav,body.dark .list,body.dark .sheet,body.dark .fl input,body.dark .fl select,body.dark select.f,body.dark input.f,body.dark .qb{background:var(--card);color:var(--ink);border-color:var(--line)}
-body.dark .btn{color:#06201c}body.dark .btn.in{color:#052e1b}body.dark .btn.out{color:#3b0a0a}body.dark .btn.sec{background:#2b3548;color:var(--ink)}
+body.dark .amber{color:#fbbf24}body.dark .btn.paid{background:#0f3326;color:#a7f3d0}body.dark .btn{color:#06201c}body.dark .btn.in{color:#052e1b}body.dark .btn.out{color:#3b0a0a}body.dark .btn.sec{background:#2b3548;color:var(--ink)}
 body.dark .note{background:#3a2f0b;border-color:#6b5a1a;color:#fde68a}body.dark .note.ok{background:#0f3326;border-color:#1f6b4f;color:#a7f3d0}
 body.dark .low{background:#3b1414;border-color:#7f1d1d}body.dark .chip{background:#232d42;color:var(--ink);border-color:var(--line)}
 body.dark .track{background:#2b3548}body.dark .fl input.bad{background:#3b1414}
@@ -132,7 +132,7 @@ body.dark .sheet .rc{color:var(--ink)}body.dark .sheet .rcs{color:var(--mute)}bo
 // The test copy (served from /beta/) keeps its data under separate names, so it can never touch the real app's data.
 const BETA = /\/beta\//.test((typeof location !== 'undefined' && location.pathname) || '');
 const KEY0 = (BETA ? 'beta_' : '') + 'money_inventory_tracker_v1', PKEY = (BETA ? 'beta_' : '') + 'stockpile_profiles';
-const VERSION = '3.14.1';
+const VERSION = '3.15.0';
 const okDark = v => v === true || v === false ? v : undefined;
 const fresh = () => ({ tx: [], items: [], debts: [], lastBackup: null, dirty: 0, auto: true, offRemind: true, lastSent: null, offSnooze: null, contacts: [], adj: [], rec: [], budgets: {}, staff: [], gone: {}, mm: {}, learn: {}, cards: [], banks: [], house: [], goals: [], open: {}, set: { gst: false, gstRate: 5 } });
 const defaultP = () => ({ list: [{ id: 'default', name: 'My business' }], current: 'default' });
@@ -286,6 +286,7 @@ function clean(d) {
       if (typeof t.who === 'string' && /^[a-z0-9]{1,24}$/i.test(t.who)) r.who = t.who;
       if (typeof t.grp === 'string' && /^[a-z0-9]{1,24}$/i.test(t.grp)) r.grp = t.grp;
       if (typeof t.goal === 'string' && /^[a-z0-9]{1,24}$/i.test(t.goal)) r.goal = t.goal;
+      if (typeof t.rec === 'string' && /^[a-z0-9]{1,24}$/i.test(t.rec)) r.rec = t.rec;
       if (t.cust) r.cust = str(t.cust);
       if (t.cogs !== undefined) r.cogs = num(t.cogs);
       if (t.itemId) r.itemId = okId(t.itemId);
@@ -316,8 +317,10 @@ function clean(d) {
   const d31 = v => Math.min(Math.max(Math.round(num(v)) || 1, 1), 31);
   o.goals = arr(d.goals).filter(g => g && str(g.name).trim()).slice(0, 20).map(g => ({ id: okId(g.id), name: str(g.name).trim().slice(0, 40), target: num(g.target), ...(isDate(g.date) ? { date: g.date } : {}), ...(g.acct && okAcct(g.acct) === g.acct && g.acct !== 'cash' ? { acct: g.acct } : {}), ...(num(g.start) ? { start: num(g.start) } : {}), ...(num(g.m) > 0 ? { m: num(g.m) } : {}) }));
   o.rec = arr(d.rec).map(r => { const f = ['weekly', 'biweekly', 'semimonthly'].includes(r.freq) ? r.freq : 'monthly';
+    const pd = r.type !== 'in' && r.paid && typeof r.paid === 'object' ? Object.entries(r.paid).filter(([k, v]) => isDate(k) && typeof v === 'string' && /^[a-z0-9]{1,24}$/i.test(v)).sort().slice(-150) : [];
     return { id: okId(r.id), name: str(r.name), amount: num(r.amount), cat: str(r.cat), acct: okAcct(r.acct), day: d31(r.day), last: /^\d{4}-\d{2}$/.test(r.last) ? r.last : today().slice(0, 7),
-      ...(r.type === 'in' ? { type: 'in' } : {}), ...(f !== 'monthly' ? { freq: f, next: isDate(r.next) ? r.next : today() } : {}), ...(f === 'semimonthly' ? { d2: d31(r.d2 || 31) } : {}), ...(num(r.m) > 0 ? { m: num(r.m) } : {}) }; });
+      ...(r.type === 'in' ? { type: 'in' } : {}), ...(f !== 'monthly' ? { freq: f, next: isDate(r.next) ? r.next : today() } : {}), ...(f === 'semimonthly' ? { d2: d31(r.d2 || 31) } : {}),
+      ...(r.type !== 'in' && r.auto === false ? { auto: false, since: isDate(r.since) ? r.since : today() } : {}), ...(pd.length ? { paid: Object.fromEntries(pd) } : {}), ...(num(r.m) > 0 ? { m: num(r.m) } : {}) }; });
   if (d.budgets && typeof d.budgets === 'object') Object.entries(d.budgets).slice(0, 80).forEach(([k, v]) => { if (num(v) > 0 && str(k)) o.budgets[str(k).slice(0, 60)] = num(v); });
   o.staff = arr(d.staff).map(x => ({ id: okId(x.id), who: str(x.who).slice(0, 40), perms: Object.fromEntries(['stock', 'stockEdit', 'owing', 'sales', 'refunds'].filter(k => x.perms && x.perms[k]).map(k => [k, true])) }));
   if (d.gone && typeof d.gone === 'object') Object.entries(d.gone).slice(0, 6000).forEach(([k, v]) => { if (/^[a-z0-9:. _@&'()+,-]{1,90}$/i.test(k) && num(v) > 0) o.gone[k] = num(v); });
@@ -987,13 +990,14 @@ function recDates(r, from, to) {
   for (let g = 0; dt <= to && g < 60; g++, dt = dayShift(dt, step)) if (dt >= from) out.push(dt);
   return out;
 }
-const recEntry = (r, date) => ({ id: uid(), type: r.type === 'in' ? 'in' : 'out', amount: r.amount, cat: r.cat, note: r.name, acct: r.acct, gst: 0, date });
+const recEntry = (r, date) => ({ id: uid(), type: r.type === 'in' ? 'in' : 'out', amount: r.amount, cat: r.cat, note: r.name, acct: r.acct, gst: 0, date, rec: r.id });
 function applyRecurring() {
   if (loadFailed || !S.rec || !S.rec.length) return false;
   const now = today(), thisYm = now.slice(0, 7); let changed = false;
   for (const r of S.rec) {
+    const man = r.auto === false && r.type !== 'in';   // "I pay it myself": the dates move on, but nothing is added until Paid is tapped
     if (r.freq && r.freq !== 'monthly') {
-      for (let g = 0; r.next <= now && g < 120; g++) { S.tx.push(recEntry(r, r.next)); r.next = recStep(r, r.next); changed = true; }
+      for (let g = 0; r.next <= now && g < 120; g++) { if (!man) S.tx.push(recEntry(r, r.next)); r.next = recStep(r, r.next); changed = true; }
       continue;
     }
     let [y, m] = String(r.last || thisYm).split('-').map(Number), guard = 0;
@@ -1001,11 +1005,80 @@ function applyRecurring() {
       m++; if (m > 12) { m = 1; y++; }
       const ym = y + '-' + String(m).padStart(2, '0'); if (ym > thisYm) break;
       const date = onDay(ym, r.day); if (date > now) break;
-      S.tx.push(recEntry(r, date));
+      if (!man) S.tx.push(recEntry(r, date));
       r.last = ym; changed = true;
     }
   }
   return changed;
+}
+/* ---------- bills: paid, due soon, overdue ---------- */
+const isBill = r => r.type !== 'in', isMan = r => r.auto === false && isBill(r);
+// The Ledger entry that paid a bill on a given due date (if there is one).
+const billTx = (r, d) => { const id = (r.paid || {})[d]; return S.tx.find(t => id ? t.id === id : !isMan(r) && t.rec === r.id && t.date === d) || null; };
+// One bill on one due date: 'paid', 'late' (overdue), 'soon' (due within 3 days) or 'later'.
+function billState(r, d) {
+  const now = today();
+  if (!isMan(r)) return d <= now ? 'paid' : 'later';
+  if (billTx(r, d) || d < (r.since || '')) return 'paid';
+  return d < now ? 'late' : d <= dayShift(now, 3) ? 'soon' : 'later';
+}
+// Every bill date in a month. For this month, unpaid ones from the two months before are kept too, so nothing overdue drops off.
+function billsNow(ym) {
+  ym = ym || thisMonth(); const first = ym + '-01', end = onDay(ym, 31), out = [];
+  for (const r of (S.rec || []).filter(isBill)) {
+    for (const d of recDates(r, first, end)) out.push({ r, d, st: billState(r, d), amt: (billTx(r, d) || r).amount });
+    if (isMan(r) && ym === thisMonth()) for (const d of recDates(r, dayShift(first, -62), dayShift(first, -1))) if (billState(r, d) === 'late') out.push({ r, d, st: 'late', amt: r.amount });
+  }
+  return out.sort((a, b) => a.d.localeCompare(b.d) || a.r.name.localeCompare(b.r.name));
+}
+function billsSum(all) { all = all || billsNow(); const paid = all.filter(b => b.st === 'paid');
+  return { n: all.length, np: paid.length, tot: sum(all, b => b.amt), totP: sum(paid, b => b.amt), late: all.filter(b => b.st === 'late').length, soon: all.filter(b => b.st === 'soon').length }; }
+function payBill(r, d, amount, date) {
+  if (!r || !isMan(r) || billTx(r, d)) return false;
+  const t = recEntry(r, isDate(date) ? date : today()); if (amount > 0) t.amount = round(amount);
+  S.tx.push(t); r.paid = { ...(r.paid || {}), [d]: t.id }; return true;
+}
+function billPay(id, d) { if (staffMode) return; if (payBill((S.rec || []).find(x => x.id === id), d)) { commit(); render(); } }
+function billUnpay(id, d) { if (staffMode) return;
+  const r = (S.rec || []).find(x => x.id === id), t = r && isMan(r) && (r.paid || {})[d] ? billTx(r, d) : null; if (!t) return;
+  S.tx = S.tx.filter(x => x !== t); const p = { ...r.paid }; delete p[d]; if (Object.keys(p).length) r.paid = p; else delete r.paid;
+  commit(); render();
+}
+// Paying a different amount this time (hydro, gas) or on a different day.
+function billPayForm(id, d) { if (staffMode) return;
+  const r = (S.rec || []).find(x => x.id === id); if (!r) return;
+  form(`Pay ${r.name}`, [{ k: 'amount', l: 'Amount paid this time ($)', t: 'money', v: r.amount, req: 1, pos: 1 }, { k: 'date', l: 'Paid on', t: 'date', v: today() }],
+    v => { payBill(r, d, v.amount, v.date); },
+    `<div class="mute">Due ${niceDate(d)}. Saving marks it paid and adds it to your Ledger. The amount here is for this time only.</div><p style="margin:8px 0"><a href="#" onclick="event.preventDefault();closeForm();recurForm('${r.id}')">Edit this bill</a></p>`);
+}
+const dueWord = d => { const n = Math.round((new Date(d + 'T12:00') - new Date(today() + 'T12:00')) / 864e5);
+  return n === 0 ? 'today' : n === 1 ? 'tomorrow' : n > 1 && n < 7 ? new Date(d + 'T12:00').toLocaleDateString('en-CA', { weekday: 'short' }) : niceDate(d).replace(/,? \d{4}$/, ''); };
+const monthName = () => new Date().toLocaleDateString('en-CA', { month: 'long' });
+// One line for the whole month: how many bills are paid. On Home it opens the Budget tab.
+function billsLine(home) {
+  const all = billsNow(); if (!all.length) return '';
+  const s = billsSum(all), flag = s.late ? `<b class="neg">${s.late} overdue</b>` : s.soon ? `<b class="amber">${s.soon} due soon</b>` : s.np === s.n ? '<b class="pos">All paid ✓</b>' : '';
+  return `<div class="card" id="billsLine" style="margin-top:10px${home ? ';cursor:pointer' : ''}" ${home ? `onclick="tab='budget';render();window.scrollTo(0,0)"` : ''}><div class="row between"><b>Bills – ${monthName()}</b>${flag}</div>
+    <div class="mute">${s.np} of ${s.n} paid · ${fmt(s.totP)} of ${fmt(s.tot)}</div>
+    <div class="track"><div class="fill" style="width:${Math.round(s.np / s.n * 100)}%;background:${s.late ? 'var(--red)' : 'var(--green)'}"></div></div></div>`;
+}
+function billRow(b) {
+  const { r, d, st } = b, man = isMan(r), t = billTx(r, d);
+  const tap = st === 'paid' ? (t ? `editTx('${t.id}')` : `recurForm('${r.id}')`) : man ? `billPayForm('${r.id}','${d}')` : `recurForm('${r.id}')`;
+  const when = st === 'paid' ? `<span class="pos">✓ Paid</span>${t ? ' ' + dueWord(t.date) : ''}` : st === 'late' ? `<span class="neg">Overdue · was due ${dueWord(d)}</span>` : st === 'soon' ? `<span class="amber">Due ${dueWord(d)}</span>` : `Due ${dueWord(d)}`;
+  const btn = !man || staffMode ? '' : st !== 'paid' ? `<button class="btn sm" onclick="billPay('${r.id}','${d}')">Mark paid</button>` : (r.paid || {})[d] && t ? `<button class="btn sm paid" title="Tap to undo" onclick="billUnpay('${r.id}','${d}')">✓ Paid</button>` : '';
+  return `<div class="it"><div class="main" onclick="${tap}"><div class="t">${esc(r.name)}</div><div class="mute">${when} · ${esc(acctName(r.acct))}${man ? '' : ' · Auto-pay'}</div></div><div class="amt">−${fmt(b.amt)}</div>${btn}</div>`;
+}
+// The Bills section of the Budget tab: overdue first, then due soon, coming up, and paid.
+function billsCard() {
+  const all = billsNow(), pays = (S.rec || []).filter(r => r.type === 'in');
+  const groups = [['late', '⚠️ Overdue'], ['soon', 'Due soon'], ['later', 'Coming up'], ['paid', 'Paid ✓']].map(([k, l]) => { const g = all.filter(b => b.st === k);
+    return g.length ? `<div class="mute" style="margin:12px 0 4px;font-weight:600">${l}</div><div class="list">${g.map(billRow).join('')}</div>` : ''; }).join('');
+  return `<div class="row between" style="margin-top:22px"><h3 style="margin:0">🧾 Bills</h3><button class="btn sec sm" onclick="recurForm()">+ Bill</button></div>
+    ${all.length ? billsLine() + groups + '<p class="mute" style="margin:8px 0 0">Tap Mark paid when a bill is paid; tap ✓ Paid to undo. Tap a bill to change the amount for this time.</p>' : '<div class="card mute" style="margin-top:8px">Add your set bills — rent, phone, insurance. Each one can be Auto-pay, or stay unpaid until you tap Paid.</div>'}
+    <div class="row between" style="margin-top:22px"><h3 style="margin:0">💵 Paydays</h3><button class="btn sec sm" onclick="recurForm(null, { type: 'in', cat: 'Pay', acct: '${bankList()[0].id}' })">+ Payday</button></div>
+    ${pays.length ? `<div class="list" style="margin-top:8px">${pays.map(r => `<div class="it"><div class="main" onclick="recurForm('${r.id}')"><div class="t">${esc(r.name)}</div><div class="mute">${recWhen(r)} · ${esc(acctName(r.acct))}</div></div><div class="amt pos">+${fmt(r.amount)}</div></div>`).join('')}</div>` : '<div class="card mute" style="margin-top:8px">Add your paydays so StockPile knows what is coming in.</div>'}
+    ${(S.rec || []).length ? '<div class="row" style="margin-top:10px"><button class="btn sec" onclick="calendarExport()">📅 Add to my phone calendar</button></div>' : ''}`;
 }
 // Credit cards and bank accounts are set up the same way: a name and, if you like, the last 4 digits.
 const ACCT_KINDS = { card: { col: 'cards', first: 'credit', pre: 'cc', one: 'credit card', ph: 'e.g. RBC Visa', legacy: 'Credit card' }, bank: { col: 'banks', first: 'bank', pre: 'bk', one: 'bank account', ph: 'e.g. TD Chequing', legacy: 'Debit (bank)' } };
@@ -1053,7 +1126,7 @@ function acctSheet(a) {
     ${card ? `<p class="mute">${[cardInfo(card), card.apr ? card.apr + '% interest' : '', card.min ? 'minimum ' + fmt(card.min) : ''].filter(Boolean).join(' · ')}</p>` : ''}
     <div class="row">${isC ? `<button class="btn" onclick="closeForm();addMove(null, { from: '${bankList()[0].id}', to: '${a}', amount: ${owedOn(a) || "''"} })">Pay it off</button>` : `<button class="btn" onclick="closeForm();addMove(null, { from: '${a === 'cash' ? 'cash' : a}', to: '${a === 'cash' ? bankList()[0].id : 'cash'}' })">⇄ Move money</button>`}
       <button class="btn sec" onclick="closeForm();balForm('${a}')">Set balance</button>${a !== 'cash' ? `<button class="btn sec" onclick="closeForm();cardForm('${a}','${isC ? 'card' : 'bank'}')">Edit</button>` : ''}</div>
-    <div class="list" style="margin-top:12px">${withBal.length ? withBal.map(([t, b]) => `<div class="it"><div class="main" onclick="closeForm();editTx('${t.id}')"><div class="t">${esc(t.type === 'move' ? moveName(t) : t.note || t.cat || 'Entry')}</div><div class="mute">${niceDate(t.date)}${t.type !== 'move' && t.cat && t.note ? ' · ' + esc(t.cat) : ''} · after: ${show(b)}</div></div><div class="amt ${delta(t, a) > 0 ? 'pos' : 'neg'}">${delta(t, a) > 0 ? '+' : '−'}${fmt(Math.abs(delta(t, a)))}</div></div>`).join('') : '<div class="empty">No entries on this account yet.</div>'}</div>
+    <div class="list" style="margin-top:12px">${withBal.length ? withBal.map(([t, b]) => `<div class="it"><div class="main" onclick="closeForm();editTx('${t.id}')"><div class="t">${esc(t.type === 'move' ? moveName(t) : t.note || t.cat || 'Entry')}</div><div class="mute">${niceDate(t.date)}${t.type !== 'move' && t.cat && t.note ? ' · ' + esc(t.cat) : ''} · after: ${show(b)}</div></div><div class="amt ${delta(t, a) > 0 ? 'pos' : ''}">${delta(t, a) > 0 ? '+' : '−'}${fmt(Math.abs(delta(t, a)))}</div></div>`).join('') : '<div class="empty">No entries on this account yet.</div>'}</div>
     ${(S.open || {})[a] ? `<p class="mute">Starting balance: ${show(S.open[a])}</p>` : ''}</div>`;
   m.hidden = false; m.onclick = e => { if (e.target === m) closeForm(); };
 }
@@ -1069,6 +1142,7 @@ function recurForm(id, draft) {
     { k: 'amount', l: 'Amount each time ($)', t: 'money', v: r.amount, req: 1, pos: 1, ph: '0.00' },
     { k: 'cat', l: 'Category', v: r.cat || (isIn && isPersonal() ? 'Pay' : ''), list: categories(isIn ? 'in' : 'out'), ph: isIn ? 'e.g. Pay' : 'e.g. Rent' },
     acctField(r.acct, isIn ? 'Paid into' : 'Paid from', isIn),
+    !isIn && isPersonal() ? { k: 'auto', l: 'How does it get paid?', t: 'select', v: r.auto === false ? 'no' : 'yes', o: [['yes', 'Auto-pay: marked paid on the due date'], ['no', 'I pay it myself: unpaid until I tap Paid']] } : null,
     f === 'monthly' || f === 'semimonthly' ? { k: 'day', l: f === 'semimonthly' ? 'First day of the month (1 to 31)' : 'Day of the month (1 to 31; 31 = last day)', t: 'number', v: f === 'semimonthly' && !draft && !id ? 15 : r.day, req: 1, pos: 1 } : null,
     f === 'semimonthly' ? { k: 'd2', l: 'Second day (31 = last day of the month)', t: 'number', v: r.d2 || 31, req: 1, pos: 1 } : null,
     f === 'weekly' || f === 'biweekly' ? { k: 'next', l: isIn ? 'Next payday (or a past one to add from)' : 'Next one is on (or a past one to add from)', t: 'date', v: isDate(r.next) ? r.next : today() } : null,
@@ -1081,12 +1155,16 @@ function recurForm(id, draft) {
     if (v.freq === 'weekly' || v.freq === 'biweekly') data.next = isDate(v.next) ? v.next : now;
     else if (v.freq === 'semimonthly') { const t = { ...data }, past = recDates(t, dayShift(now, -45), now).pop(); data.next = v.now && past ? past : semiAfter(t, now); if (id && base.freq === 'semimonthly' && isDate(base.next) && base.d2 === d2 && base.day === day) data.next = base.next; }
     const passed = data.day && onDay(ym, day) <= now, prev = monthShift(ym, -1);
-    if (id) { const was = base.freq; ['freq', 'type', 'd2', 'next'].forEach(k => delete base[k]); Object.assign(base, data); if (!data.freq && was && was !== 'monthly') base.last = passed ? ym : prev; }
+    if (v.type !== 'in' && v.auto === 'no') { data.auto = false;
+      // Dates before "since" count as settled. A bill switched over from Auto-pay starts tomorrow; a new one starts today, or from the past date asked for.
+      const from = v.freq === 'weekly' || v.freq === 'biweekly' ? data.next : !v.now ? now : v.freq === 'semimonthly' ? recDates(data, dayShift(now, -45), now).pop() || now : onDay(ym, day);
+      data.since = id ? (base.auto === false && isDate(base.since) ? base.since : dayShift(now, 1)) : from < now ? from : now; }
+    if (id) { const was = base.freq; ['freq', 'type', 'd2', 'next', 'auto', 'since'].forEach(k => delete base[k]); Object.assign(base, data); if (!data.freq && was && was !== 'monthly') base.last = passed ? ym : prev; }
     else (S.rec = S.rec || []).push({ id: uid(), ...data, last: passed && !v.now ? ym : prev });
     applyRecurring();
-  }, `<div class="mute">StockPile adds this to your Ledger as ${isIn ? 'Money In' : 'Money Out'} on each date. You can still edit or delete each entry.</div>`, id ? () => { S.rec = S.rec.filter(x => x.id !== id); commit(); render(); } : null);
+  }, `<div class="mute">${r.auto === false && !isIn ? 'This bill stays unpaid until you tap Paid on the Budget tab. That adds it to your Ledger.' : `StockPile adds this to your Ledger as ${isIn ? 'Money In' : 'Money Out'} on each date. You can still edit or delete each entry.`}</div>`, id ? () => { S.rec = S.rec.filter(x => x.id !== id); commit(); render(); } : null);
   const redo = () => { const g = k => { const el = document.getElementById('f_' + k); return el ? el.value : undefined; };
-    const dr = { type: g('type'), freq: g('freq'), name: g('name'), amount: g('amount'), cat: g('cat'), acct: g('acct') };
+    const dr = { type: g('type'), freq: g('freq'), name: g('name'), amount: g('amount'), cat: g('cat'), acct: g('acct'), ...(g('auto') ? { auto: g('auto') !== 'no' } : {}) };
     if (g('day')) dr.day = +g('day'); if (g('next')) dr.next = g('next'); if (dr.type !== (r.type === 'in' ? 'in' : 'out')) { dr.cat = ''; dr.acct = dr.type === 'in' ? bankList()[0].id : 'cash'; }
     recurForm(id, dr); };
   ['type', 'freq'].forEach(k => { const el = document.getElementById('f_' + k); if (el) el.onchange = redo; });
@@ -1334,10 +1412,11 @@ function personalHome(notes) {
     <h3>${mn}</h3>
     <div class="grid">
       <div class="card"><div class="lbl">In</div><div class="big pos">${fmt(mIn)}</div></div>
-      <div class="card"><div class="lbl">Out</div><div class="big neg">${fmt(mOut)}</div></div>
+      <div class="card"><div class="lbl">Out</div><div class="big">${fmt(mOut)}</div></div>
       ${aside ? `<div class="card"><div class="lbl">${aside > 0 ? 'Set aside' : 'Taken from savings'}</div><div class="big">${fmt(Math.abs(aside))}</div></div>` : ''}
       <div class="card"><div class="lbl">Left over</div><div class="big ${showNums && mIn - mOut - aside < 0 ? 'neg' : 'pos'}">${fmt(mIn - mOut - aside)}</div></div>
     </div>
+    ${billsLine(true)}
     <div class="row between" style="margin-top:22px"><h3 style="margin:0">Spending habits</h3><button class="btn sec sm" onclick="tab='budget';render();window.scrollTo(0,0)">Budgets</button></div>
     <div class="card" style="margin-top:8px">${donut}${cats.length ? cats.slice(0, habitN).map(c => { const s = spent[c] || 0, b = B[c] || 0, over = b > 0 && s > b, u = U.months ? U.cats[c] || 0 : 0;
       return `<div class="br"><div class="row between"><span>${donut && dotCol[c] ? `<i class="dot" style="background:${dotCol[c]}"></i>` : ''}${catIcon(c)} ${esc(c)}</span><b class="${over && showNums ? 'neg' : ''}">${fmt(s)}${b ? ' of ' + fmt(b) : ''}</b></div>
@@ -1427,7 +1506,8 @@ function advice() {
     else if (used >= 0.5 && used > gone + 0.15) warn.push(`<b>${esc(c)}</b>: ${Math.round(used * 100)}% of the budget is used and only ${Math.round(gone * 100)}% of the month has gone. About ${fmt((b - sp) / Math.max(days - day + 1, 1))} a day left for ${days - day + 1} days.`); }
   // month-end forecast
   const R = S.rec || [], first = ym + '-01', tdy = today(), end = onDay(ym, 31), tmr = dayShift(tdy, 1), occ = (r, a, b) => recDates(r, a, b).length * r.amount;
-  const recDone = sum(R.filter(r => r.type !== 'in'), r => occ(r, first, tdy)), recLeft = sum(R.filter(r => r.type !== 'in'), r => occ(r, tmr, end)), payLeft = sum(R.filter(r => r.type === 'in'), r => occ(r, tmr, end));
+  const bills = billsNow(ym), unpaid = bills.filter(b => b.st !== 'paid');
+  const recDone = sum(bills.filter(b => b.st === 'paid' && (!isMan(b.r) || billTx(b.r, b.d))), b => b.amt), recLeft = sum(unpaid, b => b.amt), payLeft = sum(R.filter(r => r.type === 'in'), r => occ(r, tmr, end));
   const outSoFar = sum(Object.values(now), x => x), inSoFar = sum(S.tx.filter(t => t.type === 'in' && !isSav(t) && t.date.startsWith(ym)), t => t.amount), aside = setAside(ym);
   const proj = day >= 5 ? outSoFar + Math.max(outSoFar - recDone, 0) / day * (days - day) + recLeft : 0, incomeExp = Math.max(inSoFar + payLeft, U.inc) + houseLeft();
   if (proj && incomeExp > 0) { if (proj > incomeExp) warn.push(`At this pace you'll spend about <b>${fmt(proj)}</b> this month — ${fmt(proj - incomeExp)} more than is coming in.`);
@@ -1448,7 +1528,8 @@ function advice() {
   Object.entries(small).filter(([, v]) => v[0] >= 4).sort((a, b) => b[1][1] - a[1][1]).slice(0, 2).forEach(([k, v]) => tips.push(`Small buys add up: <b>${esc(k)}</b> ${v[0]} times this month, ${fmt(v[1])}. That's on pace for about ${fmt(v[1] / gone)} a month — cutting it in half would save about ${fmt(v[1] / gone / 2)}.`));
   // bills & subscriptions
   const nth = d => { d = +d.slice(8); return d + (['th', 'st', 'nd', 'rd'][d % 10 > 3 || [11, 12, 13].includes(d) ? 0 : d % 10]); };
-  const due = R.filter(r => r.type !== 'in').flatMap(r => recDates(r, tmr, end).map(d => [r, d])).sort((a, b) => a[1].localeCompare(b[1]));
+  const due = unpaid.filter(b => b.st !== 'late').map(b => [b.r, b.d]);
+  unpaid.filter(b => b.st === 'late').forEach(b => warn.push(`<b>${esc(b.r.name)}</b> is overdue: ${fmt(b.amt)} was due ${dueWord(b.d)}. Tap Mark paid on the Budget tab once it's paid.`));
   if (due.length) tips.push(`Bills still to come this month: ${due.slice(0, 4).map(([r, d]) => `${esc(r.name)} ${fmt(r.amount)} (the ${nth(d)})`).join(', ')}${due.length > 4 ? '…' : ''} — ${fmt(sum(due, x => x[0].amount))} in all.`);
   const pays = R.filter(r => r.type === 'in').flatMap(r => recDates(r, tmr, dayShift(tdy, 35)).map(d => [r, d])).sort((a, b) => a[1].localeCompare(b[1]));
   if (pays.length) tips.push(`Next payday: <b>${niceDate(pays[0][1])}</b> — ${esc(pays[0][0].name)} ${fmt(pays[0][0].amount)}.${payLeft ? ` Still to come this month: ${fmt(payLeft)}.` : ''}`);
@@ -1457,7 +1538,7 @@ function advice() {
   const recNames = new Set((S.rec || []).map(r => storeKey(r.name))), last1 = ymAdd(ym, -1), last2 = ymAdd(ym, -2);
   const rep = {}; S.tx.forEach(t => { if (t.type === 'out' && !isSav(t) && t.note && (t.date.startsWith(last1) || t.date.startsWith(last2))) { const k = storeKey(t.note); (rep[k] = rep[k] || { n: t.note, m: {} }).m[t.date.slice(0, 7)] = t.amount; } });
   Object.entries(rep).filter(([k, v]) => !recNames.has(k) && v.m[last1] && v.m[last2] && Math.abs(v.m[last1] - v.m[last2]) <= v.m[last1] * 0.1).slice(0, 2)
-    .forEach(([, v]) => tips.push(`Looks like a monthly bill: <b>${esc(v.n)}</b> about ${fmt(v.m[last1])}. Add it under More → Recurring bills & paydays so it's counted ahead of time.`));
+    .forEach(([, v]) => tips.push(`Looks like a monthly bill: <b>${esc(v.n)}</b> about ${fmt(v.m[last1])}. Add it under ${isPersonal() ? 'Budget → Bills' : 'More → Recurring bills & paydays'} so it's counted ahead of time.`));
   if (!Object.keys(B).length && !Object.keys(sugg).length) tips.push('Set a budget for the categories you want to watch, and StockPile will warn you before you go over.');
   return { warn, tips, sugg, suggTip };
 }
@@ -1599,7 +1680,7 @@ const ymName = ym => new Date(ym + '-15T12:00').toLocaleDateString('en-CA', { mo
 function reportHTML(R) {
   const diff = (a, b) => b ? `<span class="${a > b ? 'neg' : 'pos'}">${a > b ? '▲' : '▼'} ${fmt(Math.abs(a - b))}</span>` : '';
   return `<h2 style="margin:0 0 6px">${ymName(R.ym)}</h2>
-    <div class="grid"><div class="card"><div class="lbl">In</div><div class="big pos">${fmt(R.inn)}</div></div><div class="card"><div class="lbl">Out</div><div class="big neg">${fmt(R.out)}</div><div class="mute">${diff(R.out, R.pout)} vs last month</div></div>
+    <div class="grid"><div class="card"><div class="lbl">In</div><div class="big pos">${fmt(R.inn)}</div></div><div class="card"><div class="lbl">Out</div><div class="big">${fmt(R.out)}</div><div class="mute">${diff(R.out, R.pout)} vs last month</div></div>
       ${R.aside ? `<div class="card"><div class="lbl">${R.aside > 0 ? 'Set aside' : 'Taken from savings'}</div><div class="big">${fmt(Math.abs(R.aside))}</div><div class="mute">savings, not spending</div></div>` : ''}
       <div class="card"><div class="lbl">Left over</div><div class="big ${R.inn - R.out - R.aside < 0 ? 'neg' : 'pos'}">${fmt(R.inn - R.out - R.aside)}</div></div>${R.inn > 0 ? `<div class="card"><div class="lbl">Kept</div><div class="big">${Math.round((R.inn - R.out) / R.inn * 100)}%</div><div class="mute">of what came in</div></div>` : ''}</div>
     <h3>By category</h3><div class="card">${R.cats.length ? R.cats.map(([c, v, b, p]) => `<div class="row between" style="padding:4px 0"><span>${catIcon(c)} ${esc(c)}</span><span><b class="${b && v > b ? 'neg' : ''}">${fmt(v)}</b>${b ? ` <span class="mute">/ ${fmt(b)}</span>` : ''} ${diff(v, p)}</span></div>`).join('') : '<div class="mute">Nothing spent.</div>'}</div>
@@ -2917,7 +2998,7 @@ function txRow(t) {
   const bits = [niceDate(t.date), t.note && t.cat ? esc(t.cat) : '', t.place ? '📍 ' + esc(t.place) : '', t.cust ? esc(t.cust) : '', t.by ? 'by ' + esc(t.by) : '', part ? `sale ${fmt(t.saleAmt)}, ${t.amount > 0 ? 'part paid' : 'on account'}` : ACCT[acct(t)]].filter(Boolean).join(' · ');
   return `<div class="it">${pick}<div class="main" onclick="${tap}"><div class="t">${esc(t.note || t.cat || (t.type === 'in' ? 'Money in' : 'Money out'))}</div>
     <div class="mute">${bits}</div></div>
-    <div class="amt ${t.type === 'in' ? 'pos' : 'neg'}">${t.type === 'in' ? '+' : '−'}${fmt(t.amount)}</div>
+    <div class="amt ${t.type === 'in' ? 'pos' : ''}">${t.type === 'in' ? '+' : '−'}${fmt(t.amount)}</div>
     ${t.pics && t.pics.length ? `<button class="x" title="Photo" onclick="viewPic('${t.pics[0]}')">📎</button>` : ''}${t.sale || t.ret ? `<button class="x" title="Receipt" onclick="receipt('${t.sale || t.ret}')">🧾</button>` : ''}${staffMode ? '' : `<button class="x" title="Delete" onclick="delTx('${t.id}')">×</button>`}</div>`;
 }
 function groupBy(arr, key) { const o = {}; arr.forEach(t => { const k = key(t) || 'Other'; o[k] = (o[k] || 0) + t.amount; }); return Object.entries(o).sort((a, b) => b[1] - a[1]); }
@@ -2958,7 +3039,7 @@ const V = {
       ${cardTiles()}
       <div class="card"><div class="lbl">Total money</div><div class="big ${cash + bank < 0 ? 'neg' : ''}">${fmt(cash + bank)}</div></div>
       <div class="card"><div class="lbl">In – ${mn}</div><div class="big pos">${fmt(mIn)}</div></div>
-      <div class="card"><div class="lbl">Out – ${mn}</div><div class="big neg">${fmt(mOut)}</div></div>
+      <div class="card"><div class="lbl">Out – ${mn}</div><div class="big">${fmt(mOut)}</div></div>
       <div class="card"><div class="lbl">Left over – ${mn}</div><div class="big ${mIn - mOut < 0 ? 'neg' : 'pos'}">${fmt(mIn - mOut)}</div></div>
       <div class="card"><div class="lbl">Profit on sales – ${mn}</div><div class="big">${fmt(saleProfit)}</div><div class="mute">sale price minus your cost</div></div>
       <div class="card"><div class="lbl">Stock value (at your cost)</div><div class="big">${fmt(stockVal)}</div></div>
@@ -3067,7 +3148,7 @@ const V = {
     ${moneyView === 'list' ? `<div class="row bar">${searchBox('ledgerQ', ledgerQ, "ledgerQ=this.value;$('#ledgerBody').innerHTML=ledgerBodyHTML()", 'Search entries')}</div>` : ''}
     ${inHome && moneyFilter === 'month' && !moneyAcct ? '' : `<div class="grid bar">
       <div class="card"><div class="lbl">In</div><div class="big pos">${fmt(i)}</div></div>
-      <div class="card"><div class="lbl">Out</div><div class="big neg">${fmt(o)}</div></div>
+      <div class="card"><div class="lbl">Out</div><div class="big">${fmt(o)}</div></div>
       <div class="card"><div class="lbl">Difference</div><div class="big ${i - o < 0 ? 'neg' : 'pos'}">${fmt(i - o)}</div></div>
     </div>`}${body}`;
   },
@@ -3085,6 +3166,7 @@ const V = {
       <div class="card"><div class="lbl">Budgeted – ${mn}</div><div class="big">${fmt(totB)}</div></div>
       <div class="card"><div class="lbl">Spent so far</div><div class="big ${showNums && totS > totB ? 'neg' : ''}">${fmt(totS)}</div></div>
       <div class="card"><div class="lbl">${totS > totB ? 'Over by' : 'Left to spend'}</div><div class="big ${showNums && totS > totB ? 'neg' : 'pos'}">${fmt(Math.abs(totB - totS))}</div></div></div>` : ''}
+    ${billsCard()}
     ${showNums && Object.keys(budgetSlots()).length ? `<h3>Spending against budget</h3><div class="card">${budgetDonut('bud')}</div>` : ''}
     ${paceChart()}
     <h3>Tap a category to set its budget</h3>
@@ -3171,11 +3253,13 @@ const V = {
       <p class="mute">Add each card so spending goes on the right one. Put in the last 4 digits and a snapped receipt picks the card by itself.</p>
       ${(S.cards || []).length ? `<div class="list" style="margin-bottom:10px">${S.cards.map(c => `<div class="it"><div class="main" onclick="cardForm('${c.id}')"><div class="t">${esc(cardName(c))}</div><div class="mute">Owed ${fmt(owedOn(c.id))}</div></div></div>`).join('')}</div>` : ''}
       <button class="btn" onclick="cardForm()">+ Add a credit card</button></div>
-    <div class="card" style="margin-bottom:12px"><b>Recurring bills & paydays</b>
+    ${isPersonal() ? `<div class="card" style="margin-bottom:12px"><b>Bills & paydays</b>
+      <p class="mute">Bills and paydays are on the Budget tab now, where you can tick each bill off as paid.</p>
+      <button class="btn" onclick="tab='budget';render();window.scrollTo(0,0)">Open Bills</button></div>` : `<div class="card" style="margin-bottom:12px"><b>Recurring bills & paydays</b>
       <p class="mute">Bills and paycheques that repeat — monthly, twice a month, every 2 weeks or weekly — added to your Ledger automatically.</p>
       ${(S.rec || []).length ? `<div class="list" style="margin-bottom:10px">${[...S.rec].sort((a, b) => (a.type === 'in' ? 0 : 1) - (b.type === 'in' ? 0 : 1)).map(r => `<div class="it"><div class="main" onclick="recurForm('${r.id}')"><div class="t">${r.type === 'in' ? '💵 ' : ''}${esc(r.name)}</div><div class="mute">${recWhen(r)} · ${esc(acctName(r.acct))}</div></div><div class="amt ${r.type === 'in' ? 'pos' : ''}">${r.type === 'in' ? '+' : ''}${fmt(r.amount)}</div></div>`).join('')}</div>` : ''}
       <div class="row"><button class="btn sec" onclick="calendarExport()">📅 Add to my phone calendar</button></div>
-      <div class="row" style="margin-top:8px"><button class="btn in" onclick="recurForm(null, { type: 'in', cat: '${isPersonal() ? 'Pay' : ''}', acct: '${bankList()[0].id}' })">+ Add payday</button><button class="btn" onclick="recurForm()">+ Add bill</button></div></div>
+      <div class="row" style="margin-top:8px"><button class="btn in" onclick="recurForm(null, { type: 'in', cat: '${isPersonal() ? 'Pay' : ''}', acct: '${bankList()[0].id}' })">+ Add payday</button><button class="btn" onclick="recurForm()">+ Add bill</button></div></div>`}
     ${isPersonal() ? `<div class="card" style="margin-bottom:12px"><b>Savings goals</b>
       <p class="mute">Save toward something — a trip, a car, an emergency fund. StockPile works out how much to put aside each payday.</p>
       ${(S.goals || []).length ? `<div class="list" style="margin-bottom:10px">${S.goals.map(g => `<div class="it"><div class="main" onclick="goalSheet('${g.id}')"><div class="t">🎯 ${esc(g.name)}</div><div class="mute">${fmt(goalSaved(g))} of ${fmt(g.target)}${g.date ? ' by ' + niceDate(g.date) : ''}</div></div></div>`).join('')}</div>` : ''}

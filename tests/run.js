@@ -451,6 +451,39 @@ addTx('out',null,R1); ok(/Filled in from the photo/.test($('#modal').innerHTML) 
   reportSheet(ym); ok(/Print/.test($('#modal').innerHTML),'the report can be printed or shared'); closeForm();
   S.tx=keepTx; S.rec=keepR; S.cards=keepC; S.debts=keepD; S.goals=keepG; S.open={}; showNums=keepSN; }
 // 3.12.0: Home and Ledger together, Budget tab, Transportation category
+// bills: paid / unpaid, Auto-pay, plain colours for money out (3.15.0)
+{ const keepTx=S.tx, keepR=S.rec, keepSN=showNums, me=P.list.find(p=>p.id===P.current), keepK=me.kind; me.kind='personal'; showNums=true; S.tx=[]; S.rec=[];
+  const dd=+today().slice(8), ym=thisMonth(), d1=ym+'-01';
+  recurForm(); F('type','out'); F('freq','monthly'); F('name','Rent'); F('amount',1000); F('cat','Rent'); F('acct','bank'); F('day',1); F('auto','no'); FC('now',true); SAVE();
+  ok(S.rec.length===1 && S.rec[0].auto===false && S.tx.length===0,'a bill set to “I pay it myself” adds nothing to the Ledger by itself');
+  const rid=S.rec[0].id; ok(billsNow().length===1 && billsNow()[0].d===d1 && billsNow()[0].st===(dd===1?'soon':'late'),'an unpaid bill past its date shows as overdue');
+  let vb=V.budget(); ok(/🧾 Bills/.test(vb) && /Mark paid/.test(vb) && /0 of 1 paid/.test(vb) && (dd===1 || /class="neg">1 overdue/.test(vb)),'the Budget tab lists bills with a Mark paid button');
+  let hm=personalHome(''); ok(/id="billsLine"/.test(hm) && /0 of 1 paid/.test(hm) && !/billPay\\(/.test(hm),'Home shows one Bills line, not each bill');
+  billPay(rid,d1); vb=V.budget();
+  ok(S.tx.length===1 && S.tx[0].amount===1000 && S.tx[0].date===today() && S.tx[0].rec===rid && billsNow()[0].st==='paid' && /1 of 1 paid/.test(vb) && /All paid/.test(vb) && /btn sm paid/.test(vb),'Mark paid adds the Ledger entry and turns the bill green');
+  billUnpay(rid,d1); ok(S.tx.length===0 && !S.rec[0].paid && billsNow()[0].st!=='paid','tapping Paid again undoes it');
+  billPayForm(rid,d1); F('amount',1234.5); F('date',today()); SAVE();
+  ok(S.tx.length===1 && S.tx[0].amount===1234.5 && S.rec[0].amount===1000 && billsNow()[0].amt===1234.5,'a different amount can be paid for one month only');
+  const c2=clean(JSON.parse(JSON.stringify(S))); ok(c2.rec[0].auto===false && c2.rec[0].paid[d1]===S.tx[0].id && c2.tx[0].rec===rid && isDate(c2.rec[0].since),'paid bills survive a reload');
+  ok(applyRecurring()===false && S.tx.length===1,'a bill you pay yourself is never added automatically');
+  S.tx=[]; ok(billsNow()[0].st!=='paid','deleting the Ledger entry makes the bill unpaid again');
+  recurForm(); F('type','out'); F('freq','monthly'); F('name','Phone'); F('amount',60); F('cat','Phone'); F('acct','bank'); F('day',1); F('auto','yes'); FC('now',true); SAVE();
+  const ph=billsNow().find(b=>b.r.name==='Phone'); ok(S.tx.length===1 && ph.st==='paid' && S.tx[0].rec===ph.r.id && !ph.r.auto && /Auto-pay/.test(V.budget()),'an Auto-pay bill is added on its date and shows as paid');
+  recurForm(null,{freq:'weekly'}); F('type','out'); F('freq','weekly'); F('name','Gym'); F('amount',20); F('cat','Gym'); F('acct','bank'); F('next',dayShift(today(),2)); F('auto','no'); SAVE();
+  const gym=S.rec.find(r=>r.name==='Gym'); ok(gym.auto===false && billState(gym,dayShift(today(),2))==='soon' && billState(gym,dayShift(today(),9))==='later' && billState(ph.r,dayShift(today(),2))==='later','a bill due within 3 days shows as due soon');
+  S.rec.push({id:'old1',name:'Hydro',amount:80,cat:'Utilities',acct:'bank',day:15,last:ym,auto:false,since:dayShift(today(),-80)});
+  const pd=onDay(monthShift(ym,-1),15); hm=personalHome('');
+  ok(billsNow().some(b=>b.r.id==='old1'&&b.d===pd&&b.st==='late') && /overdue/.test(hm) && advice().warn.some(w=>/Hydro<\\/b> is overdue/.test(w)),'an unpaid bill from last month stays on the list and warns');
+  billPay('old1',pd); ok(!billsNow().some(b=>b.r.id==='old1'&&b.d===pd&&b.st==='late') && S.rec.find(r=>r.id==='old1').paid[pd],'…until it is marked paid');
+  recurForm(ph.r.id); F('type','out'); F('freq','monthly'); F('name','Phone'); F('amount',60); F('cat','Phone'); F('acct','bank'); F('day',1); F('auto','no'); SAVE();
+  ok(ph.r.auto===false && ph.r.since===dayShift(today(),1) && billState(ph.r,d1)==='paid','switching a bill to “I pay it myself” leaves past dates settled');
+  recurForm(ph.r.id); F('auto','yes'); SAVE(); ok(ph.r.auto===undefined && ph.r.since===undefined,'…and it can be switched back to Auto-pay');
+  S.tx.push({id:'co1',type:'out',amount:12,cat:'Groceries',acct:'cash',gst:0,date:today()},{id:'co2',type:'in',amount:50,cat:'Pay',acct:'cash',gst:0,date:today()});
+  moneyFilter='month'; const lg=V.money(true); hm=personalHome('');
+  ok(!/class="amt neg"/.test(lg) && /class="amt ">−\\$12\\.00/.test(lg) && /class="amt pos">\\+\\$50\\.00/.test(lg) && /Out<\\/div><div class="big">/.test(hm),'money out is plain with a − sign; money in stays green with a +');
+  ok(/Open Bills/.test(V.more()) && !/Recurring bills/.test(V.more()),'personal More points to the Budget tab for bills');
+  delete me.kind; ok(/Recurring bills/.test(V.more()) && !/Open Bills/.test(V.more()),'business books keep recurring bills under More'); if(keepK) me.kind=keepK;
+  F('auto','yes'); S.tx=keepTx; S.rec=keepR; showNums=keepSN; }
 { const keepTx=S.tx, keepB=S.budgets, keepSN=showNums, me=P.list.find(p=>p.id===P.current), keepK=me.kind; S.tx=[]; S.budgets={Groceries:200}; me.kind='personal';
   const d=today(); S.tx.push({id:'h1',type:'out',amount:80,cat:'Groceries',note:'Safeway',acct:'cash',gst:0,date:d},{id:'h2',type:'in',amount:900,cat:'Pay',note:'',acct:'cash',gst:0,date:d});
   tab='money'; render(); ok(tab==='home','personal books open the Ledger inside Home');
