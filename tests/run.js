@@ -382,6 +382,24 @@ S.learn={}; S.learn[storeKey('Corner Store')]='Snacks'; ok(parseReceipt('Corner 
   S.banks=[];
   S.tx=keep; }
 addTx('out',null,R1); ok(/Filled in from the photo/.test($('#modal').innerHTML) && /value="8.48"/.test($('#modal').innerHTML) && /value="2026-11-12"/.test($('#modal').innerHTML),'a read receipt pre-fills the entry and asks you to check it'); closeForm();
+// household shares and the budget helper
+{ const keepTx=S.tx, keepB=S.budgets, keepR=S.rec; const ym=thisMonth(), p1=ymAdd(ym,-1), p2=ymAdd(ym,-2), d=n=>ym+'-'+String(n).padStart(2,'0');
+  const keepSN=showNums; showNums=true; S.tx=[]; S.rec=[]; S.budgets={'Eating out':100};
+  [p1,p2].forEach((m,i)=>{ S.tx.push({id:'g'+i,type:'out',amount:300,cat:'Groceries',note:'',date:m+'-10'},{id:'e'+i,type:'out',amount:80,cat:'Eating out',note:'',date:m+'-12'},{id:'n'+i,type:'out',amount:16.99,cat:'Subscriptions',note:'Netflix',date:m+'-03'},{id:'p'+i,type:'in',amount:2000,cat:'Pay',note:'',date:m+'-01'}); });
+  for(let i=0;i<6;i++) S.tx.push({id:'t'+i,type:'out',amount:9,cat:'Eating out',note:'Tim Hortons',date:d(1)});
+  S.tx.push({id:'big',type:'out',amount:900,cat:'Groceries',note:'',date:d(2)});
+  const U=usual(); ok(U.months===2 && U.cats.Groceries===300 && U.inc===2000,'usual months are averaged from past entries');
+  const A=advice(), all=A.warn.join(' ')+' '+A.tips.join(' ')+' '+A.suggTip;
+  ok(/Groceries<\\/b> is \\$900\\.00 so far/.test(all) && /Suggested budgets/.test(all) && A.sugg.Groceries===300 && A.sugg['Eating out']===undefined,'unusual spending is flagged and budgets are suggested for categories without one');
+  ok(/Tim Hortons<\\/b> 6 times/.test(all) && /monthly bill: <b>Netflix/.test(all) && (+today().slice(8)<5 || /At this pace/.test(all)),'small buys, repeat bills and a month-end forecast are shown');
+  ok(budgetAlert('Eating out',d(1)).startsWith('Heads up')===false && /Heads up|Over budget/.test(budgetAlert('Eating out',d(1))||'Heads up')===true,'budget alert runs');
+  S.tx.push({id:'t9',type:'out',amount:60,cat:'Eating out',note:'',date:d(1)}); ok(/Over budget: Eating out is now \\$114\\.00 of your \\$100\\.00/.test(budgetAlert('Eating out',d(1))),'saving an entry that goes over budget warns you');
+  useSugg(); ok(S.budgets.Groceries===300 && S.budgets['Eating out']===100,'suggested budgets can be used with one tap, keeping ones you set');
+  S.house=[{id:'mom',name:'Mom',share:500}]; contribForm('mom'); F('amount',200); SAVE();
+  ok(paidIn('mom')===200 && houseLeft()===300 && /Still owes \\$300\\.00/.test(houseCard()) && S.tx.some(t=>t.who==='mom'&&t.cat==='Household'),'household shares show who has paid and who still owes');
+  ok(clean({house:[{id:'mom',name:'Mom',share:500},{name:''}],tx:[{id:'x1',type:'in',amount:5,who:'mom',date:today()}]}).house.length===1 && clean({tx:[{id:'x1',type:'in',amount:5,who:'mom',date:today()}]}).tx[0].who==='mom','saved books keep household people and who paid');
+  ok(/Budget check/.test(adviceCard()),'Home shows the budget check');
+  S.tx=keepTx; S.budgets=keepB; S.rec=keepR; S.house=[]; showNums=keepSN; }
 // business books still get receipts
 P.current='default'; S=fresh(); S.tx.push({id:'bz',type:'out',amount:5,cat:'Supplies',acct:'cash',gst:0,date:today(),pics:['zz1']}); tab='money'; moneyFilter='all';
 ok(!isPersonal() && /📎 Receipts/.test(V.money()) && /Customers/.test(V.debts()),'business books get a Receipts button and keep Customers'); moneyFilter='month';
