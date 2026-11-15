@@ -606,6 +606,24 @@ addTx('out',null,R1); ok(/Filled in from the photo/.test($('#modal').innerHTML) 
   S.tx.push({id:'n4',type:'out',amount:350,cat:'Eating out',acct:'cash',gst:0,date:p1}); ok(budgetsNow()['Eating out']===0 && clean(JSON.parse(JSON.stringify(S))).set.roll===pm,'an overspend is taken off next month, never below zero, and the setting is remembered');
   setRoll(false); ok(!S.set.roll && budgetsNow().Groceries===400,'rollover can be switched off again');
   if(keepK) me.kind=keepK; else delete me.kind; S.tx=keepTx; S.budgets=keepB; S.set=keepSet; S.debts=keepD; S.open=keepO; showNums=keepSN; closeUndo(); }
+// search: every month, several words, #tags, amounts (3.22.0)
+{ const keepTx=S.tx, keepSN=showNums, me=P.list.find(p=>p.id===P.current), keepK=me.kind; me.kind='personal'; showNums=true; moneyFilter='month'; moneyAcct=''; moneyView='list';
+  const old=ymAdd(thisMonth(),-4)+'-12';
+  S.tx=[{id:'q1',type:'out',amount:180,cat:'Travel',note:'Hotel Cancun #mexico',acct:'credit',gst:0,date:old},{id:'q2',type:'out',amount:42.5,cat:'Eating out',note:'Tacos #Mexico #food',acct:'cash',gst:0,date:old},
+    {id:'q3',type:'out',amount:6.25,cat:'Eating out',note:'Tim Hortons coffee',acct:'cash',gst:0,date:today()},{id:'q4',type:'in',amount:2100,cat:'Pay',note:'Paycheque',acct:'bank',gst:0,date:today()},
+    {id:'q5',type:'out',amount:95,cat:'Groceries',note:'Save-On',place:'Maple Ridge',acct:'bank',gst:0,date:today()}];
+  V.money(true); const ids=q=>{ ledgerQ=q; return ledgerShown().map(t=>t.id).sort().join(); };
+  ok(ids('hotel')==='q1' && ids('')==='q3,q4,q5','a search looks through every month, not just the one picked');
+  ok(ids('#mexico')==='q1,q2' && ids('#food')==='q2' && tagsOf(S.tx[1]).join()==='#mexico,#food' && allTags()[0]==='#mexico','#tags find the entries tagged with them');
+  ok(ids('eating cash')==='q2,q3' && ids('cash eating -coffee')==='q2' && ids('maple ridge')==='q5','every word must match, in any order, and -word leaves things out');
+  ok(ids('>100')==='q1,q4' && ids('<10')==='q3' && ids('40-100')==='q2,q5' && ids('=42.50')==='q2' && ids('out >100')==='q1' && ids('in')==='q4','amounts and in / out can be searched');
+  ok(ids(ymName(old.slice(0,7)).split(' ')[0].toLowerCase()).includes('q1') && ids(old.slice(0,7))==='q1,q2','months can be searched by name or number');
+  ledgerQ='#mexico'; let h=ledgerBodyHTML(); ok(/2 matches/.test(h) && /−\\$222\\.50/.test(h) && /all months/.test(h),'search results show how many matched and their total');
+  moneyAcct='cash'; ok(ids('#mexico')==='q2','a search keeps the account picked'); moneyAcct='';
+  ledgerQ=''; h=V.money(true); ok(/setQ\\(/.test(h) && />#mexico</.test(h) && /Search all entries/.test(h),'tags show as buttons above the entries');
+  setQ('#food'); ok(ledgerQ==='#food',"tapping a tag searches for it"); ledgerQ='';
+  addTx('out'); ok(/#tags/.test($('#modal').innerHTML),'the note box says #tags can be added'); closeForm();
+  if(keepK) me.kind=keepK; else delete me.kind; S.tx=keepTx; showNums=keepSN; ledgerQ=''; }
 { const keepTx=S.tx, keepB=S.budgets, keepSN=showNums, me=P.list.find(p=>p.id===P.current), keepK=me.kind; S.tx=[]; S.budgets={Groceries:200}; me.kind='personal';
   const d=today(); S.tx.push({id:'h1',type:'out',amount:80,cat:'Groceries',note:'Safeway',acct:'cash',gst:0,date:d},{id:'h2',type:'in',amount:900,cat:'Pay',note:'',acct:'cash',gst:0,date:d});
   tab='money'; render(); ok(tab==='home','personal books open the Ledger inside Home');
