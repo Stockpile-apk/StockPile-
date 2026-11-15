@@ -458,15 +458,23 @@ addTx('out',null,R1); ok(/Filled in from the photo/.test($('#modal').innerHTML) 
   showNums=true; H=V.home(); ok(/\\$80\\.00 of \\$200\\.00/.test(H) && /🙈 Hide/.test(H) && H.indexOf('Spending habits')<H.indexOf('Entries') && /Breakdown/.test(H),'tapping Show reveals the numbers, habits come before the entries');
   tab='budget'; render(); ok(tab==='budget','personal books have a Budget tab');
   let Bt=V.budget(); ok(/Budgeted – /.test(Bt) && /\\$120\\.00 left/.test(Bt) && /Groceries/.test(Bt) && !/Pets/.test(Bt),'the Budget tab shows each budget with what is left');
-  budgetAll=true; Bt=V.budget(); ok(/Pets/.test(Bt) && /Transportation/.test(Bt),'all categories can be shown, including Transportation'); budgetAll=false;
+  budgetAll=true; blistN=99; Bt=V.budget(); ok(/Pets/.test(Bt) && /Transportation/.test(Bt),'all categories can be shown, including Transportation'); budgetAll=false; blistN=6;
   V.budget(); budgetOne(bCats.indexOf('Groceries')); F('b',250); SAVE(); ok(S.budgets.Groceries===250,'tapping a category sets its budget');
   V.budget(); budgetOne(bCats.indexOf('Groceries')); F('b',''); SAVE(); ok(S.budgets.Groceries===undefined,'clearing it removes the budget');
   ok(guessCat('TRANSLINK COMPASS')==='Transportation' && guessCat('Impark parking')==='Transportation' && guessCat('Uber Eats')==='Eating out' && guessCat('Lordco auto parts')==='Vehicle','receipts sort transit, parking and ride shares into Transportation');
   quickForm(); PCATS.forEach((c,i)=>FC('q'+i,['Groceries','Fuel'].includes(c[0]))); SAVE();
   H=V.home(); ok(/Choose icons/.test(V.more()) && S.set.quick.join()==='Groceries,Fuel' && H.includes('{cat:PCATS[0][0]}') && !H.includes('{cat:PCATS[4][0]}'),'Quick add on Home shows only the icons picked');
   ok(clean(JSON.parse(JSON.stringify(S))).set.quick.join()==='Groceries,Fuel','the picked icons survive reload');
+  delete S.set.quick; quickN=6; H=V.home(); ok(H.includes('{cat:PCATS[5][0]}') && !H.includes('{cat:PCATS[6][0]}') && /Show more \\(/.test(H),'Quick add starts with 6 icons and a Show more button');
+  quickN=12; H=V.home(); ok(H.includes('{cat:PCATS[11][0]}') && !H.includes('{cat:PCATS[12][0]}'),'Show more adds 6 at a time');
+  quickN=PCATS.length; H=V.home(); ok(/Show less/.test(H) && H.includes('{cat:PCATS['+(PCATS.length-1)+'][0]}'),'once all show, it offers Show less'); quickN=6; S.set.quick=['Groceries','Fuel'];
   quickForm(); PCATS.forEach((c,i)=>FC('q'+i,false)); SAVE(); ok(!/Quick add/.test(V.home()),'unticking every icon hides Quick add');
   quickForm(); PCATS.forEach((c,i)=>FC('q'+i,true)); SAVE(); ok(S.set.quick===undefined && quickCats().length===PCATS.length,'ticking them all goes back to showing every icon');
+  S.budgets={}; PCATS.slice(0,9).forEach((c,i)=>{S.budgets[c[0]]=100+i;}); showNums=true; chipN=4; habitN=5; blistN=6; budgetAll=false; H=V.home();
+  ok((H.split('onclick=\"donutPick(').length-2)===4 && /Show more \\(5\\)/.test(H),'the budget buttons start with 4 and a Show more');
+  ok((H.split('Spending habits')[1].split('Quick add')[0].match(/class="br"/g)||[]).length===5,'Spending habits starts with 5 rows');
+  const nB=h=>h.split('Tap a category to set its budget')[1].split('onclick="budgetOne(').length-1; let Bl=V.budget(); ok(nB(Bl)===6 && /Show more \\(3\\)/.test(Bl),'the Budget tab list starts with 6');
+  blistN=12; Bl=V.budget(); ok(nB(Bl)===9 && /Show less/.test(Bl),'Show more reveals the rest, then Show less'); blistN=6; S.budgets={Groceries:200};
   delete me.kind; tab='budget'; render(); ok(!isPersonal() && tab==='home','business books have no Budget tab'); me.kind=keepK; if(keepK===undefined) delete me.kind;
   S.tx=keepTx; S.budgets=keepB; showNums=keepSN; tab='home'; }
 // 3.13.0: graphs

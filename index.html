@@ -132,7 +132,7 @@ body.dark .sheet .rc{color:var(--ink)}body.dark .sheet .rcs{color:var(--mute)}bo
 // The test copy (served from /beta/) keeps its data under separate names, so it can never touch the real app's data.
 const BETA = /\/beta\//.test((typeof location !== 'undefined' && location.pathname) || '');
 const KEY0 = (BETA ? 'beta_' : '') + 'money_inventory_tracker_v1', PKEY = (BETA ? 'beta_' : '') + 'stockpile_profiles';
-const VERSION = '3.14.0';
+const VERSION = '3.14.1';
 const okDark = v => v === true || v === false ? v : undefined;
 const fresh = () => ({ tx: [], items: [], debts: [], lastBackup: null, dirty: 0, auto: true, offRemind: true, lastSent: null, offSnooze: null, contacts: [], adj: [], rec: [], budgets: {}, staff: [], gone: {}, mm: {}, learn: {}, cards: [], banks: [], house: [], goals: [], open: {}, set: { gst: false, gstRate: 5 } });
 const defaultP = () => ({ list: [{ id: 'default', name: 'My business' }], current: 'default' });
@@ -1200,14 +1200,17 @@ function donutSVG(slots, total, label) {
 }
 // Budgets get a colour each, biggest budget first (up to 8; any past that share the 8th).
 function budgetSlots() { const e = Object.entries(budgetsNow()).filter(x => x[1] > 0).sort((a, b) => b[1] - a[1]), o = {}; e.forEach(([c], i) => { o[c] = `var(--s${Math.min(i + 1, 8)})`; }); return o; }
-let donutSel = '';
+let donutSel = '', quickN = 6, chipN = 4, habitN = 5, blistN = 6;
+// "Show more" for a group of buttons: each tap shows `step` more; once all are showing it offers to show fewer.
+const moreBtn = (total, n, v, step) => total <= step ? '' : `<div style="text-align:center;margin-top:8px"><button class="btn sec sm" onclick="${v}=${n >= total ? step : n + step};render()">${n >= total ? 'Show less' : `Show more (${total - n})`}</button></div>`;
 function donutPick(i) { donutSel = i < 0 ? '' : Object.keys(budgetSlots())[i] || ''; render(); }
 // The whole ring is your total budget, with each category's spending as a slice. Tap a budget below to see just that one.
 function budgetDonut(key) {
   const B = budgetsNow(), now = catsIn(thisMonth()), col = budgetSlots(), cats = Object.keys(col), totB = sum(cats, c => B[c]); if (!totB) return '';
   if (donutSel && !cats.includes(donutSel)) donutSel = '';
   const ym = thisMonth(), left = daysIn(ym) - +today().slice(8) + 1;
-  const chips = `<div class="row" style="flex-wrap:wrap;gap:6px;justify-content:center;margin:4px 0 8px">${[[-1, 'All budgets', ''], ...cats.map((c, i) => [i, `${catIcon(c)} ${esc(c)}`, c])].map(([i, l, c]) => `<button class="btn sm ${donutSel === c ? '' : 'sec'}" onclick="donutPick(${i})">${l}</button>`).join('')}</div>`;
+  const chipList = cats.map((c, i) => [i, `${catIcon(c)} ${esc(c)}`, c]).filter(([i, , c]) => i < chipN || c === donutSel);
+  const chips = `<div class="row" style="flex-wrap:wrap;gap:6px;justify-content:center;margin:4px 0 0">${[[-1, 'All budgets', ''], ...chipList].map(([i, l, c]) => `<button class="btn sm ${donutSel === c ? '' : 'sec'}" onclick="donutPick(${i})">${l}</button>`).join('')}</div>${moreBtn(cats.length, chipN, 'chipN', 4)}<div style="height:8px"></div>`;
   let ring;
   if (!donutSel) {
     const segs = cats.map(c => [c, now[c] || 0, col[c], `${catIcon(c)} ${c}: ${cur(now[c] || 0)} of its ${cur(B[c])} budget`]), nb = sum(Object.keys(now).filter(c => !(B[c] > 0)), c => now[c]);
@@ -1336,9 +1339,9 @@ function personalHome(notes) {
       <div class="card"><div class="lbl">Left over</div><div class="big ${showNums && mIn - mOut - aside < 0 ? 'neg' : 'pos'}">${fmt(mIn - mOut - aside)}</div></div>
     </div>
     <div class="row between" style="margin-top:22px"><h3 style="margin:0">Spending habits</h3><button class="btn sec sm" onclick="tab='budget';render();window.scrollTo(0,0)">Budgets</button></div>
-    <div class="card" style="margin-top:8px">${donut}${cats.length ? cats.map(c => { const s = spent[c] || 0, b = B[c] || 0, over = b > 0 && s > b, u = U.months ? U.cats[c] || 0 : 0;
+    <div class="card" style="margin-top:8px">${donut}${cats.length ? cats.slice(0, habitN).map(c => { const s = spent[c] || 0, b = B[c] || 0, over = b > 0 && s > b, u = U.months ? U.cats[c] || 0 : 0;
       return `<div class="br"><div class="row between"><span>${donut && dotCol[c] ? `<i class="dot" style="background:${dotCol[c]}"></i>` : ''}${catIcon(c)} ${esc(c)}</span><b class="${over && showNums ? 'neg' : ''}">${fmt(s)}${b ? ' of ' + fmt(b) : ''}</b></div>
-        <div class="track"><div class="fill" style="width:${showNums ? Math.max(Math.min((b ? s / b : s / top) * 100, 100), s > 0 ? 2 : 0) : 0}%;background:${over ? 'var(--red)' : 'var(--accent)'}"></div></div>${u ? `<div class="mute" style="font-size:12px">usual month ${fmt(u)}</div>` : ''}</div>`; }).join('') : '<div class="empty">Nothing spent yet this month.</div>'}</div>
+        <div class="track"><div class="fill" style="width:${showNums ? Math.max(Math.min((b ? s / b : s / top) * 100, 100), s > 0 ? 2 : 0) : 0}%;background:${over ? 'var(--red)' : 'var(--accent)'}"></div></div>${u ? `<div class="mute" style="font-size:12px">usual month ${fmt(u)}</div>` : ''}</div>`; }).join('') : '<div class="empty">Nothing spent yet this month.</div>'}${moreBtn(cats.length, habitN, 'habitN', 5)}</div>
     ${adviceCard()}${trendChart()}
     <h3>Accounts</h3>
     <div class="grid">
@@ -1350,7 +1353,7 @@ function personalHome(notes) {
     </div>
     ${reportNudge()}${houseCard()}${goalsCard()}
     ${od.length ? `<h3>⚠️ Overdue</h3><div class="list">${od.map(d => `<div class="it"><div class="main" onclick="tab='debts';render()"><div class="t">${esc(d.name)}</div><div class="mute">${d.dir === 'owe' ? 'I owe them' : 'Owes me'} · was due ${niceDate(d.due)}</div></div><div class="amt neg">${fmt(bal(d))}</div></div>`).join('')}</div>` : ''}
-    ${quickCats().length ? `<div class="row between" style="margin-top:22px"><h3 style="margin:0">Quick add</h3><button class="btn sec sm" onclick="quickForm()">Edit</button></div><div class="cats" style="margin-top:8px">${quickCats().map(i => `<button class="cat" onclick="addTx('out',null,{cat:PCATS[${i}][0]})"><span>${PCATS[i][1]}</span>${esc(PCATS[i][0])}</button>`).join('')}</div>` : ''}
+    ${quickCats().length ? `<div class="row between" style="margin-top:22px"><h3 style="margin:0">Quick add</h3><button class="btn sec sm" onclick="quickForm()">Edit</button></div><div class="cats" style="margin-top:8px">${quickCats().slice(0, quickN).map(i => `<button class="cat" onclick="addTx('out',null,{cat:PCATS[${i}][0]})"><span>${PCATS[i][1]}</span>${esc(PCATS[i][0])}</button>`).join('')}</div>${moreBtn(quickCats().length, quickN, 'quickN', 6)}` : ''}
     ${V.money(true)}${verTag()}`;
 }
 
@@ -3085,10 +3088,10 @@ const V = {
     ${showNums && Object.keys(budgetSlots()).length ? `<h3>Spending against budget</h3><div class="card">${budgetDonut('bud')}</div>` : ''}
     ${paceChart()}
     <h3>Tap a category to set its budget</h3>
-    <div class="card">${shown.length ? shown.map((c, i) => { const s = now[c] || 0, b = B[c] || 0, over = b > 0 && s > b, u = U.months ? U.cats[c] || 0 : 0;
+    <div class="card">${shown.length ? shown.slice(0, blistN).map((c, i) => { const s = now[c] || 0, b = B[c] || 0, over = b > 0 && s > b, u = U.months ? U.cats[c] || 0 : 0;
       const sub = [b ? (over ? `${fmt(s - b)} over` : `${fmt(b - s)} left · about ${fmt((b - s) / left)} a day`) : 'no budget', u ? `usual month ${fmt(u)}` : ''].filter(Boolean).join(' · ');
       return `<div class="br" style="cursor:pointer" onclick="budgetOne(${i})"><div class="row between"><span>${catIcon(c)} ${esc(c)}</span><b class="${over && showNums ? 'neg' : ''}">${fmt(s)}${b ? ' of ' + fmt(b) : ''}</b></div>
-        <div class="track"><div class="fill" style="width:${showNums && b ? Math.max(Math.min(s / b * 100, 100), s > 0 ? 2 : 0) : 0}%;background:${over ? 'var(--red)' : 'var(--accent)'}"></div></div><div class="mute" style="font-size:12px">${sub}</div></div>`; }).join('') : '<div class="empty">No budgets or spending yet this month.</div>'}
+        <div class="track"><div class="fill" style="width:${showNums && b ? Math.max(Math.min(s / b * 100, 100), s > 0 ? 2 : 0) : 0}%;background:${over ? 'var(--red)' : 'var(--accent)'}"></div></div><div class="mute" style="font-size:12px">${sub}</div></div>`; }).join('') : '<div class="empty">No budgets or spending yet this month.</div>'}${moreBtn(shown.length, blistN, 'blistN', 6)}
       <p style="margin:10px 0 0"><a href="#" onclick="event.preventDefault();budgetAll=!budgetAll;render()">${budgetAll ? 'Show only the ones in use' : 'Show all categories'}</a></p></div>
     ${sg.length ? `<h3>Suggested budgets</h3><div class="card"><p class="mute" style="margin-top:0">From your last ${U.months} month${U.months > 1 ? 's' : ''} of spending.</p>${sg.map(([c, v]) => `<div class="row between" style="padding:4px 0"><span>${catIcon(c)} ${esc(c)}</span><b>${fmt(v)}</b></div>`).join('')}
       <button class="btn" style="margin-top:8px" onclick="useSugg()">Use these budgets</button></div>` : ''}
