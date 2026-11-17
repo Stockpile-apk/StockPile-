@@ -14,5 +14,7 @@ jobs:
         run: node tests/run.js beta/index.html
       - name: Same checks, running as the test copy
         run: BETA=1 node tests/run.js beta/index.html
+      - name: Storage checks on the test copy
+        run: node tests/books-store.js beta/index.html
       - name: Checks on the main app, once it matches the test copy
         run: if cmp -s index.html beta/index.html; then node tests/run.js index.html; else echo 'Main app is on an earlier version; skipped.'; fi

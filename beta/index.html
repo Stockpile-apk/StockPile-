@@ -137,7 +137,7 @@ body.dark .sheet .rc{color:var(--ink)}body.dark .sheet .rcs{color:var(--mute)}bo
 // The test copy (served from /beta/) keeps its data under separate names, so it can never touch the real app's data.
 const BETA = /\/beta\//.test((typeof location !== 'undefined' && location.pathname) || '');
 const KEY0 = (BETA ? 'beta_' : '') + 'money_inventory_tracker_v1', PKEY = (BETA ? 'beta_' : '') + 'stockpile_profiles';
-const VERSION = '3.22.1';
+const VERSION = '3.22.2';
 const okDark = v => v === true || v === false ? v : undefined;
 const fresh = () => ({ tx: [], items: [], debts: [], lastBackup: null, dirty: 0, auto: true, offRemind: true, lastSent: null, offSnooze: null, contacts: [], adj: [], rec: [], budgets: {}, staff: [], gone: {}, mm: {}, learn: {}, cards: [], banks: [], house: [], goals: [], open: {}, set: { gst: false, gstRate: 5 } });
 const defaultP = () => ({ list: [{ id: 'default', name: 'My business' }], current: 'default' });
@@ -146,6 +146,57 @@ let S = fresh(), P = defaultP(), storageOK = true, loadFailed = false;
 // DK: data key held in memory only while unlocked. SEC: encryption header (salt + wrapped key). LEGACY: old-style PIN hash.
 let DK = null, SEC = null, LEGACY = null, saveQ = Promise.resolve();
 const keyFor = id => id === 'default' ? KEY0 : KEY0 + '_' + id;
+/* ---------- where the books are kept ----------
+   The books (and the list of businesses) live in IndexedDB, which has room for far more than localStorage's
+   roughly 5 million characters. A copy is held in memory so reading stays instant, and every change is written
+   through in order. Versions up to 3.22.1 kept the books in localStorage: they are moved over once, the first
+   time this version opens, and only removed from localStorage after IndexedDB has confirmed it has them.
+   If this browser has no IndexedDB, everything stays in localStorage exactly as before. */
+const KVN = (BETA ? 'beta_' : '') + 'stockpile_books', WKEY = (BETA ? 'beta_' : '') + 'stockpile_where';
+const isBookKey = k => k === PKEY || k.startsWith(KEY0);
+const ST = {
+  mem: null, db: null, q: Promise.resolve(), blocked: false, est: null,
+  getItem(k) { return this.mem ? (this.mem.has(k) ? this.mem.get(k) : null) : localStorage.getItem(k); },
+  setItem(k, v) { v = String(v); if (!this.mem) return localStorage.setItem(k, v); this.mem.set(k, v); this.write(s => s.put(v, k)); },
+  removeItem(k) { if (!this.mem) return localStorage.removeItem(k); this.mem.delete(k); this.write(s => s.delete(k)); },
+  keys() { return this.mem ? [...this.mem.keys()] : Object.keys(localStorage); },
+  write(fn) {
+    const d = this.db;
+    this.q = this.q.then(() => kvTx(d, 'readwrite', fn)).then(() => { storageOK = true; estimateSoon(); }).catch(() => { storageOK = false; });
+    return this.q;
+  }
+};
+function kvTx(d, mode, fn) { return new Promise((res, rej) => { const tx = d.transaction('kv', mode), out = fn(tx.objectStore('kv')); tx.oncomplete = () => res(out); tx.onerror = tx.onabort = () => rej(tx.error); }); }
+let estTimer = 0;
+function estimateSoon() {
+  if (estTimer || typeof navigator === 'undefined' || !navigator.storage || !navigator.storage.estimate) return;
+  estTimer = setTimeout(() => { estTimer = 0; navigator.storage.estimate().then(e => { ST.est = e; }).catch(() => {}); }, 2000);
+  if (estTimer && estTimer.unref) estTimer.unref();
+}
+async function openBooks() {
+  if (ST.db || ST.blocked) return;
+  let lsWhere = null; try { lsWhere = localStorage.getItem(WKEY); } catch (e) {}
+  let d = null;
+  if (typeof indexedDB !== 'undefined') {
+    try { d = await new Promise((res, rej) => { const r = indexedDB.open(KVN, 1); r.onupgradeneeded = () => r.result.createObjectStore('kv'); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); r.onblocked = () => rej(new Error('blocked')); }); } catch (e) { d = null; }
+  }
+  if (!d) { if (lsWhere === 'idb') { ST.blocked = true; storageOK = false; } return; }   // the books are in IndexedDB but it won't open: never start fresh on top of them
+  let mem;
+  try {
+    const [ks, vs] = await kvTx(d, 'readonly', s => { const a = s.getAllKeys(), b = s.getAll(); return [a, b]; }).then(([a, b]) => [a.result, b.result]);
+    mem = new Map(ks.map((k, i) => [String(k), String(vs[i])]));
+  } catch (e) { if (lsWhere === 'idb') { ST.blocked = true; storageOK = false; } return; }
+  let old = []; try { old = Object.keys(localStorage).filter(isBookKey); } catch (e) {}
+  if (old.length && ![...mem.keys()].some(isBookKey)) {   // first open of this version: move the books over in one go
+    const moving = old.map(k => [k, localStorage.getItem(k)]);
+    try { await kvTx(d, 'readwrite', s => moving.forEach(([k, v]) => s.put(v, k))); } catch (e) { return; }   // couldn't move them: carry on from localStorage as before
+    moving.forEach(([k, v]) => mem.set(k, v));
+  }
+  try { old.forEach(k => localStorage.removeItem(k)); localStorage.setItem(WKEY, 'idb'); } catch (e) {}   // IndexedDB has them now (or already did); free the old space
+  ST.db = d; ST.mem = mem;
+  try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {}); } catch (e) {}   // ask Chrome not to clear StockPile's data when the phone runs low on space
+  try { if (navigator.storage && navigator.storage.estimate) ST.est = await navigator.storage.estimate(); } catch (e) {}
+}
 const profName = () => (P.list.find(p => p.id === P.current) || {}).name || 'My business';
 const fileBase = () => 'stockpile-' + (profName().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'business') + '-backup';
 // ----- keys -----
@@ -171,7 +222,7 @@ async function loadProfile() {
   S = fresh(); loadFailed = false; dataReady = false; baseSnap = null; lastGood = null; closeUndo();   // until the books are actually loaded, nothing may be saved over them
   if (needKey()) return;   // private books stay closed until their own PIN is entered
   try {
-    const r = localStorage.getItem(keyFor(P.current));
+    const r = ST.getItem(keyFor(P.current));
     if (r) {
       let o = JSON.parse(r);
       if (o && o.enc === 2) o = JSON.parse(await dec(await KR.get(P.current), o));
@@ -186,9 +237,15 @@ async function loadProfile() {
   if (applyRecurring() || grew) save();
   if (!loadFailed && !lastGood) lastGood = { pid: P.current, json: JSON.stringify(S) };
 }
-// How full this browser's storage is. Browsers allow roughly 5 million characters per site; receipt photos are kept elsewhere and don't count.
+// How full this browser's storage is. In localStorage, browsers allow roughly 5 million characters per site, and receipt photos are kept elsewhere.
+// In IndexedDB the books and receipt photos share the space the browser gives StockPile (usually a share of the phone's free space).
 const STORE_CAP = 5e6;
 function storageUse() {
+  if (ST.mem) {
+    let used = 0; for (const [k, v] of ST.mem) used += (k.length + v.length) * 2;
+    const e = ST.est, cap = e && e.quota > 0 ? e.quota : 0; if (e && e.usage > used) used = e.usage;
+    return { used, cap, pct: cap ? Math.min(Math.round(used / cap * 100), 100) : 0, idb: true };
+  }
   let used = 0;
   try { for (const k of Object.keys(localStorage)) used += k.length + String(localStorage.getItem(k) || '').length; } catch (e) {}
   return { used, cap: STORE_CAP, pct: Math.min(Math.round(used / STORE_CAP * 100), 100) };
@@ -202,7 +259,7 @@ function storageNote() {
 function storageCard() {
   const u = storageUse();
   return `<div class="card" style="margin-bottom:12px"><b>Storage on this phone</b>
-    <p class="mute">${u.pct}% used: ${kb(u.used)} of about ${kb(u.cap)}, for all your books together. Receipt photos are stored separately and don't count.</p>
+    <p class="mute">${u.idb ? (u.cap ? `${u.pct}% used: ${kb(u.used)} of about ${kb(u.cap)} this phone lets StockPile use, for all your books and receipt photos together.` : `${kb(u.used)} used by your books.`) : `${u.pct}% used: ${kb(u.used)} of about ${kb(u.cap)}, for all your books together. Receipt photos are stored separately and don't count.`}</p>
     <div class="track"><div class="fill" style="width:${Math.max(u.pct, 1)}%;background:${u.pct >= 90 ? 'var(--red)' : 'var(--accent)'}"></div></div>
     ${u.pct >= 70 ? '<p class="mute">Getting full. Keep a backup off this phone.</p>' : ''}</div>`;
 }
@@ -229,7 +286,7 @@ function save() {
   const pid = P.current;
   if (!SEC) {
     stampChanges();
-    try { const txt = JSON.stringify(S); lastGood = { pid, json: txt }; localStorage.setItem(keyFor(pid), txt); localStorage.setItem(PKEY, JSON.stringify({ list: P.list, current: P.current, dark: P.dark, biz: P.biz, lock: P.lock, pin: LEGACY })); } catch (e) { storageOK = false; }
+    try { const txt = JSON.stringify(S); lastGood = { pid, json: txt }; ST.setItem(keyFor(pid), txt); ST.setItem(PKEY, JSON.stringify({ list: P.list, current: P.current, dark: P.dark, biz: P.biz, lock: P.lock, pin: LEGACY })); } catch (e) { storageOK = false; }
     linkNudge(); return;
   }
   const pk = dataReady ? KR.get(pid) : null, mk = DK, sec = SEC, body = mk && !staffMode ? headerBody() : null, gen = saveGen;
@@ -239,8 +296,8 @@ function save() {
   if (pk) lastGood = { pid, json: sText };
   saveQ = saveQ.then(async () => {
     if (gen !== saveGen) return;   // everything was erased since this save was queued: don't write it back
-    if (pk) localStorage.setItem(keyFor(pid), JSON.stringify({ enc: 2, ...await enc(await pk, sText) }));
-    if (body) localStorage.setItem(PKEY, JSON.stringify({ sec, body: await enc(mk, body) }));
+    if (pk) ST.setItem(keyFor(pid), JSON.stringify({ enc: 2, ...await enc(await pk, sText) }));
+    if (body) ST.setItem(PKEY, JSON.stringify({ sec, body: await enc(mk, body) }));
   }).catch(() => { storageOK = false; });
   if (pk) linkNudge();
 }
@@ -1535,6 +1592,7 @@ const TESTS = [
   ['Categories, Undo, search (3.17 to 3.22)', [['c1', 'More → Manage categories: merge Rent into Rent or mortgage'], ['c2', 'Add your own category with an emoji; it shows in Quick add'], ['c3', 'Delete an entry, then tap Undo; it comes back (with its photo)'], ['c4', 'Add #tags to a note, then search for the tag'], ['c5', 'Search something from an older month; it is found']]],
   ['Money tools (3.19 to 3.21)', [['m1', 'Download a statement .csv from your bank and bring it in: the rows, signs and dates look right'], ['m2', 'Bring in the same statement again: nothing is added twice'], ['m3', 'Everything (.csv) opens in Google Sheets or Excel'], ['m4', 'Net worth graph looks right against your real balances'], ['m5', 'Turn on Roll over on the Budget tab (it only starts carrying next month)']]],
   ['Privacy (3.20)', [['v1', 'More → Privacy: tap Test it now; it says Blocked'], ['v2', 'Change the auto-lock time and check it locks when it should'], ['v3', 'Snap a receipt with auto-lock on Right away: the photo is not lost to the lock screen'], ['v4', 'Test a backup with your PIN'], ['v5', 'Save to my cloud folder: the file lands in Drive'], ['v6', 'Wrong-PIN erase: only try this with a backup and recovery key in hand (optional)']]],
+  ['Storage move (3.22.2)', [['s1', 'Open the test copy once: your test books, PIN and receipt photos are all still there'], ['s2', 'More → Storage on this phone now shows a much bigger space'], ['s3', 'Close and reopen: everything is still there'], ['s4', 'Back up, then restore: it still works']]],
   ['Two phones', [['t1', 'Share books to a second phone with a file and merge it back'], ['t2', 'Live link on the same Wi-Fi: a sale on one shows on the other'], ['t3', 'Two tills sell the same item; stock adds up right']]],
   ['Updates', [['u1', 'After a new version is pushed, the second open shows the new version number']]]
 ];
@@ -2801,12 +2859,12 @@ async function enableEnc(pin) {
   const raw = rnd(32), salt = rnd(16), key = await importDK(raw);
   const sec = { v: 2, salt: b64(salt), iter: ITER, wrap: await enc(await pinKey(pin, salt, ITER), b64(raw)) };
   KEYS = {}; KR = new Map(); for (const p of P.list) newKey(p.id);
-  localStorage.setItem(PKEY, JSON.stringify({ sec, body: await enc(key, headerBody()) }));
+  ST.setItem(PKEY, JSON.stringify({ sec, body: await enc(key, headerBody()) }));
   SEC = sec; DK = key; LEGACY = null;
   for (const p of P.list) {
-    const r = localStorage.getItem(keyFor(p.id)); if (!r) continue;
+    const r = ST.getItem(keyFor(p.id)); if (!r) continue;
     let o; try { o = JSON.parse(r); } catch (e) { continue; }
-    if (o && !o.enc) localStorage.setItem(keyFor(p.id), JSON.stringify({ enc: 2, ...await enc(await KR.get(p.id), r) }));
+    if (o && !o.enc) ST.setItem(keyFor(p.id), JSON.stringify({ enc: 2, ...await enc(await KR.get(p.id), r) }));
   }
   await photosResave();
   save(); await saveQ;
@@ -2827,15 +2885,15 @@ async function removeEnc(pin) {
   if (shut) throw fail(`“${shut.name}” has its own PIN. Open it, or remove its private PIN, before removing the main PIN.`);
   save(); await saveQ;
   for (const p of P.list) {
-    const r = localStorage.getItem(keyFor(p.id)); if (!r) continue;
+    const r = ST.getItem(keyFor(p.id)); if (!r) continue;
     let o; try { o = JSON.parse(r); } catch (e) { continue; }
-    if (o && o.enc) localStorage.setItem(keyFor(p.id), await dec(o.enc === 2 ? await KR.get(p.id) : DK, o));
+    if (o && o.enc) ST.setItem(keyFor(p.id), await dec(o.enc === 2 ? await KR.get(p.id) : DK, o));
   }
   for (const r of await PS.all()) { try { await PS.put(await packPhoto(null, await unpackPhoto(r))); } catch (e) {} }
   SEC = null; DK = null; KR = new Map(); KEYS = {}; staff = null; staffMode = false; save();
 }
 async function openWith(raw) {
-  const key = await importDK(raw), stored = JSON.parse(localStorage.getItem(PKEY)), body = JSON.parse(await dec(key, stored.body));
+  const key = await importDK(raw), stored = JSON.parse(ST.getItem(PKEY)), body = JSON.parse(await dec(key, stored.body));
   DK = key; staff = null; staffMode = false;
   P = Object.assign(defaultP(), { list: body.list, current: body.current, dark: okDark(body.dark), biz: body.biz !== false, lock: okLock(body.lock) }); sanitizeP();
   KEYS = {}; KR = new Map();
@@ -2851,12 +2909,12 @@ async function openWith(raw) {
 // Data saved by an older version (everything under the one master key) is re-saved under per-books keys.
 async function upgradeStorage() {
   SEC.v = 2;
-  localStorage.setItem(PKEY, JSON.stringify({ sec: SEC, body: await enc(DK, headerBody()) }));   // keys are safely stored before anything is converted
+  ST.setItem(PKEY, JSON.stringify({ sec: SEC, body: await enc(DK, headerBody()) }));   // keys are safely stored before anything is converted
   for (const p of P.list) {
     try {
-      const r = localStorage.getItem(keyFor(p.id)); if (!r || !KR.has(p.id)) continue;
+      const r = ST.getItem(keyFor(p.id)); if (!r || !KR.has(p.id)) continue;
       const o = JSON.parse(r); if (!o || o.enc !== 1) continue;
-      localStorage.setItem(keyFor(p.id), JSON.stringify({ enc: 2, ...await enc(await KR.get(p.id), await dec(DK, o)) }));
+      ST.setItem(keyFor(p.id), JSON.stringify({ enc: 2, ...await enc(await KR.get(p.id), await dec(DK, o)) }));
     } catch (e) {}
   }
   for (const r of await PS.all()) { try { if (r.enc === 1 && KR.has(r.pid)) await PS.put(await packPhoto(await KR.get(r.pid), await unpackPhoto(r))); } catch (e) {} }
@@ -3013,7 +3071,8 @@ function eraseAll() {
   alert('Erased. If you have an unlocked backup, load it from More → Restore.');
 }
 function eraseEverything() {
-  try { Object.keys(localStorage).filter(k => k === PKEY || k === TKEY || k === GKEY || k.startsWith(KEY0)).forEach(k => localStorage.removeItem(k)); } catch (err) {}
+  try { ST.keys().filter(isBookKey).forEach(k => ST.removeItem(k)); } catch (err) {}
+  try { Object.keys(localStorage).filter(k => k === TKEY || k === GKEY || isBookKey(k)).forEach(k => localStorage.removeItem(k)); } catch (err) {}
   lastGood = null; closeUndo();
   saveGen++; memPhotos.clear(); thumbCache.clear();
   try { if (typeof indexedDB !== 'undefined') { const old = dbp; dbp = null; Promise.resolve(old).then(d => { if (d) d.close(); indexedDB.deleteDatabase(DBN); }).catch(() => {}); } } catch (err) {}
@@ -3046,8 +3105,8 @@ function removeQuestions() { if (SEC && SEC.qa && confirm('Remove your security 
 async function finishRecovery(raw, newPin) {
   const salt = rnd(16);
   const sec = { ...SEC, salt: b64(salt), iter: ITER, wrap: await enc(await pinKey(newPin, salt, ITER), b64(raw)) };
-  const stored = JSON.parse(localStorage.getItem(PKEY));
-  localStorage.setItem(PKEY, JSON.stringify({ sec, body: stored.body }));
+  const stored = JSON.parse(ST.getItem(PKEY));
+  ST.setItem(PKEY, JSON.stringify({ sec, body: stored.body }));
   SEC = sec; await openWith(raw);
   $('#lock').hidden = true; $('#pinIn').value = ''; $('#pinMsg').textContent = '';
 }
@@ -3141,7 +3200,7 @@ function renameProfile(id) {
 async function delProfile(id) {
   const p = P.list.find(x => x.id === id); if (!p || P.list.length < 2) return;
   if (!confirm(`Delete "${p.name}" and ALL of its data?`) || !confirm('Are you sure? This cannot be undone.')) return;
-  try { localStorage.removeItem(keyFor(id)); } catch (e) {}
+  try { ST.removeItem(keyFor(id)); } catch (e) {}
   photosDropProfile(id);
   delete KEYS[id]; KR.delete(id);
   if (SEC) { if (SEC.priv) delete SEC.priv[id]; if (Array.isArray(SEC.staff)) SEC.staff = SEC.staff.filter(x => x.pid !== id); }
@@ -3766,18 +3825,23 @@ function render() {
   document.querySelectorAll('#nav button').forEach(b => { const t = b.dataset.t; b.hidden = staffMode ? !staffTabs().includes(t) : pers ? (t === 'sell' || t === 'stock' || t === 'money') : (t === 'receipts' || t === 'budget'); b.classList.toggle('on', t === tab); });
   $('#hdr').innerHTML = `<span>📦 StockPile${BETA ? ' <span class="beta">TEST COPY</span>' : ''}${link && link.open ? ' 🔗' : ''}</span>` + (staffMode ? `<button onclick="lockNow()">🔒 ${esc(staff ? staff.who : 'Staff')} · Lock</button>` : `<select id="profSel" aria-label="Switch books" onchange="switchProfile(this.value)">${P.list.map(p => `<option value="${p.id}" ${p.id === P.current ? 'selected' : ''}>${isPriv(p.id) ? '🔒 ' : ''}${p.share ? '⇄ ' : ''}${esc(p.name)}${p.kind === 'personal' ? ' (personal)' : ''}</option>`).join('')}</select>`);
   document.body.classList.toggle('setup', firstRun);
-  $('#view').innerHTML = firstRun ? setupCard() : needKey() ? privCard() : V[tab]();
+  $('#view').innerHTML = ST.blocked ? blockedCard() : firstRun ? setupCard() : needKey() ? privCard() : V[tab]();
   loadThumbs();
 }
+const blockedCard = () => `<div class="card"><b>⚠️ Your books couldn't be opened</b>
+  <p class="mute">This browser is refusing to open the storage where StockPile keeps your books. Nothing has been changed or erased.</p>
+  <p class="mute">Close StockPile completely and open it again. If it keeps happening, restart the phone, and make sure Chrome isn't in Incognito mode.</p></div>`;
 async function init() {
+  await openBooks();
+  if (ST.blocked) { loadFailed = true; render(); return; }
   let raw = null;
-  try { raw = JSON.parse(localStorage.getItem(PKEY) || 'null'); } catch (e) { storageOK = false; }
+  try { raw = JSON.parse(ST.getItem(PKEY) || 'null'); } catch (e) { storageOK = false; }
   if (raw && raw.sec && raw.body) { SEC = raw.sec; render(); showLock(); return; }
   if (raw && typeof raw === 'object') {
     P = Object.assign(defaultP(), { list: raw.list, current: raw.current, dark: okDark(raw.dark), biz: raw.biz !== false, lock: okLock(raw.lock) });
     if (typeof raw.pin === 'string' && /^[a-z0-9]{1,16}$/.test(raw.pin)) LEGACY = raw.pin;
   }
-  if (!raw) { let any = false; try { any = !!localStorage.getItem(KEY0); } catch (e) {} firstRun = !any; }
+  if (!raw) { let any = false; try { any = !!ST.getItem(KEY0); } catch (e) {} firstRun = !any; }
   sanitizeP(); await loadProfile(); render();
   if (LEGACY) showLock();
 }
