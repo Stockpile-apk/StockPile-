@@ -1,0 +1,39 @@
+StockPile is a simple tracker for money in and out, stock and debts that runs entirely on your phone. No account, no internet needed, no ads. Your records never leave your phone unless you send them somewhere yourself.
+
+Built for small sellers, side hustles and households.
+
+SELL AND TRACK STOCK
+• Ring up sales by item number or by scanning a product barcode with the camera
+• Part payments and pay-later sales go straight to the Owing tab
+• Stock counts drop as you sell, with low-stock warnings
+• Print barcode labels for your own products
+• Returns, discounts and search
+
+MONEY AND DEBTS
+• Ledger of money in and out, by account (cash, bank, card)
+• See who owes you and what you owe, with reminders sent from your own texting or email app
+• Customer history: what each customer bought and still owes
+• Receipts you can send or print
+
+PERSONAL AND HOUSEHOLD BOOKS
+• A personal profile with spending categories and monthly budgets
+• Snap receipt photos; amounts and dates are read on your phone, not online
+• Search receipts by date and category
+• Bills, paydays, savings goals and a monthly report
+• Bring in your bank's .csv statement: no bank login needed
+
+PRIVATE AND SAFE
+• Optional PIN encrypts your books, backups and receipt photos
+• Printable recovery key and security questions in case you forget your PIN
+• Separate staff PINs that open only one business
+• Personal books can have their own private PIN
+• Backups you can save or send anywhere you like
+
+MORE THAN ONE PHONE
+• Keep the same books on two phones, for a household budget or a second till
+• Share with a locked file, or link two phones on the same Wi-Fi so sales and stock stay in step
+• No StockPile server in between
+
+Keep more than one business, each with its own money, stock and debts, and switch between them from the top of the screen.
+
+StockPile is a record-keeping tool. It doesn't move money, connect to your bank or give financial advice.

@@ -3814,7 +3814,7 @@ const V = {
       <p class="mute">Download your records as files that Excel or Google Sheets can open. These files are not locked: anyone who opens one can read it.</p>
       <div class="row"><button class="btn" onclick="exportAll()">Everything (.csv)</button><button class="btn sec" onclick="exportMoney()">Ledger (.csv)</button>${isPersonal() ? '' : '<button class="btn sec" onclick="exportStock()">Stock list (.csv)</button>'}</div></div>
     <div class="card"><b>Start over</b><p class="mute">Erases everything in the tracker.</p><button class="btn out" onclick="wipe()">Erase all data</button></div>
-    <p class="mute" style="text-align:center;margin-top:18px">StockPile version ${VERSION}</p>`;
+    <p class="mute" style="text-align:center;margin-top:18px">StockPile version ${VERSION} · <a href="${BETA ? '../' : ''}privacy.html" target="_blank" rel="noopener">Privacy policy</a></p>`;
   }
 };
 function render() {
